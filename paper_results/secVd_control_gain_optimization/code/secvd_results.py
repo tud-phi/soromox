@@ -1,29 +1,4 @@
-"""Canonical Section Vd result schema, validation, and serialization.
-
-Schema version 3 carries a real multi-start batch axis of width ``B``, restoring
-the six-start structure of the published results (issue #154). The axis appears
-**only** on quantities that genuinely vary per start: the loss and gain
-histories, each start's initial and best rollouts, and the selection indices. The
-time grid and the reference trajectory are shared by every start and are stored
-without one, so a batch axis in this archive always means something.
-
-A start that produces a non-finite candidate is frozen rather than aborting the
-whole run, and ``history_finite_mask`` records exactly which entries are real.
-Every start must nevertheless attain at least one finite iterate: a start that
-was non-finite from its first evaluation has no trajectory worth archiving, and
-signals an initialization that should be resampled.
-
-``init_Kp`` / ``init_Ki`` / ``init_Kd``, together with ``init_seed``,
-``init_scheme`` and ``init_spread``, record the initialization directly rather
-than leaving it to be inferred from the history. The legacy results were
-unrecoverable from their archives precisely because this was never written; see
-the provenance section of the case README.
-
-**Per-iteration trajectory histories are deliberately absent.** Storing every
-start's rollout at every iteration would reach several gigabytes at 100
-iterations and six starts, so the archive keeps each start's initial and best
-rollouts only. The loss and gain histories remain complete.
-"""
+"""Canonical Section Vd result schema, validation, and serialization."""
 
 from __future__ import annotations
 
@@ -32,11 +7,7 @@ from typing import Any
 
 import numpy as np
 
-# v3 records the two case parameters that were previously implicit. Both now
-# vary: the integration step is exposed on the generators, and the plant's
-# material damping was changed from 3.6e2 to 7.2e1 (see secvd_case). Without
-# them an archive cannot say which plant or which fidelity produced it, and a
-# coarse run is indistinguishable from a full-fidelity one.
+
 SCHEMA_VERSION = 3
 RESULTS_FILENAME = "optimization_results.npz"
 METHODS = ("collocated", "synergistic")
@@ -47,10 +18,6 @@ def best_batch_from_loss(
     history_loss: np.ndarray, finite_mask: np.ndarray | None = None
 ) -> int:
     """Return the start that attained the lowest loss over all iterations.
-
-    This is the single definition of "best batch". Issue #128 arose from the
-    plotter deriving the index from one method's losses and reusing it for the
-    other, so callers must apply this to each archive separately.
 
     Args:
         history_loss: Losses of shape ``(iterations, B)``.
@@ -80,10 +47,6 @@ def improvement_over_initial_median(
     history_loss: np.ndarray, finite_mask: np.ndarray | None = None
 ) -> float:
     """Return the loss reduction the paper reports for Section Vd.
-
-    Recovered from the legacy archives, where it reproduces the published
-    62% / 57% exactly: the best final loss against the median loss of the starts
-    at iteration zero.
 
     Args:
         history_loss: Losses of shape ``(iterations, B)``.
@@ -144,9 +107,6 @@ def save_optimization_outputs(
     is_placeholder: bool = False,
 ) -> Path:
     """Write and validate the one supported archive format.
-
-    Trajectory arguments carry a leading batch axis of width ``batch_size``;
-    ``t_ts`` and the references do not.
 
     Args:
         result_dir: Directory to write ``optimization_results.npz`` into.
@@ -433,7 +393,6 @@ def validate_results(
             "different --init-seed or a narrower --init-spread"
         )
 
-    # Frozen entries are allowed to be non-finite; nothing else is.
     for key, value in data.items():
         array = np.asarray(value)
         if array.dtype.kind not in "fc":
@@ -444,8 +403,6 @@ def validate_results(
         elif not np.all(np.isfinite(array)):
             raise ValueError(f"Section Vd archive has non-finite values in {key}")
 
-    # Selection is supplied by the loop and re-derived here, so the two cannot
-    # silently disagree.
     stored_best_iteration = np.asarray(data["best_iteration"])
     expected_best_iteration = best_iteration_per_batch(loss, mask)
     if not np.array_equal(stored_best_iteration, expected_best_iteration):

@@ -1,32 +1,4 @@
-"""Shared multi-start gain-optimization loop for the Section Vd study.
-
-Both Section Vd generators run the same Optax loop over closed-loop rollouts, so
-it lives here and each generator supplies only its own loss and optimizer.
-
-The published Section Vd results optimized six gain initializations at once
-(issue #154). That is reproduced here as a ``vmap`` over both the optimization
-variables and the optimizer state: ``B`` independent optimizers stepping in
-lockstep, with gradients never averaged across starts. This is *multi-start*, not
-multiple shooting -- each start is one forward integration from one initial
-condition, with no segment boundaries and no continuity constraints. A
-single-start run is the ``B = 1`` special case of the same code path.
-
-The loop records the parameters each loss was measured at, not the ones the
-subsequent update produced, so ``argmin`` over a start's losses indexes its
-matching gains (issue #129). No unused update is computed after the final
-requested evaluation.
-
-A start whose evaluation, gradient or update turns non-finite is **frozen** at
-its last good iterate rather than aborting the whole run, and
-:attr:`OptimizationHistory.finite_mask` records exactly which entries are real.
-Checking the gradient matters as much as the trajectory: a forward rollout can
-stay healthy while the reverse pass produces ``NaN``.
-
-**Per-iteration trajectory histories are deliberately not kept.** At 100
-iterations and six starts, storing every rollout would run to gigabytes, so the
-loop retains each start's initial rollout and its own best rollout only. The loss
-and gain histories remain complete.
-"""
+"""Shared multi-start gain-optimization loop for the Section Vd study."""
 
 from __future__ import annotations
 
@@ -43,11 +15,7 @@ __all__ = ["OptimizationHistory", "run_gain_optimization"]
 
 
 def _tree_batched_finite(tree: Any, batch_size: int) -> Array:
-    """Return a ``(B,)`` mask of which starts are finite across a whole pytree.
-
-    Leaves carrying a leading axis of width ``batch_size`` are reduced per start.
-    Any other leaf is shared, so its finiteness applies to every start.
-    """
+    """Return a ``(B,)`` mask of which starts are finite across a pytree."""
     flags = jnp.ones((batch_size,), dtype=bool)
     for leaf in jax.tree_util.tree_leaves(tree):
         value = jnp.asarray(leaf)
@@ -60,12 +28,7 @@ def _tree_batched_finite(tree: Any, batch_size: int) -> Array:
 
 
 def _tree_global_norm(tree: Any, batch_size: int) -> Array:
-    """Return the per-start global L2 norm over a batched pytree.
-
-    Reported alongside the loss so optimizer learning rates and clipping
-    thresholds can be tuned against something observable, rather than inferred
-    from how the loss moves (issue #154 follow-up, item 6).
-    """
+    """Return the per-start global L2 norm over a batched pytree."""
     total = jnp.zeros((batch_size,))
     for leaf in jax.tree_util.tree_leaves(tree):
         value = jnp.asarray(leaf)
@@ -100,25 +63,15 @@ def _tree_select(new_tree: Any, old_tree: Any, take_new: Array) -> Any:
 class OptimizationHistory:
     """Per-iteration record of a multi-start gain-optimization run.
 
-    Every list is indexed by completed iteration and all lists have the same
-    length. Entry ``k`` of :attr:`opt_vars` holds the parameters that produced
-    entry ``k`` of :attr:`loss`, so a start's ``argmin`` over its own losses
-    indexes the parameters that attained them.
-
     Attributes:
-        loss: Per-iteration losses, each of shape ``(B,)``. Entries for a frozen
-            start repeat its last finite value and are masked out by
-            :attr:`finite_mask`.
-        opt_vars: Batched optimization variables each loss was measured at.
-        finite_mask: Per-iteration validity, each of shape ``(B,)``.
-        grad_norm: Per-start global gradient L2 norm, each of shape ``(B,)``.
-        update_norm: Per-start global update L2 norm, each of shape ``(B,)``.
-            Zero on the final iteration, where no update is computed.
-        time_iter: Wall-clock duration of each iteration in seconds. The first
-            entry includes tracing and compilation.
-        init_aux: Auxiliary rollout outputs at iteration zero, batched over ``B``.
-        best_aux: Each start's own lowest-loss rollout, batched over ``B``.
-        best_iteration: Each start's own lowest-loss iteration, shape ``(B,)``.
+        loss: Per-iteration losses ``(B,)``.
+        opt_vars: Batched optimization variables ``(B,)``.
+        grad_norm: Per-start global gradient L2 norm ``(B,)``.
+        update_norm: Per-start global update L2 norm ``(B,)``.
+        time_iter: Wall-clock duration of each iteration in seconds.
+        init_aux: Auxiliary rollout outputs at iteration zero ``B``.
+        best_aux: Each start's own lowest-loss rollout ``B``.
+        best_iteration: Each start's own lowest-loss iteration ``(B,)``.
         batch_size: Number of independently optimized starts.
         stopped_early: Whether the loop halted before ``num_iters``.
         stop_reason: Human-readable description of the early stop, or ``None``.
@@ -145,7 +98,7 @@ class OptimizationHistory:
         """Raise if no iterate was recorded, reporting why the loop stopped.
 
         Args:
-            action: What the caller was trying to do, used in the message.
+            action: What the caller requested.
 
         Raises:
             RuntimeError: If no finite iterate was recorded.
@@ -187,12 +140,7 @@ class OptimizationHistory:
         return [index for index, ok in enumerate(alive.tolist()) if not ok]
 
     def best_batch(self) -> int:
-        """Return the start attaining the lowest loss over all iterations.
-
-        This is the single definition of "best start". Issue #128 arose from the
-        plotter deriving the index from one method's losses and reusing it for
-        the other, so callers must apply this to each archive separately.
-        """
+        """Return the start attaining the lowest loss over all iterations."""
         self._require_recorded("select")
         return int(jnp.argmin(jnp.min(self.masked_loss_history(), axis=0)))
 
@@ -208,14 +156,9 @@ def run_gain_optimization(
     """Run the batched Optax gain-optimization loop.
 
     Args:
-        gradient_fn: Callable mapping **one start's** optimization variables to
-            ``((loss, aux), gradient)``, typically
-            ``value_and_grad(evaluate_closed_loop_system, has_aux=True)`` with the
-            controller already bound. It is vmapped over the batch axis here, so
-            it must not be pre-vmapped by the caller.
-        optimizer: Initialized Optax optimizer, vmapped over the batch here.
-        opt_vars: Initial optimization variables as a pytree whose leaves carry a
-            leading batch axis of width ``batch_size``.
+        gradient_fn: Callable mapping optimization variables to ((loss, aux), gradient).
+        optimizer: Initialized Optax optimizer.
+        opt_vars: Initial optimization variables ``batch_size``.
         num_iters: Number of iterations to attempt. Must be at least one.
         batch_size: Number of independently optimized starts ``B``.
         progress_label: Prefix used in the progress log line.
@@ -231,7 +174,7 @@ def run_gain_optimization(
     if batch_size < 1:
         raise ValueError("batch_size must be at least 1")
 
-    import optax  # Imported lazily; only the paper_results extra provides it.
+    import optax  # Imported lazily
 
     batched_gradient_fn = jax.jit(jax.vmap(gradient_fn))
     opt_state = jax.vmap(optimizer.init)(opt_vars)
@@ -246,7 +189,6 @@ def run_gain_optimization(
     for iteration in range(num_iters):
         iter_start = time.time()
 
-        # Keep the parameters the loss belongs to before the update moves them.
         opt_vars_evaluated = opt_vars
         try:
             (loss, aux), grad = batched_gradient_fn(opt_vars)
@@ -260,15 +202,11 @@ def run_gain_optimization(
             print(f"\n[WARNING] {history.stop_reason}.")
             break
 
-        # Freeze, per start, on any non-finite evaluation. Checking the gradient
-        # matters as much as the trajectory: the reverse pass can produce NaN
-        # from a perfectly healthy rollout.
         evaluation_ok = _tree_batched_finite(
             {"loss": loss, "aux": aux, "gradient": grad}, batch_size
         )
         alive = alive & evaluation_ok
 
-        # A frozen start contributes its last finite loss, which the mask hides.
         loss = jnp.where(alive, loss, last_loss)
         last_loss = loss
 
@@ -284,9 +222,6 @@ def run_gain_optimization(
         iteration_grad_norm = _tree_global_norm(grad, batch_size)
         iteration_update_norm = jnp.zeros((batch_size,))
 
-        # Do not compute an update after the final requested evaluation. For
-        # earlier iterations, only starts that are still alive and whose entire
-        # next state is finite actually move.
         if iteration < num_iters - 1 and bool(jnp.any(alive)):
             updates, opt_state_next = jax.vmap(optimizer.update)(
                 grad, opt_state, opt_vars_evaluated
@@ -305,8 +240,6 @@ def run_gain_optimization(
             advancing = alive & update_ok
             opt_state = _tree_select(opt_state_next, opt_state, advancing)
             opt_vars = _tree_select(opt_vars_next, opt_vars_evaluated, advancing)
-            # A start whose update failed keeps its recorded finite evaluation
-            # but takes no further steps.
             alive = advancing
 
         history.loss.append(loss)

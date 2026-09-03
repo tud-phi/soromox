@@ -13,8 +13,6 @@ from typing import Any
 
 import numpy as np
 
-# Geometry rendering should allocate only what it needs instead of reserving
-# most accelerator memory on startup.
 os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
 
 CODE_DIR = Path(__file__).resolve().parent
@@ -166,9 +164,6 @@ class SecVdTrackingRenderer(ViserRenderer):
                     )
                 )
             else:
-                # Avoid vectorizing many full robot geometries into one large
-                # accelerator allocation. The one-configuration function is
-                # compiled once and then reused for each reference frame.
                 self._target_curves = np.stack(
                     [
                         np.asarray(
@@ -242,11 +237,7 @@ def resample_trajectory(
 def validate_pose_consistency(
     robot, total_length: float, data: dict[str, np.ndarray]
 ) -> None:
-    """Ensure stored poses match FK from the authoritative configurations.
-
-    Every start is checked, not only the rendered one: a batched archive should
-    not be able to hide a corrupt start behind a healthy one.
-    """
+    """Ensure stored poses match FK from the authoritative configurations."""
     stored = np.asarray(data["x_ts_best"])
     for batch in range(stored.shape[0]):
         reconstructed = np.asarray(
@@ -313,7 +304,6 @@ def render_method(
     data = load_results(data_dir / name, expected_method=name)
     robot, _routing, total_length = build_sec_vd_robot()
     validate_pose_consistency(robot, total_length, data)
-    # Each archive selects its own best start; see issue #128.
     best_batch = int(data["best_batch"])
     t, q, pose = resample_trajectory(
         data["t_ts"],

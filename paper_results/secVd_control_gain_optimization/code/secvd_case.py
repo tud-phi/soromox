@@ -1,12 +1,4 @@
-"""Shared robot, setpoint, and optimization problem for Section Vd.
-
-The generator and the tuning study both build their problem here, so a setting
-the study measures is provably the setting the generator runs.
-
-:func:`build_evaluator` returns a :class:`SecVdProblem` rather than a bare
-callable, so a consumer reads a field to learn what a problem supports instead
-of branching on the method name.
-"""
+"""Shared robot, setpoint, and optimization problem for Section Vd."""
 
 from __future__ import annotations
 
@@ -41,51 +33,17 @@ from soromox.utils.geometry.rotations import rotation_matrix_to_rotation_vector
 jax.config.update("jax_enable_x64", True)
 
 METHODS = ("collocated", "synergistic")
-
-# The rollout horizon the published runs use; only the tuning study varies it.
 CASE_HORIZON = 5.0
-
-# The committed learning rates (0.5, 0.25, 0.05), factored into a magnitude and a
-# per-family ratio so the two can be tuned separately.
 COMMITTED_ALPHA = 0.5
 COMMITTED_LR_RATIO = {"Kp": 1.0, "Ki": 0.5, "Kd": 0.1}
-
-# Learning-rate magnitudes measured by secvd_tuning_study on the MATERIAL_DAMPING
-# plant, against a committed 0.5 that is 3-4 decades too small. Collocated 3000
-# is the largest rate that survives; synergistic 1547 is an interior optimum.
-# See README, "Tuning study".
 TUNED_ALPHA = {"collocated": 3000.0, "synergistic": 1547.0}
-
-# Segment material damping, down from the published 3.6e2. It places the nominal
-# closed loop at zeta = 0.505, essentially on the objective's own ISE optimum of
-# 0.5, and is close to a lower bound: below it the setpoint rollout in
-# build_sec_vd_case stops settling inside its 10 s window. See README, "Plant".
 MATERIAL_DAMPING = 7.2e1
-
-# Multipliers on the nominal gains setting where each method's optimization
-# starts, chosen so the initial closed loop sits below zeta = 0.5 and the
-# optimizer has damping to add. The two methods need different scales because
-# their objectives identify different gains: the collocated loss responds to Kd
-# directly, while the synergistic loss barely sees it and is driven by Kp.
-# See README, "Plant" and "Gain identifiability".
 INIT_GAIN_SCALE = {
     "collocated": {"Kp": 1.0, "Ki": 1.0, "Kd": 0.2},
     "synergistic": {"Kp": 3.0, "Ki": 1.0, "Kd": 0.2},
 }
-
-# Integral-error saturation scale in metres: the error above which the collocated
-# regulator's tanh compresses what reaches the integrator. A controller design
-# choice from PR #135, not an optimizer setting; the tuning study measures that
-# the optimization is insensitive to it. See README, "Integral-error saturation".
 COMMITTED_E_SAT = 1e-2
-
-# The optax label each gain family is optimized under. Only the optimizer needs
-# these; the ordering itself is secvd_init.GAIN_ORDER, shared with the sampler.
 FAMILY_LABEL = {"Kp": "P", "Ki": "I", "Kd": "D"}
-
-# Yogi's numerical floor. optax defaults to 1e-3, four orders above this
-# problem's gradients; a floor above the signal is indefensible whether or not it
-# binds. Measured not to be the cause of the stall. See README, "Ruled out".
 YOGI_EPS = 1e-8
 
 
@@ -195,13 +153,11 @@ class SecVdProblem:
             ``opt_vars``. The optimization loop vmaps it over the batch.
         nominal_gains: Gains the initializations are drawn around.
         objective_scales: Per-component factors making the error dimensionless.
-            Archived, so a stored loss can be recomputed from the archive alone.
-        reference_ts: The tracked reference over the time grid -- strains for
-            collocated, poses for synergistic.
-        committed_alpha: Learning-rate magnitude the generators currently use.
-        committed_lr_ratio: Per-family ratio the generators currently use.
+        reference_ts: The tracked reference over the time grid.
+        committed_alpha: Learning-rate magnitude.
+        committed_lr_ratio: Per-family ratio.
         supports_saturation: Whether the controller saturates its integral
-            error. Consumers gate on this rather than on ``method``.
+            error.
         saturation_config: Human-readable saturation setting, archived as-is.
     """
 
@@ -230,24 +186,12 @@ def _save_times(case: SecVdCase, horizon: float, solver_dt: float) -> Array:
 
 
 def _max_solver_steps(horizon: float, solver_dt: float) -> int:
-    """Bound the solver step count for a rollout.
-
-    This counts **solver** steps, not saved points. The two coincide only
-    because the published runs save every step; sizing it from the save grid
-    instead means a caller who coarsens that grid gets an opaque solver failure.
-    """
+    """Bound the solver step count for a rollout."""
     return int(round(horizon / solver_dt)) + 16
 
 
 def _rollout_aux(trajectory) -> tuple[Array, Array, dict]:
-    """Split a closed-loop rollout into strains, rates, and the aux signals.
-
-    ``integral_error_ts`` is what makes the saturation sweep measurable rather
-    than a loss comparison: follow-up item 2 asks what the anti-windup scale is
-    doing, and that is a statement about the integrator, not about tracking. The
-    generators select the keys they archive, so carrying it here does not change
-    the schema.
-    """
+    """Split a closed-loop rollout into strains, rates, and the aux signals."""
     q_ts, qd_ts = jnp.split(trajectory.y, 2, axis=1)
     return (
         q_ts,
@@ -297,12 +241,7 @@ def _build_collocated(
     scales = configuration_space_scales(robot.params.link.length)
 
     def control_error(aux: dict) -> Array:
-        """The error the PID integrates: actuated coordinates, in metres.
-
-        Not the configuration-space error the loss is built from. ``e_sat``
-        saturates *this* signal, so any claim about whether the saturation is
-        active has to be made against it -- the two differ in space and in units.
-        """
+        """The error the PID integrates: actuated coordinates, in metres."""
         n_a = robot.num_actuators
         y_a = vmap(lambda q: asd.actuated_unactuated_coordinates(q)[:n_a])(aux["q_ts"])
         return y_des[:n_a] - y_a
@@ -373,8 +312,6 @@ def _build_synergistic(
         control_state=PIDControllerState.zero(osd.n_operational_space),
     )
     max_steps = _max_solver_steps(horizon, solver_dt)
-    # Position error in metres becomes dimensionless against the backbone
-    # length; orientation error is already in radians.
     scales = operational_space_scales(osd.task_selector, case.total_length)
 
     def control_error(aux: dict) -> Array:
@@ -410,8 +347,6 @@ def _build_synergistic(
         control_error_fn=control_error,
         committed_alpha=COMMITTED_ALPHA,
         committed_lr_ratio=dict(COMMITTED_LR_RATIO),
-        # This controller does not saturate its integral error at all, so
-        # follow-up item 2 has nothing to sweep here.
         supports_saturation=False,
         saturation_config="none",
     )
@@ -429,17 +364,10 @@ def build_evaluator(
 
     Args:
         method: One of :data:`METHODS`.
-        case: A prebuilt case, to avoid repeating the setpoint rollout. Built on
-            demand when omitted.
-        horizon: Rollout length in seconds. Only the tuning study varies this.
-        solver_dt: Integration step. Defaults to the case value. Coarsening it
-            is the largest speed lever available -- cost is linear in the step
-            count -- but it changes the gradient the study is measuring, and
-            because the controller is queried at every integration step it also
-            silently sets the effective control rate. The tuning study's first
-            stage measures how far it can be raised before the gradient moves.
-        e_sat: Integral-error saturation scale in metres. Ignored by methods
-            whose controller does not saturate.
+        case: A prebuilt case, to avoid repeating the setpoint rollout.
+        horizon: Rollout length in seconds.
+        solver_dt: Integration step. Defaults to the case value.
+        e_sat: Integral-error saturation scale in metres.
 
     Returns:
         The problem, its nominal gains, and the metadata consumers gate on.
@@ -468,12 +396,6 @@ def build_evaluator(
 def build_optimizer(alpha: float, *, ratio: dict[str, float] | None = None):
     """Build the Section Vd gain optimizer: one Yogi, per-family learning rates.
 
-    The learning rate is a magnitude times a per-family ratio, applied as a final
-    rescaling of one ``scale_by_yogi`` update rather than as three ``optax.yogi``
-    instances. Those are the same optimizer -- Yogi's moment estimates never see
-    the learning rate, so it factors out of the state -- and
-    ``tests/paper_results/secVd/test_optimizer.py`` pins the equivalence.
-
     Args:
         alpha: Learning-rate magnitude.
         ratio: Per-family multipliers on ``alpha``. Defaults to
@@ -486,7 +408,7 @@ def build_optimizer(alpha: float, *, ratio: dict[str, float] | None = None):
     Raises:
         ValueError: If ``ratio`` does not cover exactly the gain families.
     """
-    import optax  # Imported lazily; only the paper_results extra provides it.
+    import optax  # Imported lazily
 
     ratio = dict(COMMITTED_LR_RATIO if ratio is None else ratio)
     if set(ratio) != set(GAIN_ORDER):
@@ -507,11 +429,7 @@ def build_optimizer(alpha: float, *, ratio: dict[str, float] | None = None):
 
 
 def describe_optimizer(alpha: float, *, ratio: dict[str, float] | None = None) -> str:
-    """Render :func:`build_optimizer`'s configuration for the archive.
-
-    Archived so a run's optimizer can be reported and compared separately from
-    its loss definition (issue #154 follow-up, item 6).
-    """
+    """Render :func:`build_optimizer`'s configuration for the archive."""
     ratio = dict(COMMITTED_LR_RATIO if ratio is None else ratio)
     rates = ", ".join(f"{FAMILY_LABEL[n]}: {alpha * ratio[n]:g}" for n in GAIN_ORDER)
     return f"scale_by_yogi(eps={YOGI_EPS:g}) + per-family rate{{{rates}}}"

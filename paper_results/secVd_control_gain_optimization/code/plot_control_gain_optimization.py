@@ -24,14 +24,8 @@ from paper_style import PAPER_STYLE_PATH as PAPER_STYLE  # noqa: E402
 from secvd_results import improvement_over_initial_median, load_results  # noqa: E402
 
 FIGURE_SIZE_CM = (28.0, 16.0)
-
-# Seconds of the rollout the trajectory panels display
 TRAJECTORY_WINDOW_S = 2.0
-
-# Opacity of the across-start range bands
 BAND_ALPHA = 0.3
-
-# Multiplicative padding on the shared loss limits
 LOSS_YLIM_PAD = 1.1
 
 
@@ -91,9 +85,6 @@ def shared_loss_limits(*extents) -> tuple[float, float] | None:
     low = min(lo for lo, _ in present) / LOSS_YLIM_PAD
     high = max(hi for _, hi in present) * LOSS_YLIM_PAD
     if not low < high:
-        # A degenerate span, which an archive of constant loss reaches whenever
-        # LOSS_YLIM_PAD is 1.0. Matplotlib would expand it itself and warn; let
-        # it autoscale deliberately instead.
         return None
     return low, high
 

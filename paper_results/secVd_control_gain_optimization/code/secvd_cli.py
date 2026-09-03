@@ -30,9 +30,7 @@ def _add_device_argument(parser: argparse.ArgumentParser) -> None:
         choices=DEVICE_CHOICES,
         default="auto",
         help=(
-            "Backend for the optimization. 'auto' leaves the choice to JAX. "
-            "Which backend is faster is a property of the machine, not of this "
-            "case; see the README before overriding."
+            "Backend for the optimization. 'auto' leaves the choice to JAX."
         ),
     )
 
@@ -43,19 +41,13 @@ def _add_batch_size_argument(parser: argparse.ArgumentParser, default: int) -> N
         type=int,
         default=default,
         help=(
-            "Number of independently optimized gain initializations. The "
-            "published Section Vd results used six."
+            "Number of independently optimized gain initializations."
         ),
     )
 
 
 def _early_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
-    """Read the options needed before the full parser exists.
-
-    The device must be known before JAX is imported, and the method selects the
-    result directory, the tuned learning rate and whether a saturation scale
-    applies -- all of which are defaults of the full parser.
-    """
+    """Read the options needed before the full parser exists."""
     parser = argparse.ArgumentParser(add_help=False)
     _add_device_argument(parser)
     parser.add_argument("--method", choices=METHODS, default=METHODS[0])
@@ -81,15 +73,7 @@ def jax_platforms_for(device: str) -> str:
 
 
 def configure_optimization_device(argv: Sequence[str] | None = None) -> str:
-    """Pin the JAX platform, if asked, before an entrypoint imports JAX.
-
-    ``auto`` sets nothing and lets JAX apply its own backend order. Which
-    backend runs a Section Vd rollout faster depends on the machine -- on the
-    relative FP64 throughput of its CPU and GPU, and on how the GPU handles a
-    long chain of small sequential kernels -- so this case measures nothing and
-    prescribes nothing. An explicit ``--device`` is strict: it pins that
-    platform and fails rather than quietly running somewhere else.
-    """
+    """Pin the JAX platform, if asked, before an entrypoint imports JAX."""
     requested = requested_device_from_argv(argv)
     if requested != "auto":
         os.environ["JAX_PLATFORMS"] = jax_platforms_for(requested)
@@ -117,9 +101,6 @@ def parse_optimization_args(
     Raises:
         ValueError: If an argument is outside its supported range.
     """
-    # Imported here rather than at module scope: secvd_case imports JAX, and
-    # this module is read by the entrypoints to pick a device before JAX loads.
-    # By the time this function runs, JAX is already imported.
     from secvd_case import (
         COMMITTED_E_SAT,
         COMMITTED_LR_RATIO,
@@ -139,10 +120,7 @@ def parse_optimization_args(
         type=float,
         default=None,
         help=(
-            "Integration step. Defaults to the case value. The tuning study's "
-            "solver-dt stage gates this on gradient error rather than loss "
-            "error; 1e-3 holds the gradient to ~1e-7 relative on both methods "
-            "and is 10x cheaper. Recorded in the archive from schema v3."
+            "Integration step."
         ),
     )
     parser.add_argument(
@@ -150,10 +128,7 @@ def parse_optimization_args(
         type=float,
         default=TUNED_ALPHA[method],
         help=(
-            "Learning-rate magnitude alpha; the per-family rates are "
-            "alpha * --lr-ratio. Defaults to the value secvd_tuning_study "
-            f"measured for this method ({TUNED_ALPHA[method]:g}); the committed "
-            "runs used 0.5, which is roughly 2000x too small."
+            "Learning-rate magnitude alpha."
         ),
     )
     parser.add_argument(
@@ -189,9 +164,7 @@ def parse_optimization_args(
             type=float,
             default=COMMITTED_E_SAT,
             help=(
-                "Integral-error saturation scale in metres. A controller design "
-                "choice from PR #135, not an optimizer setting; the tuning "
-                "study measures that the optimization is insensitive to it."
+                "Integral-error saturation scale, in metres."
             ),
         )
     parser.add_argument(
@@ -238,9 +211,6 @@ def prepare_result_dir(args: argparse.Namespace) -> Path:
             f"Could not initialize the {args.device!r} optimization backend. "
             "Select another backend with --device."
         ) from exc
-    # An explicit --device is a pin, not a preference: silently running on
-    # another backend would make a timing or reproduction claim about the wrong
-    # hardware. 'auto' asserts nothing, so whatever JAX picked is correct.
     if args.device != "auto" and actual_device != args.device:
         raise RuntimeError(
             f"JAX initialized on {actual_device!r} but --device asked for "

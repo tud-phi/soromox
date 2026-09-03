@@ -1,24 +1,4 @@
-"""Reproducible multi-start gain initialization for the Section Vd study.
-
-The published Section Vd results came from six independently optimized gain
-initializations. Issue #154 asked what those initializations were; they were
-recovered in September 2026 from the original generator, archived under
-[`../legacy/`](../legacy/). This module provides two schemes:
-
-``log_uniform_v1``
-    The default for new runs. Perturbs the caller's nominal gains
-    multiplicatively, so it adapts to whatever controller it is applied to.
-
-``legacy_mixed_v1``
-    An exact reproduction of the recovered generator's ``generate_mixed_batch``,
-    for regenerating or checking against the legacy results. Its sampling box is
-    absolute and belongs to the legacy two-segment robot and its controller
-    parametrization, so it is **not** appropriate for new work.
-
-Batch entry ``0`` is always the caller's nominal gain set under both schemes,
-which keeps a single-start run a strict subset of a batched one. The recovered
-generator did the same.
-"""
+"""Reproducible multi-start gain initialization for the Section Vd study."""
 
 from __future__ import annotations
 
@@ -27,9 +7,6 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from jax import Array
 
-# JAX is imported inside the functions, not here. The Section Vd entrypoints read
-# this module's constants to pick a device *before* JAX is imported, and JAX
-# silently ignores JAX_PLATFORMS once it has been imported.
 
 __all__ = [
     "GAIN_ORDER",
@@ -46,16 +23,11 @@ __all__ = [
     "sample_initial_gains",
 ]
 
-# Number of independently optimized gain initializations, matching the batch
-# dimension of the legacy archives.
 SECVD_BATCH_SIZE = 6
 
 SECVD_INIT_SEED = 0
 SECVD_INIT_SPREAD = 3.0
 SECVD_INIT_SCHEME = "log_uniform_v1"
-
-# Iterated explicitly so that adding a fourth gain later cannot shift the keys
-# consumed by the first three and silently resample them.
 GAIN_ORDER = ("Kp", "Ki", "Kd")
 
 # --- Recovered legacy initialization ---------------------------------------
@@ -109,9 +81,6 @@ def _validate(
         value = jnp.asarray(nominal[name])
         if not bool(jnp.all(jnp.isfinite(value))):
             raise ValueError(f"Nominal {name} must be finite")
-        # log_uniform_v1 perturbs multiplicatively, so a zero or negative
-        # nominal gain has no well-defined neighbourhood to sample from.
-        # legacy_mixed_v1 draws from an absolute box and does not care.
         if scheme == "log_uniform_v1" and not bool(jnp.all(value > 0.0)):
             raise ValueError(
                 f"Nominal {name} must be strictly positive for log_uniform_v1"
@@ -131,8 +100,6 @@ def _sample_log_uniform(nominal, batch_size, seed, spread):
         if batch_size == 1:
             gains[name] = value[None, ...]
             continue
-        # One scalar per start, broadcast across actuators, so that each start
-        # is fully described by three numbers.
         half_width = jnp.log10(spread)
         factor = 10.0 ** jax.random.uniform(
             subkey,
@@ -146,19 +113,10 @@ def _sample_log_uniform(nominal, batch_size, seed, spread):
 
 
 def _sample_legacy_mixed(nominal, batch_size, seed):
-    """Reproduce ``generate_mixed_batch`` from the recovered generator.
-
-    Draws are i.i.d. **per component** from :data:`LEGACY_MIXED_BOX` and are
-    independent of ``nominal``; only start ``0`` uses the nominal. Subkeys are
-    consumed in :data:`LEGACY_KEY_ORDER`, and no ``dtype`` is passed to
-    ``jax.random.uniform`` -- both matching the original exactly.
-    """
+    """Reproduce ``generate_mixed_batch`` from the recovered generator."""
     import jax
     import jax.numpy as jnp
-
-    # The original ran with jax_enable_x64. jax.random.uniform consumes a
-    # different number of PRNG bits per element in single precision, so a
-    # float32 run silently returns a different -- and wrong -- batch.
+    
     if not jax.config.jax_enable_x64:
         raise RuntimeError(
             "legacy_mixed_v1 reproduces the recovered Section Vd initialization "
