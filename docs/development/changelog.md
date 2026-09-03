@@ -33,11 +33,78 @@ and include benchmark baseline and measurement context for performance claims.
   `optimizer_metadata`, and per-start gradient and update norms, and a
   regression check recomputes the stored initial and best losses from their own
   trajectories.
+- Added `paper_results/secVd_control_gain_optimization/code/secvd_tuning_study.py`,
+  a staged study for the Section Vd optimizer and controller saturation
+  (`--stage {solver-dt, lr-range, lr-confirm, ratio, saturation, verify}`). It
+  builds its problem and optimizer through the same two calls the generators
+  make, so a setting it measures is measured on what actually runs; summaries go
+  to `data/tuning/` and never to a result archive. Answers follow-up items 2 and
+  6 on [issue #154](https://github.com/tud-phi/soromox/issues/154); see the
+  case README for the stage recipes and results.
 - Added renderer-neutral cross-section contours and loft construction, with a
   registration hook for extending both swept 3D renderers with new geometries.
 
 ### Changed
 
+- Retuned the Section Vd optimizer learning rates against measurement. The
+  committed magnitude of 0.5 was 3-4 decades too small, which left the optimizer
+  effectively stalled: at 100 iterations and six starts it moved the gains by a
+  relative step of 2.3e-05 per iteration for a median per-start improvement of
+  3.14 %, with the loss still descending at the last step. The measured defaults
+  are now `secvd_case.TUNED_ALPHA` -- 3000 collocated, 1547 synergistic -- at
+  which the same budget on the same plant and the same initializations gives a
+  67.72 % median per-start improvement, and the spread across starts falls from
+  2.35x to 1.21x, so the outcome is set by the optimizer rather than by which
+  start was sampled lowest. Both rates are confirmed over the full 100-iteration
+  budget with every start alive, not over a short screening run. The per-family
+  split `(1, 0.5, 0.1)` is unchanged, now kept by measurement: equal weighting
+  goes non-finite on its first update on both problems. `--learning-rate`,
+  `--lr-ratio` and `--clip` are exposed on both generators, and the effective
+  per-family rates are recorded in `optimizer_metadata`.
+- Both Section Vd generators and the tuning study now build their optimization
+  problem from `secvd_case.build_evaluator` and their optimizer from
+  `secvd_case.build_optimizer`, replacing per-script copies that could drift
+  apart. A test pins the contract by reproducing each committed archive's
+  initial loss to 1e-8 relative.
+- Simplified the Section Vd optimizer to one `scale_by_yogi` with a per-family
+  rescaling, in place of three `optax.yogi` instances under a `multi_transform`.
+  These are the same optimizer -- Yogi's moment recursions never see the
+  learning rate -- verified to 1e-9 relative over 30 steps spanning gradient
+  magnitudes 1e-6 to 1. Gradient clipping is off by default: the committed
+  `clip_by_global_norm(10.0)` never bound, the largest family gradient norm
+  measured on the real objective being 1.55 against a threshold of 10. Pass
+  `--clip 10.0` to reproduce the committed configuration.
+- Lowered Yogi's `eps` for Section Vd from optax's `1e-3` default to `1e-8`. The
+  default sat four orders above this problem's gradients; it was not the cause
+  of the stall, but a numerical floor above the signal is indefensible either
+  way.
+- Kept the Section Vd integral-error saturation scale at `e_sat = 10 mm`, now
+  defined once as `secvd_case.COMMITTED_E_SAT`, and documented it as a
+  controller design parameter rather than an optimizer setting. Measured across
+  the whole range over which the scale can act -- 275x, from the steady-state
+  error to the peak error -- tracking moves 0.106 %, every run completes with
+  gradients in one regime, and the integrator's peak moves 22x. Sweeping it on
+  loss would select an integral-gain modifier under another name, since the
+  objective has no stability term and a finite horizon.
+- Section Vd results now report which gains their objective actually
+  determines. Measured as logarithmic sensitivity at the nominal gains, the
+  collocated loss is blind to `Ki` (4.74e-04 against `Kp`'s 4.50e-01) and the
+  synergistic loss to `Kd` (4.63e-04 against 5.59e-01) -- three orders of
+  magnitude in both cases, and a different gain for each controller. Optimized
+  values along those directions are consequently arbitrary in sign, and the case
+  README says so rather than presenting them as tuned results.
+- Lowered the Section Vd segment's material damping coefficient from `3.6e2` to
+  `secvd_case.MATERIAL_DAMPING = 7.2e1`. The published plant put the nominal
+  closed loop at a damping ratio of `zeta = 0.816`, but the integral squared
+  error `J = (4 zeta^2 + 1) / (4 zeta w_n)` is minimized at `zeta = 0.5`, not at
+  critical damping -- so on that plant the optimizer reached its optimum by
+  *removing* damping, which is why the derivative gain went negative and why
+  optimization could only increase an overshoot that started at 1.18 %. At
+  `7.2e1` the nominal loop sits at `zeta = 0.505` and the committed
+  initialization starts below it, so the derivative gain is identified, stays
+  positive, and the optimized response visibly settles faster than the initial
+  one. The value is near a lower bound: below it the setpoint rollout stops
+  settling inside its 10 s window (11.0 s at `3.6e1`, 21.1 s at `1.8e1`).
 - Section Vd optimization no longer chooses a compute backend for the user.
   `--device auto` is the default and defers to JAX; `--device cpu` or
   `--device gpu` pins one strictly. Which backend is faster depends on the
@@ -47,13 +114,15 @@ and include benchmark baseline and measurement context for performance claims.
   encoded one machine's benchmark as library behaviour; the measurement now
   lives in the case README as an illustration, with the numbers it was taken on.
 
-- Section Vd archives use schema version 2, carrying a real multi-start batch
+- Section Vd archives use schema version 3, carrying a real multi-start batch
   axis only on quantities that vary per start; the shared time grid and
   references lose their previously degenerate axis. Archives now record the
   initialization directly (`init_Kp`/`init_Ki`/`init_Kd`, `init_seed`,
-  `init_scheme`), which is what the legacy archives lacked. Per-iteration
-  trajectory histories are no longer stored, as they reach several gigabytes at
-  six starts and 100 iterations.
+  `init_scheme`), which is what the legacy archives lacked, and version 3 adds
+  the two settings that silently changed a result without leaving a trace:
+  `solver_dt` and `material_damping_coefficient`. Per-iteration trajectory
+  histories are no longer stored, as they reach several gigabytes at six starts
+  and 100 iterations.
 - The Section Vd comparison figure selects the best start from each archive's
   own losses and no longer divides the collocated loss by 100. The former
   divisor was cosmetic axis alignment, needed only because the two controllers

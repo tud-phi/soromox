@@ -33,8 +33,10 @@ if str(CODE_DIR) not in sys.path:
 
 from secvd_case import (  # noqa: E402
     COMMITTED_ALPHA,
+    COMMITTED_E_SAT,
     COMMITTED_LR_RATIO,
     METHODS,
+    TUNED_ALPHA,
     SecVdCase,
     build_evaluator,
     build_sec_vd_robot,
@@ -155,6 +157,29 @@ def test_committed_rates_factor_into_a_magnitude_and_a_ratio(problems):
     for problem in problems.values():
         assert problem.committed_alpha == COMMITTED_ALPHA
         assert problem.committed_lr_ratio == COMMITTED_LR_RATIO
+
+
+def test_the_committed_saturation_scale_is_the_builders_default(problems):
+    """PR #135's 1e-2 m, reached without anyone passing it.
+
+    ``e_sat`` is a controller design choice rather than an optimizer setting, so
+    it has one definition and the generators inherit it. The tuning study sweeps
+    around this value to measure that the optimization is insensitive to it; it
+    does not select it.
+    """
+    assert COMMITTED_E_SAT == 1e-2
+    assert (
+        problems["collocated"].saturation_config == f"tanh, e_sat={COMMITTED_E_SAT} m"
+    )
+
+
+def test_every_method_has_a_measured_learning_rate(problems):
+    """The generators default to these, so a method without one is a silent gap."""
+    assert set(TUNED_ALPHA) == set(METHODS)
+    for method, alpha in TUNED_ALPHA.items():
+        # Every measured rate is far above the committed magnitude; that gap is
+        # the finding, so a value near 0.5 means the constant was reverted.
+        assert alpha > 100 * COMMITTED_ALPHA, method
 
 
 def test_reference_is_exposed_over_the_time_grid(problems, cheap_case):

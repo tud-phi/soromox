@@ -1,4 +1,4 @@
-"""Create the canonical Section Vd comparison figure from schema-v1 archives."""
+"""Create the canonical Section Vd comparison figure from schema-v3 archives."""
 
 from __future__ import annotations
 

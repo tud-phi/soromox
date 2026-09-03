@@ -55,6 +55,9 @@ def _write_results(
         history_finite_mask=finite_mask,
         history_grad_norm=np.ones((ITERATIONS, batch)),
         history_update_norm=np.ones((ITERATIONS, batch)),
+        # Schema v3: what produced the archive, not just what came out of it.
+        solver_dt=1e-3,
+        material_damping_coefficient=7.2e1,
         opt_vars_history=[
             {
                 "opt_ctr_params": {

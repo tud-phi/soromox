@@ -59,6 +59,93 @@ CASE_HORIZON = 5.0
 COMMITTED_ALPHA = 0.5
 COMMITTED_LR_RATIO = {"Kp": 1.0, "Ki": 0.5, "Kd": 0.1}
 
+# The learning-rate magnitudes the tuning study measured, per method, on the
+# MATERIAL_DAMPING plant. The committed 0.5 is roughly 3-4 decades too small and
+# barely moves in 100 iterations. The ratio is unchanged -- the study compared it
+# against equal weighting, which goes non-finite on its first update on both
+# problems, so the committed split is kept by measurement rather than by
+# inheritance.
+#
+# Both values are confirmed over the full 100-iteration production budget with
+# every start alive, not merely over the study's 20-iteration screening budget.
+# The two methods are bracketed differently, and the difference matters when
+# these are re-measured:
+#
+#   collocated  3000 is the largest rate that survives. 6000 goes non-finite at
+#               iteration 6 and 12000 at iteration 3, so this sits near the edge
+#               and a further increase must be re-confirmed at 100 iterations,
+#               never at 20 -- a short run flatters an aggressive rate.
+#   synergistic 1547 is an interior optimum rather than a survivor: it beats
+#               4893 outright at equal budget (7.49e-4 against 8.83e-4) while
+#               15472 diverges at iteration 3.
+TUNED_ALPHA = {"collocated": 3000.0, "synergistic": 1547.0}
+
+# The segment's material damping coefficient. The published case used 3.6e2,
+# which puts the closed loop at a damping ratio of zeta = 0.816 at the nominal
+# gains -- well *above* what the objective wants.
+#
+# For a second-order step response, ISE has the closed form
+#
+#     J(zeta, wn) = (4 zeta^2 + 1) / (4 zeta wn)
+#
+# whose minimum over zeta is 1/2, independent of wn, giving 16.3 % overshoot.
+# Critical damping has no overshoot but 1.25x the ISE. So on a plant already at
+# zeta = 0.816 the optimizer reaches zeta = 0.5 by *removing* damping, which is
+# why the published configuration drives Kd negative: that is the correct
+# control action for this objective, not an optimizer defect.
+#
+# At 7.2e1 the plant sits near zeta = 0.5 at nominal gains, so dL/dKd is
+# positive, the derivative gain is identified, and it stays positive across a
+# full optimization (measured: median +0.75, 0/18 negative at iteration 85).
+# Lower values were measured and rejected: below this the setpoint rollout in
+# build_sec_vd_case no longer settles inside its 10 s window (11.0 s at 3.6e1,
+# 21.1 s at 1.8e1).
+MATERIAL_DAMPING = 7.2e1
+
+# Multipliers on the nominal gains that set where each method's optimization
+# *starts*, as distinct from the gains the controller is specified with.
+#
+# They exist so the initial closed loop sits below zeta = 0.5 and the optimizer
+# has visible damping to add: starts below the ISE optimum get damped, starts
+# above get un-damped, and every start converges on zeta ~ 0.5 regardless. The
+# published initialization was at zeta = 0.816, so optimization could only ever
+# *increase* its overshoot.
+#
+# The two methods need different scales because their objectives identify
+# different gains. The collocated loss responds to Kd directly, so lowering the
+# initial Kd is enough. The synergistic loss barely sees Kd at all (logarithmic
+# sensitivity ~8e-4 of Kp's), so its response is set by Kp and it needs a
+# stiffer proportional start to ring at all.
+#
+# The requirement is on *every* start, not on their median, because the figure
+# draws whichever start reaches the lowest loss and the sampling spread is 3x.
+# The synergistic Kp scale is 5.0 rather than 3.0 for exactly that reason: at
+# 3.0 one of the six sampled starts drew Kp = 11.9 and began *over*-damped at
+# zeta = 0.590, with only 10 % overshoot. Being the slowest start it also had
+# the most loss to recover, so it improved 99.5 %, won the best-start selection,
+# and was drawn in the figure -- where optimization quadrupled its Kp, correctly
+# for the loss, and its overshoot rose from 10 % to 28 %. The start that gains
+# the most loss is the start with the least overshoot to remove.
+#
+# At 5.0 all six sampled starts begin under-damped (worst zeta = 0.333) with
+# every rollout finite at solver_dt = 1e-3, so the plotted overshoot falls
+# whichever start wins. 8.0 also achieves this but buys nothing: the initial
+# overshoot saturates near 62 % while Kp reaches 203, stiffening the ODE.
+INIT_GAIN_SCALE = {
+    "collocated": {"Kp": 1.0, "Ki": 1.0, "Kd": 0.2},
+    "synergistic": {"Kp": 5.0, "Ki": 1.0, "Kd": 0.2},
+}
+
+# The integral-error saturation scale, in metres: the error magnitude above
+# which the collocated regulator's tanh starts compressing what reaches the
+# integrator. This is a controller design choice, made on physical grounds in
+# PR #135, and it is not an optimization hyperparameter -- its job is to bound
+# the integral state, and the objective has no stability term with which to
+# judge that. The tuning study sweeps around it to answer what follow-up item 2
+# actually asks -- whether the choice affects tracking, windup, gradients or the
+# optimized gains -- and measures that it does not.
+COMMITTED_E_SAT = 1e-2
+
 # The optax label each gain family is optimized under. Only the optimizer needs
 # these; the ordering itself is secvd_init.GAIN_ORDER, shared with the sampler.
 FAMILY_LABEL = {"Kp": "P", "Ki": "I", "Kd": "D"}
@@ -109,7 +196,7 @@ def build_sec_vd_robot() -> tuple[PCS, ThreadlikeRouting, float]:
             density=1070.0,
             young_modulus=2e3,
             shear_modulus=1e3,
-            material_damping_coefficient=3.6e2,
+            material_damping_coefficient=MATERIAL_DAMPING,
             reference_strain=[0.0, 0.0, 0.0, 1.0, 0.0, 0.0],
         )
         for index in range(num_segments)
@@ -410,7 +497,7 @@ def build_evaluator(
     case: SecVdCase | None = None,
     horizon: float = CASE_HORIZON,
     solver_dt: float | None = None,
-    e_sat: float = 1e-2,
+    e_sat: float = COMMITTED_E_SAT,
     loss_scale: float = 1.0,
 ) -> SecVdProblem:
     """Build the differentiable optimization problem for one Section Vd method.
@@ -490,12 +577,12 @@ def build_optimizer(
         eps: Yogi's epsilon. See :data:`YOGI_EPS`.
         clip: Gradient-norm clip, or ``None`` for no clipping, which is the
             default because the committed threshold of 10.0 never binds: the
-            largest gain-family gradient norm measured anywhere in the study is
-            0.84, and that was at the learning rate that diverges on its second
-            iteration. Divergence here is a step-size effect, not a gradient
-            blow-up -- Yogi's update magnitude is set by the learning rate
-            almost independently of the gradient -- so a gradient clip cannot
-            prevent it and is not a safety net being removed. Supplied here as a
+            largest gain-family gradient norm measured on the real objective
+            anywhere in the study is 1.55, against a threshold of 10. Divergence
+            here is a step-size effect, not a gradient blow-up -- Yogi's update
+            magnitude is set by the learning rate almost independently of the
+            gradient -- so a gradient clip cannot prevent it and is not a safety
+            net being removed. Supplied here as a
             **global** clip over all three families, where the committed
             configuration clipped each family separately; with a bound this
             slack the distinction is moot, and it exists only so the study can

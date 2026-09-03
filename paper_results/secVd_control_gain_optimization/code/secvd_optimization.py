@@ -83,24 +83,43 @@ def parse_optimization_args(
     *,
     description: str,
     default_result_dir: Path,
+    method: str,
     include_integral_error_saturation_scale: bool = False,
     optimization_batch_size: int = SECVD_BATCH_SIZE,
 ) -> argparse.Namespace:
     # Imported here rather than at module scope: secvd_case imports JAX, and
     # this module is read by the entrypoints to pick a device before JAX loads.
     # By the time this function runs, JAX is already imported.
-    from secvd_case import COMMITTED_ALPHA, COMMITTED_LR_RATIO, GAIN_ORDER
+    from secvd_case import (
+        COMMITTED_E_SAT,
+        COMMITTED_LR_RATIO,
+        GAIN_ORDER,
+        TUNED_ALPHA,
+    )
 
     parser = argparse.ArgumentParser(description=description)
     parser.add_argument("--result-dir", type=Path, default=default_result_dir)
     parser.add_argument("--num-iters", type=int, default=100)
     parser.add_argument(
+        "--solver-dt",
+        type=float,
+        default=None,
+        help=(
+            "Integration step. Defaults to the case value. The tuning study's "
+            "solver-dt stage gates this on gradient error rather than loss "
+            "error; 1e-3 holds the gradient to ~1e-7 relative on both methods "
+            "and is 10x cheaper. Recorded in the archive from schema v3."
+        ),
+    )
+    parser.add_argument(
         "--learning-rate",
         type=float,
-        default=COMMITTED_ALPHA,
+        default=TUNED_ALPHA[method],
         help=(
             "Learning-rate magnitude alpha; the per-family rates are "
-            "alpha * --lr-ratio. Tuned by secvd_tuning_study."
+            "alpha * --lr-ratio. Defaults to the value secvd_tuning_study "
+            f"measured for this method ({TUNED_ALPHA[method]:g}); the committed "
+            "runs used 0.5, which is roughly 2000x too small."
         ),
     )
     parser.add_argument(
@@ -141,7 +160,14 @@ def parse_optimization_args(
     )
     if include_integral_error_saturation_scale:
         parser.add_argument(
-            "--integral-error-saturation-scale", type=float, default=1e-2
+            "--integral-error-saturation-scale",
+            type=float,
+            default=COMMITTED_E_SAT,
+            help=(
+                "Integral-error saturation scale in metres. A controller design "
+                "choice from PR #135, not an optimizer setting; the tuning "
+                "study measures that the optimization is insensitive to it."
+            ),
         )
     parser.add_argument(
         "--placeholder",
@@ -156,6 +182,8 @@ def parse_optimization_args(
         raise ValueError("--batch-size must be at least 1")
     if not args.learning_rate > 0:
         raise ValueError("--learning-rate must be positive")
+    if args.solver_dt is not None and not args.solver_dt > 0:
+        raise ValueError("--solver-dt must be positive when given")
     if args.clip is not None and not args.clip > 0:
         raise ValueError("--clip must be positive when given")
     args.optimization_batch_size = args.batch_size

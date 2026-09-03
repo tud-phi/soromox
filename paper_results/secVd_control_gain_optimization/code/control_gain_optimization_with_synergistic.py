@@ -20,6 +20,8 @@ import jax  # noqa: E402
 from gain_optimization_loop import run_gain_optimization  # noqa: E402
 from jax import vmap  # noqa: E402
 from secvd_case import (  # noqa: E402
+    INIT_GAIN_SCALE,
+    MATERIAL_DAMPING,
     build_evaluator,
     build_optimizer,
     describe_optimizer,
@@ -48,17 +50,27 @@ def main() -> None:
     args = parse_optimization_args(
         description="Optimize synergistic control gains for Section Vd.",
         default_result_dir=CASE_DIR / "data" / "synergistic",
+        method="synergistic",
         optimization_batch_size=OPTIMIZATION_BATCH_SIZE,
     )
     result_dir = prepare_result_dir(args)
     # The problem is defined once, in secvd_case, so the tuning study provably
     # tunes what this script runs (issue #154 follow-up, item 6).
-    problem = build_evaluator("synergistic")
+    problem = build_evaluator(
+        "synergistic",
+        solver_dt=args.solver_dt,
+    )
     case = problem.case
     robot = case.robot
     x_des_ts = problem.reference_ts
+    # Scaled off the nominal gains so the loop starts below zeta = 0.5, which is
+    # where the objective's optimum sits (see INIT_GAIN_SCALE in secvd_case).
+    init_center = {
+        name: value * INIT_GAIN_SCALE["synergistic"][name]
+        for name, value in problem.nominal_gains.items()
+    }
     init_gains = sample_initial_gains(
-        problem.nominal_gains,
+        init_center,
         batch_size=args.batch_size,
         seed=args.init_seed,
         scheme=args.init_scheme,
@@ -121,6 +133,8 @@ def main() -> None:
         objective_scales=problem.objective_scales,
         saturation_config=problem.saturation_config,
         optimizer_metadata=optimizer_metadata,
+        solver_dt=problem.solver_dt,
+        material_damping_coefficient=MATERIAL_DAMPING,
         t_ts=t_ts,
         q_ts_init=init_aux["q_ts"],
         q_ts_best=best_aux["q_ts"],

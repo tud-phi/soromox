@@ -106,9 +106,10 @@ because each is plausible enough to be worth not re-deriving:
   The lower value is kept anyway -- a numerical floor above the signal is
   indefensible whether or not it binds.
 * **Gradient clipping.** ``clip_by_global_norm(10.0)`` never bound: the largest
-  family gradient norm measured anywhere in this study is 0.84, at the rate that
-  diverges on iteration 2. Divergence here is a step-size effect, so a gradient
-  clip could not have prevented it either. Dropped.
+  family gradient norm measured on the real objective anywhere in this study is
+  1.55, against a threshold of 10. (Deliberately loss-scaled probes reach 2.65e3,
+  which is the scale factor and not the problem.) Divergence here is a step-size
+  effect, so a gradient clip could not have prevented it either. Dropped.
 * **Loss scaling.** Scaling the objective by ``1e4`` does move Yogi -- 539x
   larger steps at low ``alpha``, decaying to 2.7x at high ``alpha`` -- so it is
   not the no-op that Adam-family scale invariance suggests. But it is
@@ -153,7 +154,9 @@ import optax  # noqa: E402
 from jax import vmap  # noqa: E402
 from secvd_case import (  # noqa: E402
     CASE_HORIZON,
+    COMMITTED_E_SAT,
     COMMITTED_LR_RATIO,
+    INIT_GAIN_SCALE,
     METHODS,
     build_evaluator,
     build_optimizer,
@@ -180,8 +183,14 @@ GAIN_FAMILIES = GAIN_ORDER
 # what the generators actually run.
 LR_RATIO = COMMITTED_LR_RATIO
 
-# The committed clip threshold. Kept so the ramp reports when it starts to bind
-# rather than silently changing the configuration under test.
+# The committed clip threshold, kept only as the value --clip documents. The
+# study's default matches the generators' -- off -- so a rate measured here is
+# measured under the transform the archives are produced with. It defaulted on
+# for a while, which is exactly the study/generator drift the shared builder
+# exists to prevent; it made no numerical difference, because the largest family
+# gradient norm ever measured on the real objective is 1.55 against a threshold
+# of 10, but "measured no difference" is not the same as "measured the same
+# thing".
 CLIP_THRESHOLD = 10.0
 
 STAGES = ("solver-dt", "lr-range", "lr-confirm", "ratio", "saturation", "verify")
@@ -240,7 +249,7 @@ def run_alpha_schedule(
     alpha_high: float,
     num_points: int,
     eps: float,
-    use_clip: bool,
+    clip: float | None,
     ratio: dict | None = None,
     aux_metrics: Callable[[dict], dict] | None = None,
 ) -> dict:
@@ -253,8 +262,8 @@ def run_alpha_schedule(
         alpha_high: Last learning-rate magnitude.
         num_points: Number of ramp points, one per iteration.
         eps: Yogi epsilon, passed through to :func:`build_optimizer`.
-        use_clip: Whether to reinstate the committed ``clip_by_global_norm``,
-            which :func:`build_optimizer` omits by default.
+        clip: Global gradient-norm clip, or ``None`` for no clipping, which is
+            what :func:`build_optimizer` and the generators default to.
         ratio: Per-family learning-rate ratio; defaults to :data:`LR_RATIO`.
             Setting ``alpha_low == alpha_high`` turns the ramp into a constant
             rate, which is how the confirmation runs are expressed.
@@ -280,7 +289,7 @@ def run_alpha_schedule(
         lambda count: jnp.take(alphas, count, mode="clip"),
         ratio=ratio,
         eps=eps,
-        clip=CLIP_THRESHOLD if use_clip else None,
+        clip=clip,
     )
     opt_vars = {"opt_ctr_params": init_gains, "opt_atr_params": {}}
     opt_state = vmap(optimizer.init)(opt_vars)
@@ -342,7 +351,7 @@ def run_alpha_schedule(
     stacked["alpha"] = np.asarray(alphas)[: len(stacked["loss"])]
     stacked["batch_size"] = np.asarray(batch_size)
     stacked["eps"] = np.asarray(eps)
-    stacked["clip"] = np.asarray(CLIP_THRESHOLD if use_clip else np.inf)
+    stacked["clip"] = np.asarray(np.inf if clip is None else clip)
     stacked["ratio"] = np.asarray([ratio[n] for n in GAIN_FAMILIES])
     return stacked
 
@@ -409,9 +418,20 @@ def save_schedule(result: dict, out_dir: Path, tag: str) -> Path:
 
 
 def _sample_starts(problem, batch_size: int, seed: int) -> dict:
-    """Draw the same starts the generators use, so losses stay comparable."""
+    """Draw the same starts the generators use, so losses stay comparable.
+
+    The centre is the nominal gains scaled by the method's
+    :data:`secvd_case.INIT_GAIN_SCALE`, which is what the generators sample --
+    not the nominal gains themselves. Tuning a learning rate at a different
+    initialization than the run uses would measure the wrong landscape, which is
+    the whole failure the shared builder exists to prevent.
+    """
+    scale = INIT_GAIN_SCALE[problem.method]
+    centre = {
+        name: value * scale[name] for name, value in problem.nominal_gains.items()
+    }
     return sample_initial_gains(
-        problem.nominal_gains,
+        centre,
         batch_size=batch_size,
         seed=seed,
         scheme=SECVD_INIT_SCHEME,
@@ -627,7 +647,7 @@ def stage_constant_rates(args, case, alphas, ratio, label) -> dict:
             alpha_high=alpha,
             num_points=args.num_iters,
             eps=args.eps,
-            use_clip=not args.no_clip,
+            clip=args.clip,
             ratio=ratio,
         )
     print("")
@@ -677,19 +697,29 @@ def saturation_window(problem) -> tuple[float, float]:
 
 
 def stage_saturation(args, case, alpha, ratio) -> dict:
-    """Sweep the integral-error saturation scale -- follow-up item 2.
+    """Sensitivity of the optimization to the saturation scale -- item 2.
 
-    ``e_sat`` is the error magnitude above which the ``tanh`` saturation starts
-    compressing what reaches the integrator, so it trades steady-state accuracy
-    against windup. Sweeping it on tracking loss alone cannot separate those:
-    a scale so tight that the integrator is starved and one so loose that it is
-    effectively absent can land at similar losses for different reasons. Each
-    point therefore also reports how much of the rollout was actually in
-    saturation and how far the integrator wound up.
+    **This stage does not select ``e_sat``.** The committed 1e-2 m is a
+    controller design choice, made on physical grounds in PR #135 and kept: it
+    is the error magnitude above which the ``tanh`` starts compressing what
+    reaches the integrator, and its purpose is to bound the integral state, not
+    to trade tracking against anything.
 
-    The optimizer runs at the confirmed learning rate, because the question is
-    which ``e_sat`` an optimizer that actually moves ends up preferring, not
-    which one looks best at the initial gains.
+    Selecting it by loss would be wrong on its own terms. The objective has no
+    stability term, no actuator model and a finite horizon, so a ranking over
+    ``e_sat`` says how much integral action a 5 s window happens to want -- a
+    quantity that moves with the horizon -- rather than anything about windup.
+    The measured ordering is monotone toward *tighter* saturation, which is that
+    effect and not a recommendation.
+
+    What follow-up item 2 asks is whether the committed choice affects tracking,
+    windup, gradients and the optimized gains. That is a sensitivity check, and
+    it is what this sweeps for: points spanning the range over which the scale
+    can do anything at all, each reporting the loss, how much of the rollout was
+    actually in saturation, how far the integrator wound up, and -- for learning
+    stability -- the gradient magnitude and whether every iteration stayed
+    finite. The optimizer runs at the confirmed learning rate so the check is
+    made on an optimizer that actually moves.
     """
     probe = build_evaluator(
         args.method, case=case, horizon=args.horizon, solver_dt=args.solver_dt
@@ -697,8 +727,11 @@ def stage_saturation(args, case, alpha, ratio) -> dict:
     steady, step = saturation_window(probe)
     print("")
     print(
-        f"Model-based window for e_sat: [{steady:.3g}, {step:.3g}] m -- the "
-        f"steady-state error up to the initial step, at the nominal gains."
+        f"Range over which e_sat can act at all: [{steady:.3g}, {step:.3g}] m "
+        f"-- the steady-state error up to the peak, at the nominal gains. "
+        f"Below it the integrator is clamped beneath the offset it exists to "
+        f"remove; above it tanh never leaves its linear region. Points are "
+        f"placed across it to bracket the committed 1e-2 m, not to search it."
     )
     e_sats = args.e_sats
     if e_sats is None:
@@ -745,7 +778,7 @@ def stage_saturation(args, case, alpha, ratio) -> dict:
             alpha_high=alpha,
             num_points=args.num_iters,
             eps=args.eps,
-            use_clip=not args.no_clip,
+            clip=args.clip,
             ratio=ratio,
             aux_metrics=metrics,
         )
@@ -766,36 +799,77 @@ def stage_saturation(args, case, alpha, ratio) -> dict:
                 if live.any()
                 else float("nan"),
                 float(np.median(result["integral_terminal"][last])),
+                # Over every family and start, so one number stands for
+                # "did the gradients stay in the same regime".
+                float(np.median(result["grad_norm"][live]))
+                if live.any()
+                else float("nan"),
                 int(live.sum()),
             )
         )
 
     print("")
-    print(f"Saturation sweep, medians over starts, {args.num_iters} iterations.")
+    print(f"Saturation sensitivity, medians over starts, {args.num_iters} iterations.")
     print("'saturated' is the fraction of the rollout with |e| > e_sat, on the")
     print("error the PID integrates -- actuation space here, not the loss's.")
     print(
         f"  {'e_sat [m]':>10}  {'best loss':>13}  {'saturated':>10}  "
-        f"{'peak |I|':>10}  {'final |I|':>10}  {'iters':>6}"
+        f"{'peak |I|':>10}  {'final |I|':>10}  {'|grad|':>10}  {'iters':>6}"
     )
-    for e_sat, loss, fraction, peak, terminal, live in summary:
+    for e_sat, loss, fraction, peak, terminal, grad, live in summary:
         print(
             f"  {e_sat:>10.4g}  {loss:>13.6e}  {100 * fraction:>9.1f}%  "
-            f"{peak:>10.3e}  {terminal:>10.3e}  {live:>6d}"
+            f"{peak:>10.3e}  {terminal:>10.3e}  {grad:>10.3e}  {live:>6d}"
         )
-    usable = [row for row in summary if np.isfinite(row[1])]
-    if usable:
-        best = min(usable, key=lambda row: row[1])
-        print("")
-        print(f"Best tracking at e_sat = {best[0]:g} m, loss {best[1]:.6e}")
-        inert = [row[0] for row in usable if row[2] < 1e-3]
-        if inert:
-            print(
-                "  Saturation was inactive (<0.1 % of the rollout) at "
-                + ", ".join(f"{value:g}" for value in inert)
-                + " m, so those points measure the unsaturated controller."
-            )
+    report_saturation_sensitivity(summary, args.num_iters)
     return results
+
+
+def report_saturation_sensitivity(summary: list, num_iters: int) -> None:
+    """State whether the saturation scale reached the optimization at all.
+
+    The verdict follow-up item 2 asks for is a comparison, not a ranking: how
+    far the loss, the gradient magnitude and the run's survival move across the
+    whole admissible range of ``e_sat``, relative to how far ``e_sat`` itself
+    moved. If they barely move, the committed choice is not steering the
+    optimization and there is nothing to revisit.
+    """
+    usable = [row for row in summary if np.isfinite(row[1])]
+    print("")
+    if len(usable) < 2:
+        print("Too few finite points to judge sensitivity.")
+        return
+
+    scales = [row[0] for row in usable]
+    losses = [row[1] for row in usable]
+    peaks = [row[3] for row in usable]
+    grads = [row[5] for row in usable]
+    span = max(scales) / min(scales)
+    loss_spread = max(losses) / min(losses) - 1.0
+    grad_spread = max(grads) / min(grads)
+    peak_spread = max(peaks) / min(peaks)
+    stalled = [row[0] for row in summary if row[6] < num_iters]
+
+    print(
+        f"Across {span:.0f}x in e_sat: loss moves {100 * loss_spread:.3f} %, "
+        f"gradient magnitude {grad_spread:.2f}x, integrator peak "
+        f"{peak_spread:.1f}x."
+    )
+    if stalled:
+        print(
+            "  Runs that did not complete, at e_sat = "
+            + ", ".join(f"{value:g}" for value in stalled)
+            + " m."
+        )
+    else:
+        print(f"  Every point completed all {num_iters} iterations.")
+    settled = loss_spread < 1e-2 and grad_spread < 2.0 and not stalled
+    print(
+        "  The scale reaches the integrator and not the optimization: keeping "
+        f"the committed e_sat = {COMMITTED_E_SAT:g} m."
+        if settled
+        else "  The scale does reach the optimization; report it with the run."
+    )
 
 
 def _parse_args():
@@ -816,7 +890,7 @@ def _parse_args():
         default=[1e-4, 2e-4, 5e-4, 1e-3, 2e-3, 5e-3, 1e-2],
         help="Steps the solver-dt stage compares against the finest.",
     )
-    parser.add_argument("--e-sat", type=float, default=1e-2)
+    parser.add_argument("--e-sat", type=float, default=COMMITTED_E_SAT)
     parser.add_argument(
         "--e-sats",
         type=float,
@@ -850,7 +924,16 @@ def _parse_args():
     parser.add_argument("--num-points", type=int, default=25)
     parser.add_argument("--num-iters", type=int, default=20)
     parser.add_argument("--eps", type=float, default=1e-8)
-    parser.add_argument("--no-clip", action="store_true")
+    parser.add_argument(
+        "--clip",
+        type=float,
+        default=None,
+        help=(
+            "Global gradient-norm clip. Off by default, matching the "
+            f"generators; pass --clip {CLIP_THRESHOLD:g} to reproduce the "
+            "committed configuration."
+        ),
+    )
     parser.add_argument("--batch-size", type=int, default=SECVD_BATCH_SIZE)
     parser.add_argument("--seed", type=int, default=SECVD_INIT_SEED)
     parser.add_argument("--out-dir", type=Path, default=TUNING_DIR)
@@ -868,7 +951,7 @@ def main() -> None:
     print(
         f"[{args.stage}] {args.method}, horizon {args.horizon} s, "
         f"batch {args.batch_size}, eps {args.eps:g}, "
-        f"clip {'off' if args.no_clip else CLIP_THRESHOLD}",
+        f"clip {'off' if args.clip is None else format(args.clip, 'g')}",
         flush=True,
     )
     args.out_dir.mkdir(parents=True, exist_ok=True)
@@ -906,7 +989,7 @@ def main() -> None:
             alpha_high=args.alpha_high,
             num_points=args.num_points,
             eps=args.eps,
-            use_clip=not args.no_clip,
+            clip=args.clip,
             ratio=ratio,
         )
         print("")

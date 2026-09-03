@@ -32,7 +32,12 @@ from typing import Any
 
 import numpy as np
 
-SCHEMA_VERSION = 2
+# v3 records the two case parameters that were previously implicit. Both now
+# vary: the integration step is exposed on the generators, and the plant's
+# material damping was changed from 3.6e2 to 7.2e1 (see secvd_case). Without
+# them an archive cannot say which plant or which fidelity produced it, and a
+# coarse run is indistinguishable from a full-fidelity one.
+SCHEMA_VERSION = 3
 RESULTS_FILENAME = "optimization_results.npz"
 METHODS = ("collocated", "synergistic")
 GAIN_NAMES = ("Kp", "Ki", "Kd")
@@ -121,6 +126,8 @@ def save_optimization_outputs(
     objective_scales: Any,
     saturation_config: str,
     optimizer_metadata: str,
+    solver_dt: float,
+    material_damping_coefficient: float,
     t_ts: Any,
     q_ts_init: Any,
     q_ts_best: Any,
@@ -198,6 +205,8 @@ def save_optimization_outputs(
         "history_loss": arr(history_loss),
         "history_time": arr(history_time),
         "history_finite_mask": arr(history_finite_mask, dtype=bool),
+        "solver_dt": arr(float(solver_dt)),
+        "material_damping_coefficient": arr(float(material_damping_coefficient)),
         "history_grad_norm": arr(history_grad_norm),
         "history_update_norm": arr(history_update_norm),
         "init_seed": arr(int(init_seed), dtype=np.int64),
@@ -287,6 +296,8 @@ _REQUIRED_FIELDS = frozenset(
         "objective_scales",
         "saturation_config",
         "optimizer_metadata",
+        "solver_dt",
+        "material_damping_coefficient",
         "t_ts",
         "q_ts_init",
         "q_ts_best",
