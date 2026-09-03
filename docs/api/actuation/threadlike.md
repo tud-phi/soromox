@@ -71,10 +71,7 @@ a(s) =
 \]
 
 In particular, a positive-`y` path lies on the inside of a
-positive-curvature bend and shortens relative to the backbone. A renderer
-whose screen `y` coordinate points downward may display the same positive
-rotation as clockwise; that display convention does not change the model's
-right-handed material-frame convention.
+positive-curvature bend and shortens relative to the backbone.
 
 ### Custom routing laws
 
