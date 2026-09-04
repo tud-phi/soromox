@@ -77,7 +77,7 @@ Array = jax.Array
 
 CASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = CASE_DIR / "data"
-DEFAULT_CSV_PATH = DATA_DIR / "benchmark_results.csv"
+DEFAULT_CSV_PATH = DATA_DIR / "parallel_rollout_benchmark.csv"
 
 DEFAULT_SYSTEMS = ["articulated_soft_robot", "planar_pcs", "pcs", "gvs"]
 DEFAULT_SEGMENT_COUNTS = [1, 2, 4, 8, 16, 32]
