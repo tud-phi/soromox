@@ -66,7 +66,8 @@ uv run python paper_results/secVd_control_gain_optimization/code/render_control_
 
 Use `--trajectory initial-median` for the finite initial rollout closest to the
 median initial loss; the default is `optimized-best`. Initial-median files use
-the `_initial_median_tracking` suffix.
+the `_initial_median_tracking` suffix; best files use `_optimized_best_tracking`.
+All renderings share one gravity-down camera.
 
 Run a solver-step, learning-rate, or saturation study:
 

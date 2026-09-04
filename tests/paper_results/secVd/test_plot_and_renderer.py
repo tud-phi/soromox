@@ -235,7 +235,7 @@ def test_method_selection_and_overwrite(monkeypatch, tmp_path):
     assert calls == ["synergistic"]
     assert outputs == [tmp_path / "synergistic.mp4"]
 
-    (tmp_path / "collocated_tracking.mp4").touch()
+    (tmp_path / "collocated_optimized_best_tracking.mp4").touch()
     with pytest.raises(FileExistsError, match="--force"):
         renderer.render_saved_results(
             data_dir=tmp_path,
@@ -245,7 +245,7 @@ def test_method_selection_and_overwrite(monkeypatch, tmp_path):
         )
     assert calls == ["synergistic"], "preflight must fail before either render starts"
 
-    (tmp_path / "collocated_tracking.mp4").unlink()
+    (tmp_path / "collocated_optimized_best_tracking.mp4").unlink()
     (tmp_path / "collocated_initial_median_tracking.mp4").touch()
     with pytest.raises(FileExistsError, match="--force"):
         renderer.render_saved_results(
@@ -291,8 +291,9 @@ def test_mock_viser_receives_robot_trail_target_and_paths(monkeypatch, tmp_path)
         record_frame_timeout=3.0,
         renderer_factory=FakeRenderer,
     )
-    assert outputs == [tmp_path / "synergistic_tracking.mp4"]
+    assert outputs == [tmp_path / "synergistic_optimized_best_tracking.mp4"]
     assert captured["render"]["q_ts"].shape == (5, 6)
+    assert captured["render"]["camera_config"] == renderer.make_camera_config(0.1)
     assert captured["init"][1]["desired_q_ts"] is None
     assert captured["init"][1]["cross_section_resolution"] == 64
     assert "cylinder_sections" not in captured["init"][1]
@@ -310,7 +311,9 @@ def test_mock_viser_receives_robot_trail_target_and_paths(monkeypatch, tmp_path)
         np.stack([renderer.CURRENT_POSITION_COLOR, renderer.TARGET_COLOR]),
     )
     assert captured["render"]["static_spheres_positions"] is None
-    assert captured["render"]["record_path"].endswith("synergistic_tracking.mp4")
+    assert captured["render"]["record_path"].endswith(
+        "synergistic_optimized_best_tracking.mp4"
+    )
 
     outputs[0].touch()
     with pytest.raises(FileExistsError, match="--force"):
@@ -379,6 +382,7 @@ def test_initial_median_renders_the_representative_initial_rollout(
 
     assert outputs == [tmp_path / "synergistic_initial_median_tracking.mp4"]
     np.testing.assert_allclose(captured["render"]["q_ts"], q_init[2])
+    assert captured["render"]["camera_config"] == renderer.make_camera_config(0.1)
     assert captured["render"]["robot_name"].endswith("initial median")
 
 
@@ -404,6 +408,59 @@ def test_initial_median_requires_a_finite_initial_loss():
     }
     with pytest.raises(ValueError, match="finite initial loss"):
         renderer.initial_median_batch(data)
+
+
+def test_shared_camera_is_level_framed_and_gravity_down():
+    total_length = 0.1
+    camera = renderer.make_camera_config(total_length)
+    position = np.asarray(camera.position)
+    look_at = np.asarray(camera.look_at)
+    view_offset = position - look_at
+    vertical_span = (
+        2.0 * np.linalg.norm(view_offset) * np.tan(np.deg2rad(camera.fov / 2.0))
+    )
+
+    assert camera.up == (0.0, 0.0, -1.0)
+    assert view_offset[2] == pytest.approx(0.0)
+    assert look_at[2] == pytest.approx(0.55 * total_length)
+    assert 1.8 * total_length < vertical_span < 2.4 * total_length
+
+
+def test_recording_client_flushes_camera_before_the_first_frame(monkeypatch):
+    class FakeClient:
+        flushed = False
+
+        def flush(self):
+            self.flushed = True
+
+    client = FakeClient()
+    monkeypatch.setattr(
+        renderer.ViserRenderer,
+        "_wait_for_recording_client",
+        lambda _self, _timeout: client,
+    )
+    instance = object.__new__(renderer.SecVdTrackingRenderer)
+
+    assert instance._wait_for_recording_client(1.0) is client
+    assert client.flushed
+
+
+def test_first_recorded_frame_follows_a_discarded_camera_warmup(monkeypatch):
+    client = object()
+    calls = []
+
+    def capture(_self, active_client, *, timeout):
+        calls.append((active_client, timeout))
+        return np.zeros((1, 1, 3), dtype=np.uint8), client
+
+    monkeypatch.setattr(renderer.ViserRenderer, "_capture_viser_frame", capture)
+    instance = object.__new__(renderer.SecVdTrackingRenderer)
+    instance._warmed_recording_client = None
+
+    instance._capture_viser_frame(client, timeout=2.0)
+    assert calls == [(client, 2.0), (client, 2.0)]
+    instance._capture_viser_frame(client, timeout=2.0)
+    assert calls == [(client, 2.0), (client, 2.0), (client, 2.0)]
 
 
 def test_synergistic_trail_contains_only_time_varying_reference(monkeypatch, tmp_path):

@@ -29,7 +29,12 @@ from secvd_case import (  # noqa: E402
 )
 from secvd_results import METHODS, load_results  # noqa: E402
 
-from soromox.rendering import BackboneColorConfig, RendererColorConfig, ViserRenderer
+from soromox.rendering import (
+    BackboneColorConfig,
+    CameraConfig,
+    RendererColorConfig,
+    ViserRenderer,
+)
 
 DEFAULT_DATA_DIR = CASE_DIR / "data"
 DEFAULT_OUTPUT_DIR = CASE_DIR / "outputs"
@@ -52,6 +57,10 @@ TARGET_WIREFRAME_RADIUS_SCALE = 1.03
 MARKER_RADIUS = 0.004
 TARGET_MARKER_RADIUS = 0.008
 TRAIL_RADIUS = 0.0012
+CAMERA_FOV_DEGREES = 45.0
+CAMERA_POSITION_PER_LENGTH = (1.65, -1.52, 0.55)
+CAMERA_LOOK_AT_PER_LENGTH = (-0.05, -0.12, 0.55)
+CAMERA_UP = (0.0, 0.0, -1.0)
 
 
 def _normalized(vector: np.ndarray, fallback: np.ndarray) -> np.ndarray:
@@ -149,6 +158,7 @@ class SecVdTrackingRenderer(ViserRenderer):
         self._target_wire_handle: Any | None = None
         self._target_curves: np.ndarray | None = None
         self._target_is_static = False
+        self._warmed_recording_client: Any | None = None
         super().__init__(*args, **kwargs)
         if self._desired_q_ts is not None:
             self._target_is_static = np.allclose(
@@ -211,6 +221,20 @@ class SecVdTrackingRenderer(ViserRenderer):
 
     def _after_sequence_frame_updated(self, frame_idx: int) -> None:
         self._update_target_wireframe(frame_idx)
+
+    def _wait_for_recording_client(self, timeout: float):
+        client = super()._wait_for_recording_client(timeout)
+        if client is not None:
+            client.flush()
+        return client
+
+    def _capture_viser_frame(
+        self, client: Any | None, *, timeout: float
+    ) -> tuple[np.ndarray, Any]:
+        if client is not self._warmed_recording_client:
+            _, client = super()._capture_viser_frame(client, timeout=timeout)
+            self._warmed_recording_client = client
+        return super()._capture_viser_frame(client, timeout=timeout)
 
 
 def resample_trajectory(
@@ -282,12 +306,25 @@ def _trajectory_output_paths(
 ) -> list[Path]:
     if trajectory not in TRAJECTORIES:
         raise ValueError(f"Unknown trajectory {trajectory!r}")
-    qualifier = "" if trajectory == "optimized-best" else "_initial_median"
+    qualifier = (
+        "_optimized_best" if trajectory == "optimized-best" else "_initial_median"
+    )
     stem = output_dir / f"{name}{qualifier}_tracking"
     paths = [stem.with_suffix(".mp4")]
     if make_gif:
         paths.append(stem.with_suffix(".gif"))
     return paths
+
+
+def make_camera_config(total_length: float) -> CameraConfig:
+    """Return the shared gravity-down camera for every Section Vd rendering."""
+    scale = float(total_length)
+    return CameraConfig(
+        fov=CAMERA_FOV_DEGREES,
+        position=tuple(scale * value for value in CAMERA_POSITION_PER_LENGTH),
+        look_at=tuple(scale * value for value in CAMERA_LOOK_AT_PER_LENGTH),
+        up=CAMERA_UP,
+    )
 
 
 def _color_config(num_points: int, *, opacity: float = 1.0) -> RendererColorConfig:
@@ -414,6 +451,7 @@ def render_method(
     renderer.render_sequence(
         ts=t,
         q_ts=q,
+        camera_config=make_camera_config(total_length),
         record_path=str(mp4_path),
         stop_when_recording_done=True,
         record_client_timeout=record_client_timeout,
