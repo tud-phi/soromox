@@ -13,8 +13,6 @@ from typing import Any
 
 import numpy as np
 
-# Geometry rendering should allocate only what it needs instead of reserving
-# most accelerator memory on startup.
 os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
 
 CODE_DIR = Path(__file__).resolve().parent
@@ -31,10 +29,16 @@ from secvd_case import (  # noqa: E402
 )
 from secvd_results import METHODS, load_results  # noqa: E402
 
-from soromox.rendering import BackboneColorConfig, RendererColorConfig, ViserRenderer
+from soromox.rendering import (
+    BackboneColorConfig,
+    CameraConfig,
+    RendererColorConfig,
+    ViserRenderer,
+)
 
 DEFAULT_DATA_DIR = CASE_DIR / "data"
 DEFAULT_OUTPUT_DIR = CASE_DIR / "outputs"
+TRAJECTORIES = ("optimized-best", "initial-median")
 
 
 def _hex_rgb(value: str) -> np.ndarray:
@@ -53,6 +57,10 @@ TARGET_WIREFRAME_RADIUS_SCALE = 1.03
 MARKER_RADIUS = 0.004
 TARGET_MARKER_RADIUS = 0.008
 TRAIL_RADIUS = 0.0012
+CAMERA_FOV_DEGREES = 45.0
+CAMERA_POSITION_PER_LENGTH = (1.65, -1.52, 0.55)
+CAMERA_LOOK_AT_PER_LENGTH = (-0.05, -0.12, 0.55)
+CAMERA_UP = (0.0, 0.0, -1.0)
 
 
 def _normalized(vector: np.ndarray, fallback: np.ndarray) -> np.ndarray:
@@ -150,6 +158,7 @@ class SecVdTrackingRenderer(ViserRenderer):
         self._target_wire_handle: Any | None = None
         self._target_curves: np.ndarray | None = None
         self._target_is_static = False
+        self._warmed_recording_client: Any | None = None
         super().__init__(*args, **kwargs)
         if self._desired_q_ts is not None:
             self._target_is_static = np.allclose(
@@ -166,9 +175,6 @@ class SecVdTrackingRenderer(ViserRenderer):
                     )
                 )
             else:
-                # Avoid vectorizing many full robot geometries into one large
-                # accelerator allocation. The one-configuration function is
-                # compiled once and then reused for each reference frame.
                 self._target_curves = np.stack(
                     [
                         np.asarray(
@@ -216,6 +222,20 @@ class SecVdTrackingRenderer(ViserRenderer):
     def _after_sequence_frame_updated(self, frame_idx: int) -> None:
         self._update_target_wireframe(frame_idx)
 
+    def _wait_for_recording_client(self, timeout: float):
+        client = super()._wait_for_recording_client(timeout)
+        if client is not None:
+            client.flush()
+        return client
+
+    def _capture_viser_frame(
+        self, client: Any | None, *, timeout: float
+    ) -> tuple[np.ndarray, Any]:
+        if client is not self._warmed_recording_client:
+            _, client = super()._capture_viser_frame(client, timeout=timeout)
+            self._warmed_recording_client = client
+        return super()._capture_viser_frame(client, timeout=timeout)
+
 
 def resample_trajectory(
     t: np.ndarray, q: np.ndarray, pose: np.ndarray, fps: int
@@ -240,18 +260,71 @@ def resample_trajectory(
 
 
 def validate_pose_consistency(
-    robot, total_length: float, data: dict[str, np.ndarray]
+    robot,
+    total_length: float,
+    data: dict[str, np.ndarray],
+    trajectory: str = "optimized-best",
 ) -> None:
     """Ensure stored poses match FK from the authoritative configurations."""
-    stored = np.asarray(data["x_ts_best"])[0]
-    reconstructed = np.asarray(
-        end_effector_pose_trajectory(robot, data["q_ts_best"][0], total_length)
-    )
-    if not np.allclose(reconstructed, stored, rtol=1e-6, atol=1e-8):
-        maximum = float(np.max(np.abs(reconstructed - stored)))
-        raise ValueError(
-            f"Stored pose does not agree with q_ts_best FK (max error {maximum:.3e})"
+    if trajectory not in TRAJECTORIES:
+        raise ValueError(f"Unknown trajectory {trajectory!r}")
+    suffix = "best" if trajectory == "optimized-best" else "init"
+    q_key = f"q_ts_{suffix}"
+    x_key = f"x_ts_{suffix}"
+    stored = np.asarray(data[x_key])
+    for batch in range(stored.shape[0]):
+        reconstructed = np.asarray(
+            end_effector_pose_trajectory(robot, data[q_key][batch], total_length)
         )
+        if not np.allclose(reconstructed, stored[batch], rtol=1e-6, atol=1e-8):
+            maximum = float(np.max(np.abs(reconstructed - stored[batch])))
+            raise ValueError(
+                f"Stored pose for start {batch} does not agree with {q_key} FK "
+                f"(max error {maximum:.3e})"
+            )
+
+
+def initial_median_batch(data: dict[str, np.ndarray]) -> int:
+    """Select the finite initial rollout closest to the median initial loss."""
+    loss = np.asarray(data["history_loss"][0], dtype=float)
+    finite = np.asarray(data["history_finite_mask"][0], dtype=bool) & np.isfinite(loss)
+    candidates = np.flatnonzero(finite)
+    if not candidates.size:
+        raise ValueError(
+            "Cannot render an initial median without a finite initial loss"
+        )
+    candidate_loss = loss[candidates]
+    median_loss = float(np.median(candidate_loss))
+    order = np.lexsort(
+        (candidates, candidate_loss, np.abs(candidate_loss - median_loss))
+    )
+    return int(candidates[order[0]])
+
+
+def _trajectory_output_paths(
+    output_dir: Path, name: str, trajectory: str, make_gif: bool
+) -> list[Path]:
+    if trajectory not in TRAJECTORIES:
+        raise ValueError(f"Unknown trajectory {trajectory!r}")
+    qualifier = (
+        "_optimized_best" if trajectory == "optimized-best" else "_initial_median"
+    )
+    stem = output_dir / f"{name}{qualifier}_tracking"
+    paths = [stem.with_suffix(".mp4")]
+    if make_gif:
+        paths.append(stem.with_suffix(".gif"))
+    return paths
+
+
+def make_camera_config(total_length: float) -> CameraConfig:
+    """Return the shared gravity-down camera for every Section Vd rendering."""
+    scale = float(total_length)
+    return CameraConfig(
+        fov=CAMERA_FOV_DEGREES,
+        position=tuple(scale * value for value in CAMERA_POSITION_PER_LENGTH),
+        look_at=tuple(scale * value for value in CAMERA_LOOK_AT_PER_LENGTH),
+        up=CAMERA_UP,
+    )
 
 
 def _color_config(num_points: int, *, opacity: float = 1.0) -> RendererColorConfig:
@@ -295,23 +368,33 @@ def render_method(
     open_browser: bool,
     record_client_timeout: float,
     record_frame_timeout: float,
+    trajectory: str = "optimized-best",
     renderer_factory: Callable = SecVdTrackingRenderer,
 ) -> list[Path]:
-    mp4_path = output_dir / f"{name}_tracking.mp4"
-    gif_path = output_dir / f"{name}_tracking.gif"
-    requested = [mp4_path] + ([gif_path] if make_gif else [])
+    requested = _trajectory_output_paths(output_dir, name, trajectory, make_gif)
+    mp4_path = requested[0]
     existing = [path for path in requested if path.exists()]
     if existing and not force:
         raise FileExistsError(f"Refusing to overwrite {existing}; pass --force")
 
     data = load_results(data_dir / name, expected_method=name)
     robot, _routing, total_length = build_sec_vd_robot()
-    validate_pose_consistency(robot, total_length, data)
+    validate_pose_consistency(robot, total_length, data, trajectory)
+    if trajectory == "optimized-best":
+        batch = int(data["best_batch"])
+        suffix = "best"
+    else:
+        batch = initial_median_batch(data)
+        suffix = "init"
+    print(f"Rendering {name} {trajectory} start {batch}")
     t, q, pose = resample_trajectory(
-        data["t_ts"][0], data["q_ts_best"][0], data["x_ts_best"][0], fps
+        data["t_ts"],
+        data[f"q_ts_{suffix}"][batch],
+        data[f"x_ts_{suffix}"][batch],
+        fps,
     )
-    dense_t = np.asarray(data["t_ts"])[0]
-    dense_reference_pose = np.asarray(data["x_des_ts"])[0]
+    dense_t = np.asarray(data["t_ts"])
+    dense_reference_pose = np.asarray(data["x_des_ts"])
     reference_pose = np.column_stack(
         [np.interp(t, dense_t, dense_reference_pose[:, idx]) for idx in range(6)]
     )
@@ -319,7 +402,7 @@ def render_method(
     desired_positions = reference_pose[:, 3:6] if name == "synergistic" else None
     desired_q_ts = None
     if name == "collocated":
-        dense_q_des = np.asarray(data["q_des_ts"])[0]
+        dense_q_des = np.asarray(data["q_des_ts"])
         desired_q_ts = np.column_stack(
             [np.interp(t, dense_t, dense_q_des[:, idx]) for idx in range(q.shape[1])]
         )
@@ -368,6 +451,7 @@ def render_method(
     renderer.render_sequence(
         ts=t,
         q_ts=q,
+        camera_config=make_camera_config(total_length),
         record_path=str(mp4_path),
         stop_when_recording_done=True,
         record_client_timeout=record_client_timeout,
@@ -380,10 +464,15 @@ def render_method(
         dynamic_spheres_radii=dynamic_radii,
         dynamic_spheres_colors=dynamic_colors,
         blocking=True,
-        robot_name=f"Section Vd {name}",
+        robot_name=(
+            f"Section Vd {name}"
+            if trajectory == "optimized-best"
+            else f"Section Vd {name} initial median"
+        ),
     )
     outputs = [mp4_path]
     if make_gif:
+        gif_path = requested[1]
         _convert_gif(mp4_path, gif_path)
         outputs.append(gif_path)
     return outputs
@@ -394,6 +483,7 @@ def render_saved_results(
     data_dir: Path,
     output_dir: Path,
     method: str = "both",
+    trajectory: str = "optimized-best",
     fps: int = 24,
     make_gif: bool = False,
     force: bool = False,
@@ -409,9 +499,11 @@ def render_saved_results(
     if any(name not in METHODS for name in selected):
         raise ValueError(f"Unknown method {method!r}")
     output_dir.mkdir(parents=True, exist_ok=True)
-    requested = [output_dir / f"{name}_tracking.mp4" for name in selected]
-    if make_gif:
-        requested.extend(output_dir / f"{name}_tracking.gif" for name in selected)
+    requested = [
+        path
+        for name in selected
+        for path in _trajectory_output_paths(output_dir, name, trajectory, make_gif)
+    ]
     existing = [path for path in requested if path.exists()]
     if existing and not force:
         raise FileExistsError(f"Refusing to overwrite {existing}; pass --force")
@@ -429,6 +521,7 @@ def render_saved_results(
                 open_browser=open_browser,
                 record_client_timeout=record_client_timeout,
                 record_frame_timeout=record_frame_timeout,
+                trajectory=trajectory,
                 renderer_factory=renderer_factory,
             )
         )
@@ -440,6 +533,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIR)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--method", choices=(*METHODS, "both"), default="both")
+    parser.add_argument("--trajectory", choices=TRAJECTORIES, default="optimized-best")
     parser.add_argument("--fps", type=int, default=24)
     parser.add_argument("--gif", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--port", type=int, default=8080)
@@ -458,6 +552,7 @@ def main() -> None:
         data_dir=args.data_dir,
         output_dir=args.output_dir,
         method=args.method,
+        trajectory=args.trajectory,
         fps=args.fps,
         make_gif=args.gif,
         force=args.force,

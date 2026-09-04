@@ -13,11 +13,19 @@ and include benchmark baseline and measurement context for performance claims.
 
 ### Added
 
+- Added reproducible six-start Section Vd control-gain optimization results,
+  with a shared dimensionless objective, tuned settings, schema-v3 archives,
+  and regression coverage; see
+  [issue #154](https://github.com/tud-phi/soromox/issues/154).
 - Added renderer-neutral cross-section contours and loft construction, with a
   registration hook for extending both swept 3D renderers with new geometries.
 
 ### Changed
 
+- Updated the Section Vd workflow with one generator and tuning study, retuned
+  controller and optimizer settings, strict device selection,
+  regenerated figures, and distinct optimized-best and initial-median animations
+  with a shared gravity-down camera.
 - Open3D and Viser swept backbones now preserve circular, elliptical, and
   rectangular cross-sections, including dimensions that vary with abscissa.
 

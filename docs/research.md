@@ -106,9 +106,9 @@ and 2.29° orientation RMSE.
 
 ### 4. Control-gain optimization
 
-Here, gradients are propagated through full closed-loop rollouts while several
-gain initializations are evaluated in parallel. For actuation-space and
-operational-space control, the optimized losses decrease by 62% and 57%,
+Gradients are propagated through full closed-loop rollouts while six gain
+initializations are evaluated in parallel. For actuation-space and
+operational-space control, the optimized losses decrease by 47% and 99%,
 respectively, relative to their initial median values.
 
 <figure markdown>
