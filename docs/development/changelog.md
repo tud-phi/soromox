@@ -36,6 +36,8 @@ and include benchmark baseline and measurement context for performance claims.
 
 ### Fixed
 
+- Fixed `DynamicalSystem` API documentation to avoid assuming second-order
+  `[q, qd]` states or configuration-only projection.
 - Made Viser discrete cross-section markers consistent with Open3D: circular,
   rectangular, and elliptical sections now use spheres, boxes, and ellipsoids,
   respectively.

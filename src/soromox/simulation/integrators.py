@@ -14,7 +14,7 @@ from diffrax import (
     LocalLinearInterpolation,
 )
 
-from soromox.systems.dynamical_system import DynamicalSystem
+from soromox.systems.soft_robot import SoftRobot
 
 
 class SemiImplicitEuler(AbstractSolver):
@@ -28,7 +28,7 @@ class SemiImplicitEuler(AbstractSolver):
     ``qd_{n+1} = qd_n + dt * qdd_n`` and
     ``q_{n+1} = retract(q_n, dt * qd_{n+1})``.
 
-    The solver is intended for :class:`soromox.systems.DynamicalSystem`
+    The solver is intended for :class:`soromox.systems.SoftRobot`
     rollouts. It uses the supplied system's state helpers rather than splitting
     the state in half, so unequal floating-base configuration and velocity
     dimensions, manifold retraction, and trailing system auxiliary states are
@@ -36,11 +36,11 @@ class SemiImplicitEuler(AbstractSolver):
     with explicit Euler.
 
     Attributes:
-        system: Soromox system that supplies ``split_state``, ``pack_state``,
+        system: Soft robot system that supplies ``split_state``, ``pack_state``,
             and ``retract_configuration``.
     """
 
-    system: DynamicalSystem
+    system: SoftRobot
     term_structure: ClassVar = AbstractTerm
     interpolation_cls: ClassVar[Callable[..., LocalLinearInterpolation]] = (
         LocalLinearInterpolation

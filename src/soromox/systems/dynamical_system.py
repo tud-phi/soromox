@@ -55,12 +55,13 @@ class DynamicalSystem(eqx.Module):
         """
         Compute the forward dynamics of the system.
 
-        This method computes the state derivative yd = [qd, qdd] given the
-        current time, state, and actuation inputs.
+        This method computes the state derivative ``yd`` given the current
+        time, state, and actuation inputs. No particular decomposition or order
+        of the state is assumed.
 
         Args:
             t (Array): Current time.
-            y (Array): State vector containing configuration and velocity.
+            y (Array): State vector.
             actuation_args (Optional[Tuple]): Tuple of actuation inputs, typically (u, tau_ext) where
                 u is the control input and tau_ext is the external force/torque.
 
@@ -118,11 +119,11 @@ class DynamicalSystem(eqx.Module):
         return base_tau_ext + tau_environment
 
     def project_state(self, y: Array) -> Array:
-        """Project state storage onto the system configuration manifold.
+        """Project state storage onto the system state manifold.
 
         The generic implementation is an identity operation. Systems with a
-        constrained configuration representation can override this hook. It is
-        invoked before rollout callbacks and on saved trajectories.
+        constrained state representation can override this hook. It is invoked
+        before rollout callbacks and on saved trajectories.
 
         Args:
             y: System state with the state dimension on the trailing axis.
