@@ -30,6 +30,7 @@ from secvd_init import (  # noqa: E402
 
 NOMINAL = {"Kp": 5e1 * jnp.ones(3), "Ki": 5e0 * jnp.ones(3), "Kd": 1e0 * jnp.ones(3)}
 
+
 @pytest.mark.parametrize("batch_size", [1, SECVD_BATCH_SIZE])
 def test_start_zero_is_always_the_untouched_nominal(batch_size):
     """A single-start run must stay a strict subset of a batched one."""

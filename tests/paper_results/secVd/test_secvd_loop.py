@@ -222,6 +222,7 @@ def test_the_loop_stops_when_every_start_is_dead():
     )
     assert history.stopped_early
     assert "non-finite" in history.stop_reason
+    assert "iteration 1" in history.stop_reason
     assert history.dead_starts() == [0, 1]
     assert len(history) < 6
 

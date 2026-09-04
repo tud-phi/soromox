@@ -30,7 +30,7 @@ jax.config.update("jax_enable_x64", True)
 def test_plot_loss_accepts_single_start_without_band():
     figure, axis = matplotlib.pyplot.subplots()
     mask = np.ones((5, 1), dtype=bool)
-    plotter.plot_loss(axis, np.arange(5.0)[:, None], mask, "A")
+    plotter.plot_loss(axis, np.arange(1.0, 6.0)[:, None], mask, "A")
     assert len(axis.lines) == 1
     assert len(axis.collections) == 0
     matplotlib.pyplot.close(figure)
@@ -38,21 +38,48 @@ def test_plot_loss_accepts_single_start_without_band():
 
 def test_plot_loss_bands_a_multi_start_run():
     figure, axis = matplotlib.pyplot.subplots()
-    loss = np.stack([np.arange(5.0), np.arange(5.0) + 2.0], axis=1)
+    loss = np.stack([np.arange(1.0, 6.0), np.arange(3.0, 8.0)], axis=1)
     plotter.plot_loss(axis, loss, np.ones((5, 2), dtype=bool), "A")
     assert len(axis.collections) == 1, "expected a min-max band across starts"
-    np.testing.assert_allclose(axis.lines[0].get_ydata(), np.arange(5.0))
+    np.testing.assert_allclose(axis.lines[0].get_ydata(), np.arange(1.0, 6.0))
     matplotlib.pyplot.close(figure)
 
 
 def test_plot_loss_excludes_frozen_starts_from_the_band():
     """A frozen start must drop out of the band, not appear as a gap."""
     figure, axis = matplotlib.pyplot.subplots()
-    loss = np.stack([np.arange(5.0), np.full(5, np.nan)], axis=1)
+    loss = np.stack([np.arange(1.0, 6.0), np.full(5, np.nan)], axis=1)
     mask = np.ones((5, 2), dtype=bool)
     mask[:, 1] = False
     plotter.plot_loss(axis, loss, mask, "A")
-    np.testing.assert_allclose(axis.lines[0].get_ydata(), np.arange(5.0))
+    np.testing.assert_allclose(axis.lines[0].get_ydata(), np.arange(1.0, 6.0))
+    matplotlib.pyplot.close(figure)
+
+
+def test_nonpositive_losses_are_safe_on_the_log_axis():
+    figure, axis = matplotlib.pyplot.subplots()
+    loss = np.array([[0.0, 4.0], [-1.0, 2.0], [0.0, 0.0]])
+    mask = np.ones_like(loss, dtype=bool)
+    mask[1, 0] = False
+
+    plotter.plot_loss(axis, loss, mask, "A")
+
+    plotted = axis.lines[0].get_ydata()
+    assert np.all(plotted > 0.0)
+    assert plotter.loss_extent(loss, mask) == (2.0, 4.0)
+    assert plotter.shared_loss_limits((0.0, 4.0)) is None
+    matplotlib.pyplot.close(figure)
+
+
+def test_an_all_nonpositive_loss_falls_back_to_a_positive_plot_floor():
+    figure, axis = matplotlib.pyplot.subplots()
+    loss = np.zeros((3, 1))
+    mask = np.ones_like(loss, dtype=bool)
+
+    plotter.plot_loss(axis, loss, mask, "A")
+
+    assert np.all(axis.lines[0].get_ydata() > 0.0)
+    assert plotter.loss_extent(loss, mask) is None
     matplotlib.pyplot.close(figure)
 
 
@@ -147,6 +174,14 @@ def test_a_malformed_manual_limit_is_rejected(panel, values, message, monkeypatc
     argv = ["plot_control_gain_optimization.py", f"--ylim-{panel}", *values]
     monkeypatch.setattr(sys, "argv", argv)
     with pytest.raises(ValueError, match=f"--ylim-{panel} {message}"):
+        plotter.parse_args()
+
+
+@pytest.mark.parametrize("panel", ["a", "c"])
+def test_log_loss_limits_must_be_positive(panel, monkeypatch):
+    argv = ["plot_control_gain_optimization.py", f"--ylim-{panel}", "0", "1"]
+    monkeypatch.setattr(sys, "argv", argv)
+    with pytest.raises(ValueError, match="positive limits for a log axis"):
         plotter.parse_args()
 
 

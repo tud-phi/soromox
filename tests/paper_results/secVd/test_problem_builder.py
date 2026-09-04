@@ -48,6 +48,8 @@ from secvd_objective import (  # noqa: E402
 )
 from secvd_results import load_results  # noqa: E402
 
+from soromox.coordinate_transformations import ActuationSpaceDynamics  # noqa: E402
+
 SHORT_HORIZON = 0.01
 
 
@@ -269,6 +271,26 @@ def test_collocated_control_error_is_not_the_strain_error(problems):
     # components and is orders larger on this setpoint.
     assert np.abs(control_error).max() < 0.1
     assert np.abs(strain_error).max() > np.abs(control_error).max()
+
+
+def test_committed_rollouts_activate_integral_error_saturation():
+    archive = SECTION_DIR / "data" / "collocated" / "optimization_results.npz"
+    if not archive.exists():
+        pytest.skip("no committed collocated archive to inspect")
+    stored = load_results(archive, expected_method="collocated")
+    robot, _routing, _length = build_sec_vd_robot()
+    dynamics = ActuationSpaceDynamics(robot)
+    n_actuators = robot.num_actuators
+    desired = dynamics.actuated_unactuated_coordinates(
+        jnp.asarray(stored["q_des_ts"])[0]
+    )[:n_actuators]
+
+    def control_error(q):
+        return desired - dynamics.actuated_unactuated_coordinates(q)[:n_actuators]
+
+    for field in ("q_ts_init", "q_ts_best"):
+        error = jax.vmap(jax.vmap(control_error))(jnp.asarray(stored[field]))
+        assert bool(jnp.any(jnp.abs(error) > COMMITTED_E_SAT)), field
 
 
 @pytest.mark.slow

@@ -93,22 +93,44 @@ def _format_axes(ax: plt.Axes, panel: str) -> None:
 
 
 def loss_extent(history_loss: np.ndarray, finite_mask: np.ndarray):
-    """Return the smallest and largest loss actually drawn, or ``None``."""
-    loss = np.where(np.asarray(finite_mask, dtype=bool), history_loss, np.nan)
-    if not np.any(np.isfinite(loss)):
+    """Return the positive loss extent used by the logarithmic axis."""
+    loss = np.asarray(history_loss, dtype=float)
+    valid = np.asarray(finite_mask, dtype=bool) & np.isfinite(loss) & (loss > 0.0)
+    if not np.any(valid):
         return None
-    return float(np.nanmin(loss)), float(np.nanmax(loss))
+    return float(np.min(loss[valid])), float(np.max(loss[valid]))
 
 
 def shared_loss_limits(*extents) -> tuple[float, float] | None:
     """Combine per-panel extents into one padded limit for both loss panels."""
-    present = [e for e in extents if e is not None]
+    present = [e for e in extents if e is not None and e[0] > 0.0 and e[1] > 0.0]
     if not present:
         return None
     low = min(lo for lo, _ in present) / LOSS_YLIM_PAD
     high = max(hi for _, hi in present) * LOSS_YLIM_PAD
     if not low < high:
         return None
+    return low, high
+
+
+def _positive_loss_for_log_axis(
+    history_loss: np.ndarray, finite_mask: np.ndarray
+) -> np.ndarray:
+    """Mask invalid entries and clamp finite non-positive loss for log plotting."""
+    loss = np.asarray(history_loss, dtype=float)
+    valid = np.asarray(finite_mask, dtype=bool) & np.isfinite(loss)
+    positive = loss[valid & (loss > 0.0)]
+    floor = float(np.min(positive)) if positive.size else np.finfo(float).tiny
+    return np.where(valid, np.maximum(loss, floor), np.nan)
+
+
+def _row_loss_extent(loss: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Return per-iteration minima and maxima without all-NaN warnings."""
+    finite = np.isfinite(loss)
+    low = np.min(np.where(finite, loss, np.inf), axis=1)
+    high = np.max(np.where(finite, loss, -np.inf), axis=1)
+    low[~np.isfinite(low)] = np.nan
+    high[~np.isfinite(high)] = np.nan
     return low, high
 
 
@@ -125,20 +147,21 @@ def plot_loss(
     Args:
         ylim: Limits for the panel; ``None`` autoscales.
     """
-    loss = np.where(np.asarray(finite_mask, dtype=bool), history_loss, np.nan)
+    loss = _positive_loss_for_log_axis(history_loss, finite_mask)
+    low, high = _row_loss_extent(loss)
     iterations = np.arange(1, loss.shape[0] + 1)
     if loss.shape[1] > 1:
         ax.fill_between(
             iterations,
-            np.nanmin(loss, axis=1),
-            np.nanmax(loss, axis=1),
+            low,
+            high,
             color=COLORS["pre_opt_1"],
             alpha=BAND_ALPHA,
             linewidth=0,
         )
     ax.plot(
         iterations,
-        np.nanmin(loss, axis=1),
+        low,
         "-o",
         color=COLORS["pre_opt_1"],
         markersize=2,
@@ -153,9 +176,9 @@ def plot_loss(
 def _plot_three_channels(
     ax: plt.Axes,
     t: np.ndarray,
+    target: np.ndarray,
     initial: np.ndarray,
     best: np.ndarray,
-    target: np.ndarray,
     *,
     ylabel: str,
     panel: str,
@@ -167,9 +190,9 @@ def _plot_three_channels(
     Args:
         ax: Axes to draw on.
         t: Shared time grid, shape ``(timesteps,)``.
+        target: The reference, shape ``(timesteps, 3)``.
         initial: Every start's initial rollout, shape ``(B, timesteps, 3)``.
         best: The best start's optimized rollout, shape ``(timesteps, 3)``.
-        target: The reference, shape ``(timesteps, 3)``.
         ylabel: Axis label.
         panel: Panel letter.
         legend: Whether to draw the line-style legend.
@@ -263,9 +286,9 @@ def build_figure(
     _plot_three_channels(
         axes[0, 1],
         collocated["t_ts"],
+        collocated["q_des_ts"][:, :3],
         collocated["q_ts_init"][:, :, :3],
         collocated["q_ts_best"][best_batch_c, :, :3],
-        collocated["q_des_ts"][:, :3],
         ylabel="Angular strains [rad/m]",
         panel="B",
         legend=True,
@@ -281,9 +304,9 @@ def build_figure(
     _plot_three_channels(
         axes[1, 1],
         synergistic["t_ts"],
+        synergistic["x_des_ts"][:, 3:6],
         synergistic["x_ts_init"][:, :, 3:6],
         synergistic["x_ts_best"][best_batch_s, :, 3:6],
-        synergistic["x_des_ts"][:, 3:6],
         ylabel="End-effector position [m]",
         panel="D",
         legend=False,
@@ -340,6 +363,10 @@ def parse_args() -> argparse.Namespace:
             )
         if len(limits) == 2 and not limits[0] < limits[1]:
             raise ValueError(f"--ylim-{panel} needs LOW < HIGH, got {limits}")
+        if len(limits) == 2 and panel in ("a", "c") and limits[0] <= 0.0:
+            raise ValueError(
+                f"--ylim-{panel} needs positive limits for a log axis, got {limits}"
+            )
         setattr(args, f"ylim_{panel}", tuple(limits))
     return args
 

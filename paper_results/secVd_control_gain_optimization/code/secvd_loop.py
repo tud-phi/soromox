@@ -254,7 +254,7 @@ def run_gain_optimization(
             history.stopped_early = True
             history.stop_reason = (
                 f"all {batch_size} starts became non-finite by iteration "
-                f"{iteration}; recorded {len(history)} iterations"
+                f"{iteration + 1}; recorded {len(history)} iterations"
             )
             print(f"\n[WARNING] {history.stop_reason}.")
             break
