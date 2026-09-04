@@ -30,8 +30,10 @@ def test_cpu_device_is_configured_before_jax_import(monkeypatch):
 def test_output_paths_default_to_case_data_directory():
     args = benchmark.parse_args([])
 
-    assert args.csv == benchmark.DATA_DIR / "benchmark_results.csv"
-    assert args.failures_csv == benchmark.DATA_DIR / "benchmark_results_failures.csv"
+    assert args.csv == benchmark.DATA_DIR / "parallel_rollout_benchmark.csv"
+    assert args.failures_csv == (
+        benchmark.DATA_DIR / "parallel_rollout_benchmark_failures.csv"
+    )
     assert args.device == "gpu"
     assert args.backend == "auto"
     assert args.solver == "tsit5"

@@ -368,7 +368,10 @@ def _plot(
                 ax_per_env.plot(x, y_per_env, marker="o", label=label)
                 ax_total.plot(x, y_total, marker="o", label=label)
 
-        ax_per_env.set_title(f"{_model_label(system)}\nPer-Environment Speed")
+        ax_per_env.set_title(
+            f"{_model_label(system)}\nPer-Environment Speed",
+            pad=16.0,
+        )
         ax_total.set_title(f"{_model_label(system)}\nTotal Throughput")
         ax_total.set_xlabel(r"Number of environments $n_\mathrm{b}$")
         if col == 0:
@@ -546,8 +549,6 @@ def _plot_combined_scaling(
         plt.close(fig)
         return
 
-    x_min = min(all_x)
-    x_min = min(all_x)
     y_min, y_max = min(all_y), max(all_y)
     ax.set_xscale("log")
     ax.set_yscale("log")
@@ -557,15 +558,6 @@ def _plot_combined_scaling(
 
     if y_min <= 1.0 <= y_max:
         ax.axhline(1.0, color="#717674", linestyle=":", linewidth=1.8, alpha=0.9)
-        ax.text(
-            x_min,
-            1.0,
-            "Real time",
-            fontsize=14,
-            color="#717674",
-            ha="left",
-            va="bottom",
-        )
 
     # ---------------------------------------------------------
     # DYNAMIC LEGEND: Built only from the filtered rows

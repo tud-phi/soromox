@@ -46,15 +46,17 @@ table below retains the matched PCS and GVS comparison with SoRoSim:
 ### Batched GPU rollouts
 
 <figure markdown>
-  ![GPU batch simulation throughput for articulated, PCS, and GVS models as the leading batch size increases](assets/paper/gpu-batch-scaling.png){ .soromox-figure .soromox-figure--plot }
-  <figcaption>On the reported RTX 5090 benchmark, scaling the leading batch size from 1 to 256 raises GVS simulation throughput by up to 172.1×.</figcaption>
+  ![GPU batch simulation throughput through 1,024 parallel environments for articulated, PCS, and GVS models](assets/paper/gpu-batch-scaling.png){ .soromox-figure .soromox-figure--plot }
+  <figcaption>On the reported RTX 5090 benchmark, scaling the leading batch size from 1 to 1,024 raises GVS simulation throughput by up to 679.7×.</figcaption>
 </figure>
 
 The exact scaling depends on the model, number of links or segments, hardware,
-and discretization. Under the paper's settings, GVS reaches 172.1× the
-single-environment throughput for one segment at batch size 256 and retains a
-50.3× increase for 32 segments. Aggregate throughput increases monotonically
-for every tested GVS configuration.
+and discretization. In this FP64 run, automatic backend selection resolves to
+Warp for GVS. At batch size 1,024, GVS reaches 679.7× the single-environment
+throughput for one segment and 133.6× for 32 segments. Throughput increases
+monotonically through batch size 1,024 for the GVS cases with 1, 2, 4, 8, or 16
+segments; the 32-segment case peaks at batch size 512 and is 1.2% lower at
+1,024.
 
 ## Application case studies
 

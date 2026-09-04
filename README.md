@@ -128,11 +128,11 @@ SoRoSim in matched PCS and GVS cases:
 | FEM/GVS | Tendons | 75.80 | 36.47 | 2.1× |
 
 <p align="center">
-  <img src="docs/assets/paper/gpu-batch-scaling.png" alt="GPU batch simulation throughput scaling for articulated, PCS, and GVS models" width="760"/>
+  <img src="docs/assets/paper/gpu-batch-scaling.png" alt="GPU batch simulation throughput scaling through 1,024 environments for articulated, PCS, and GVS models" width="760"/>
 </p>
 
-On the paper's RTX 5090 benchmark, increasing the leading batch size from 1 to
-256 raises GVS simulation throughput by up to 172.1×. See
+On the reported RTX 5090 benchmark, increasing the leading batch size from 1 to
+1,024 raises GVS simulation throughput by up to 679.7×. See
 [Paper & Results](https://tud-phi.github.io/soromox/research/) for the full
 benchmark context and reproduction pointers.
 
