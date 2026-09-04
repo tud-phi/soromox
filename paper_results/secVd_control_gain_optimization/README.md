@@ -64,6 +64,10 @@ uv run python paper_results/secVd_control_gain_optimization/code/render_control_
   --method both --fps 24 --gif --force
 ```
 
+Use `--trajectory initial-median` for the finite initial rollout closest to the
+median initial loss; the default is `optimized-best`. Initial-median files use
+the `_initial_median_tracking` suffix.
+
 Run a solver-step, learning-rate, or saturation study:
 
 ```bash

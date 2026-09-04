@@ -245,6 +245,17 @@ def test_method_selection_and_overwrite(monkeypatch, tmp_path):
         )
     assert calls == ["synergistic"], "preflight must fail before either render starts"
 
+    (tmp_path / "collocated_tracking.mp4").unlink()
+    (tmp_path / "collocated_initial_median_tracking.mp4").touch()
+    with pytest.raises(FileExistsError, match="--force"):
+        renderer.render_saved_results(
+            data_dir=tmp_path,
+            output_dir=tmp_path,
+            method="collocated",
+            trajectory="initial-median",
+            renderer_factory=object,
+        )
+
 
 def test_mock_viser_receives_robot_trail_target_and_paths(monkeypatch, tmp_path):
     timesteps = 5
@@ -316,6 +327,83 @@ def test_mock_viser_receives_robot_trail_target_and_paths(monkeypatch, tmp_path)
             record_frame_timeout=3.0,
             renderer_factory=FakeRenderer,
         )
+
+
+def test_initial_median_renders_the_representative_initial_rollout(
+    monkeypatch, tmp_path
+):
+    timesteps = 5
+    q_init = np.stack(
+        [np.full((timesteps, 6), value, dtype=float) for value in (1.0, 2.0, 3.0)]
+    )
+    x_init = np.stack(
+        [np.full((timesteps, 6), value, dtype=float) for value in (4.0, 5.0, 6.0)]
+    )
+    data = {
+        "t_ts": np.linspace(0, 1, timesteps),
+        "history_loss": np.array([[9.0, 2.0, 5.0]]),
+        "history_finite_mask": np.ones((1, 3), dtype=bool),
+        "q_ts_init": q_init,
+        "x_ts_init": x_init,
+        "q_ts_best": np.zeros_like(q_init),
+        "x_ts_best": np.zeros_like(x_init),
+        "best_batch": np.asarray(0),
+        "x_des_ts": np.zeros((timesteps, 6)),
+    }
+    monkeypatch.setattr(renderer, "load_results", lambda *_args, **_kwargs: data)
+    monkeypatch.setattr(renderer, "build_sec_vd_robot", lambda: (object(), None, 0.1))
+    monkeypatch.setattr(renderer, "validate_pose_consistency", lambda *_args: None)
+    captured = {}
+
+    class FakeRenderer:
+        def __init__(self, _robot, **kwargs):
+            captured["init"] = kwargs
+
+        def render_sequence(self, **kwargs):
+            captured["render"] = kwargs
+
+    outputs = renderer.render_method(
+        name="synergistic",
+        data_dir=tmp_path,
+        output_dir=tmp_path,
+        fps=4,
+        make_gif=False,
+        force=False,
+        port=8080,
+        open_browser=False,
+        record_client_timeout=2.0,
+        record_frame_timeout=3.0,
+        trajectory="initial-median",
+        renderer_factory=FakeRenderer,
+    )
+
+    assert outputs == [tmp_path / "synergistic_initial_median_tracking.mp4"]
+    np.testing.assert_allclose(captured["render"]["q_ts"], q_init[2])
+    assert captured["render"]["robot_name"].endswith("initial median")
+
+
+@pytest.mark.parametrize(
+    ("loss", "expected"),
+    [
+        ([7.0, 5.0, 9.0, 3.0], 1),
+        ([5.0, 5.0, 9.0], 0),
+    ],
+)
+def test_initial_median_ties_prefer_lower_loss_then_batch_index(loss, expected):
+    data = {
+        "history_loss": np.array([loss]),
+        "history_finite_mask": np.ones((1, len(loss)), dtype=bool),
+    }
+    assert renderer.initial_median_batch(data) == expected
+
+
+def test_initial_median_requires_a_finite_initial_loss():
+    data = {
+        "history_loss": np.array([[np.nan, 2.0]]),
+        "history_finite_mask": np.array([[False, False]]),
+    }
+    with pytest.raises(ValueError, match="finite initial loss"):
+        renderer.initial_median_batch(data)
 
 
 def test_synergistic_trail_contains_only_time_varying_reference(monkeypatch, tmp_path):
@@ -406,7 +494,8 @@ def test_collocated_render_receives_configuration_target(monkeypatch, tmp_path):
 
 
 @pytest.mark.parametrize("method", ["collocated", "synergistic"])
-def test_committed_pose_matches_forward_kinematics(method):
+@pytest.mark.parametrize("trajectory", renderer.TRAJECTORIES)
+def test_committed_pose_matches_forward_kinematics(method, trajectory):
     data = load_results(SECTION_DIR / "data" / method, expected_method=method)
     robot, _routing, total_length = build_sec_vd_robot()
-    renderer.validate_pose_consistency(robot, total_length, data)
+    renderer.validate_pose_consistency(robot, total_length, data, trajectory)

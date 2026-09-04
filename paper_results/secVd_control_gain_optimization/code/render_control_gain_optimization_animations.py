@@ -33,6 +33,7 @@ from soromox.rendering import BackboneColorConfig, RendererColorConfig, ViserRen
 
 DEFAULT_DATA_DIR = CASE_DIR / "data"
 DEFAULT_OUTPUT_DIR = CASE_DIR / "outputs"
+TRAJECTORIES = ("optimized-best", "initial-median")
 
 
 def _hex_rgb(value: str) -> np.ndarray:
@@ -235,20 +236,58 @@ def resample_trajectory(
 
 
 def validate_pose_consistency(
-    robot, total_length: float, data: dict[str, np.ndarray]
+    robot,
+    total_length: float,
+    data: dict[str, np.ndarray],
+    trajectory: str = "optimized-best",
 ) -> None:
     """Ensure stored poses match FK from the authoritative configurations."""
-    stored = np.asarray(data["x_ts_best"])
+    if trajectory not in TRAJECTORIES:
+        raise ValueError(f"Unknown trajectory {trajectory!r}")
+    suffix = "best" if trajectory == "optimized-best" else "init"
+    q_key = f"q_ts_{suffix}"
+    x_key = f"x_ts_{suffix}"
+    stored = np.asarray(data[x_key])
     for batch in range(stored.shape[0]):
         reconstructed = np.asarray(
-            end_effector_pose_trajectory(robot, data["q_ts_best"][batch], total_length)
+            end_effector_pose_trajectory(robot, data[q_key][batch], total_length)
         )
         if not np.allclose(reconstructed, stored[batch], rtol=1e-6, atol=1e-8):
             maximum = float(np.max(np.abs(reconstructed - stored[batch])))
             raise ValueError(
-                f"Stored pose for start {batch} does not agree with q_ts_best FK "
+                f"Stored pose for start {batch} does not agree with {q_key} FK "
                 f"(max error {maximum:.3e})"
             )
+
+
+def initial_median_batch(data: dict[str, np.ndarray]) -> int:
+    """Select the finite initial rollout closest to the median initial loss."""
+    loss = np.asarray(data["history_loss"][0], dtype=float)
+    finite = np.asarray(data["history_finite_mask"][0], dtype=bool) & np.isfinite(loss)
+    candidates = np.flatnonzero(finite)
+    if not candidates.size:
+        raise ValueError(
+            "Cannot render an initial median without a finite initial loss"
+        )
+    candidate_loss = loss[candidates]
+    median_loss = float(np.median(candidate_loss))
+    order = np.lexsort(
+        (candidates, candidate_loss, np.abs(candidate_loss - median_loss))
+    )
+    return int(candidates[order[0]])
+
+
+def _trajectory_output_paths(
+    output_dir: Path, name: str, trajectory: str, make_gif: bool
+) -> list[Path]:
+    if trajectory not in TRAJECTORIES:
+        raise ValueError(f"Unknown trajectory {trajectory!r}")
+    qualifier = "" if trajectory == "optimized-best" else "_initial_median"
+    stem = output_dir / f"{name}{qualifier}_tracking"
+    paths = [stem.with_suffix(".mp4")]
+    if make_gif:
+        paths.append(stem.with_suffix(".gif"))
+    return paths
 
 
 def _color_config(num_points: int, *, opacity: float = 1.0) -> RendererColorConfig:
@@ -292,23 +331,29 @@ def render_method(
     open_browser: bool,
     record_client_timeout: float,
     record_frame_timeout: float,
+    trajectory: str = "optimized-best",
     renderer_factory: Callable = SecVdTrackingRenderer,
 ) -> list[Path]:
-    mp4_path = output_dir / f"{name}_tracking.mp4"
-    gif_path = output_dir / f"{name}_tracking.gif"
-    requested = [mp4_path] + ([gif_path] if make_gif else [])
+    requested = _trajectory_output_paths(output_dir, name, trajectory, make_gif)
+    mp4_path = requested[0]
     existing = [path for path in requested if path.exists()]
     if existing and not force:
         raise FileExistsError(f"Refusing to overwrite {existing}; pass --force")
 
     data = load_results(data_dir / name, expected_method=name)
     robot, _routing, total_length = build_sec_vd_robot()
-    validate_pose_consistency(robot, total_length, data)
-    best_batch = int(data["best_batch"])
+    validate_pose_consistency(robot, total_length, data, trajectory)
+    if trajectory == "optimized-best":
+        batch = int(data["best_batch"])
+        suffix = "best"
+    else:
+        batch = initial_median_batch(data)
+        suffix = "init"
+    print(f"Rendering {name} {trajectory} start {batch}")
     t, q, pose = resample_trajectory(
         data["t_ts"],
-        data["q_ts_best"][best_batch],
-        data["x_ts_best"][best_batch],
+        data[f"q_ts_{suffix}"][batch],
+        data[f"x_ts_{suffix}"][batch],
         fps,
     )
     dense_t = np.asarray(data["t_ts"])
@@ -381,10 +426,15 @@ def render_method(
         dynamic_spheres_radii=dynamic_radii,
         dynamic_spheres_colors=dynamic_colors,
         blocking=True,
-        robot_name=f"Section Vd {name}",
+        robot_name=(
+            f"Section Vd {name}"
+            if trajectory == "optimized-best"
+            else f"Section Vd {name} initial median"
+        ),
     )
     outputs = [mp4_path]
     if make_gif:
+        gif_path = requested[1]
         _convert_gif(mp4_path, gif_path)
         outputs.append(gif_path)
     return outputs
@@ -395,6 +445,7 @@ def render_saved_results(
     data_dir: Path,
     output_dir: Path,
     method: str = "both",
+    trajectory: str = "optimized-best",
     fps: int = 24,
     make_gif: bool = False,
     force: bool = False,
@@ -410,9 +461,11 @@ def render_saved_results(
     if any(name not in METHODS for name in selected):
         raise ValueError(f"Unknown method {method!r}")
     output_dir.mkdir(parents=True, exist_ok=True)
-    requested = [output_dir / f"{name}_tracking.mp4" for name in selected]
-    if make_gif:
-        requested.extend(output_dir / f"{name}_tracking.gif" for name in selected)
+    requested = [
+        path
+        for name in selected
+        for path in _trajectory_output_paths(output_dir, name, trajectory, make_gif)
+    ]
     existing = [path for path in requested if path.exists()]
     if existing and not force:
         raise FileExistsError(f"Refusing to overwrite {existing}; pass --force")
@@ -430,6 +483,7 @@ def render_saved_results(
                 open_browser=open_browser,
                 record_client_timeout=record_client_timeout,
                 record_frame_timeout=record_frame_timeout,
+                trajectory=trajectory,
                 renderer_factory=renderer_factory,
             )
         )
@@ -441,6 +495,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIR)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--method", choices=(*METHODS, "both"), default="both")
+    parser.add_argument("--trajectory", choices=TRAJECTORIES, default="optimized-best")
     parser.add_argument("--fps", type=int, default=24)
     parser.add_argument("--gif", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--port", type=int, default=8080)
@@ -459,6 +514,7 @@ def main() -> None:
         data_dir=args.data_dir,
         output_dir=args.output_dir,
         method=args.method,
+        trajectory=args.trajectory,
         fps=args.fps,
         make_gif=args.gif,
         force=args.force,

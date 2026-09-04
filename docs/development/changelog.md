@@ -23,8 +23,8 @@ and include benchmark baseline and measurement context for performance claims.
 ### Changed
 
 - Updated the Section Vd workflow with one generator and tuning study, retuned
-  controller and optimizer settings, strict device selection, and regenerated
-  comparison figures.
+  controller and optimizer settings, strict device selection,
+  regenerated figures, and distinct best-optimized and initial-median animations.
 - Open3D and Viser swept backbones now preserve circular, elliptical, and
   rectangular cross-sections, including dimensions that vary with abscissa.
 
