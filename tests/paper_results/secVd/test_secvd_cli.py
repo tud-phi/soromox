@@ -24,6 +24,7 @@ CODE_DIR = (
 if str(CODE_DIR) not in sys.path:
     sys.path.insert(0, str(CODE_DIR))
 
+import numpy as np  # noqa: E402
 from secvd_cli import (  # noqa: E402
     configure_optimization_device,
     jax_platforms_for,
@@ -31,6 +32,7 @@ from secvd_cli import (  # noqa: E402
     prepare_result_dir,
 )
 from secvd_init import SECVD_BATCH_SIZE  # noqa: E402
+from secvd_results import METHODS  # noqa: E402
 
 
 @pytest.mark.parametrize("argv", [[], ["--num-iters", "5"], ["--batch-size", "6"]])
@@ -126,6 +128,66 @@ def test_cli_module_does_not_import_jax():
         [sys.executable, "-c", probe], cwd=CODE_DIR, capture_output=True, text=True
     )
     assert result.returncode == 0, "importing the CLI layer pulled in jax"
+
+
+def test_the_solver_step_default_is_the_step_the_archives_run_at(tmp_path):
+    """A default recipe must reproduce what ships, not something ten times finer.
+
+    ``--solver-dt`` used to default to the case's own ``1e-4`` -- the reference
+    step the setpoint rollout uses -- while both committed archives record
+    ``1e-3``. Every documented command therefore ran ten times finer and ten
+    times slower than the numbers it claimed to reproduce, and schema v3 made
+    that visible only after the run had finished.
+    """
+    from secvd_case import TUNED_SOLVER_DT
+
+    for method in METHODS:
+        args = parse_optimization_args(
+            description="test",
+            default_result_dir_for=lambda _method: tmp_path,
+            argv=["--method", method],
+        )
+        assert args.solver_dt == TUNED_SOLVER_DT
+
+    for method in METHODS:
+        path = CODE_DIR.parent / "data" / method / "optimization_results.npz"
+        if not path.exists():
+            continue
+        with np.load(path) as data:
+            step = float(np.asarray(data["solver_dt"]).ravel()[0])
+        assert step == TUNED_SOLVER_DT, (
+            f"the committed {method} archive runs at {step}, but a default "
+            f"generator run would use {TUNED_SOLVER_DT}"
+        )
+
+
+@pytest.mark.parametrize("method", METHODS)
+def test_a_default_run_reproduces_the_committed_initialization(method, tmp_path):
+    """The seed is per method, so the shared constant is not the whole story.
+
+    Collocated moved to seed 2 to keep every start at or above nominal: a start
+    drawn well below nominal takes the largest relative step at a fixed rate, and
+    that is what made the loss band ragged. Synergistic kept seed 0. One shared
+    default would silently stop reproducing one of the two archives.
+    """
+    from secvd_case import TUNED_INIT_SEED
+
+    args = parse_optimization_args(
+        description="test",
+        default_result_dir_for=lambda _method: tmp_path,
+        argv=["--method", method],
+    )
+    assert args.init_seed == TUNED_INIT_SEED[method]
+
+    path = CODE_DIR.parent / "data" / method / "optimization_results.npz"
+    if not path.exists():
+        pytest.skip(f"no committed {method} archive to compare against")
+    with np.load(path) as data:
+        stored = int(np.asarray(data["init_seed"]).ravel()[0])
+    assert stored == args.init_seed, (
+        f"the committed {method} archive was drawn with seed {stored}, but a "
+        f"default generator run would use {args.init_seed}"
+    )
 
 
 def test_the_batch_size_default_is_the_shared_constant(tmp_path):

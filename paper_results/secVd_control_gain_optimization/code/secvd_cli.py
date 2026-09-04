@@ -10,10 +10,7 @@ from pathlib import Path
 
 from secvd_init import (
     GAIN_ORDER,
-    INIT_SCHEMES,
     SECVD_BATCH_SIZE,
-    SECVD_INIT_SCHEME,
-    SECVD_INIT_SEED,
     SECVD_INIT_SPREAD,
 )
 from secvd_results import METHODS, RESULTS_FILENAME
@@ -87,7 +84,13 @@ def parse_optimization_args(
     Raises:
         ValueError: If an argument is outside its supported range.
     """
-    from secvd_case import COMMITTED_E_SAT, COMMITTED_LR_RATIO, TUNED_ALPHA
+    from secvd_case import (
+        COMMITTED_E_SAT,
+        COMMITTED_LR_RATIO,
+        TUNED_ALPHA,
+        TUNED_INIT_SEED,
+        TUNED_SOLVER_DT,
+    )
 
     method = requested_method_from_argv(argv)
     parser = argparse.ArgumentParser(description=description)
@@ -97,7 +100,10 @@ def parse_optimization_args(
     )
     parser.add_argument("--num-iters", type=int, default=100)
     parser.add_argument(
-        "--solver-dt", type=float, default=None, help="Integration step."
+        "--solver-dt",
+        type=float,
+        default=TUNED_SOLVER_DT,
+        help="Integration step. Defaults to the step both archives run at.",
     )
     parser.add_argument(
         "--alpha",
@@ -122,14 +128,8 @@ def parse_optimization_args(
     parser.add_argument(
         "--init-seed",
         type=int,
-        default=SECVD_INIT_SEED,
+        default=TUNED_INIT_SEED[method],
         help="PRNG seed behind the sampled gain initializations.",
-    )
-    parser.add_argument(
-        "--init-scheme",
-        choices=INIT_SCHEMES,
-        default=SECVD_INIT_SCHEME,
-        help="Initialization sampling scheme; recorded in the archive.",
     )
     parser.add_argument(
         "--init-spread",
@@ -157,8 +157,8 @@ def parse_optimization_args(
         raise ValueError("--batch-size must be at least 1")
     if not args.alpha > 0:
         raise ValueError("--alpha must be positive")
-    if args.solver_dt is not None and not args.solver_dt > 0:
-        raise ValueError("--solver-dt must be positive when given")
+    if not args.solver_dt > 0:
+        raise ValueError("--solver-dt must be positive")
     if method == "collocated" and not (math.isfinite(args.e_sat) and args.e_sat > 0):
         raise ValueError("--e-sat must be finite and positive")
     args.ratio = dict(zip(GAIN_ORDER, args.ratio, strict=True))

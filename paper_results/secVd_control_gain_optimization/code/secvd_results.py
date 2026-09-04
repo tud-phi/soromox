@@ -291,8 +291,8 @@ def validate_results(
     missing = _REQUIRED_FIELDS.difference(data)
     if missing:
         raise ValueError(
-            "Unsupported Section Vd archive (schema-v1 and legacy MAT archives "
-            f"are not supported); missing fields: {sorted(missing)}"
+            "Unsupported Section Vd archive; it is missing required fields, "
+            f"so it is not the current schema: {sorted(missing)}"
         )
     version = np.asarray(data["schema_version"])
     if version.shape != () or int(version) != SCHEMA_VERSION:

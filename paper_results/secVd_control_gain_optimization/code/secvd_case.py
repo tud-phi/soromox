@@ -34,9 +34,11 @@ from soromox.utils.geometry.rotations import rotation_matrix_to_rotation_vector
 jax.config.update("jax_enable_x64", True)
 
 CASE_HORIZON = 5.0
+TUNED_SOLVER_DT = 1e-3
 COMMITTED_ALPHA = 0.5
 COMMITTED_LR_RATIO = {"Kp": 1.0, "Ki": 0.5, "Kd": 0.1}
-TUNED_ALPHA = {"collocated": 3000.0, "synergistic": 1547.0}
+TUNED_ALPHA = {"collocated": 1500.0, "synergistic": 1547.0}
+TUNED_INIT_SEED = {"collocated": 2, "synergistic": 0}
 MATERIAL_DAMPING = 7.2e1
 INIT_GAIN_SCALE = {
     "collocated": {"Kp": 1.0, "Ki": 1.0, "Kd": 0.2},

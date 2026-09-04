@@ -55,6 +55,8 @@ from secvd_case import (  # noqa: E402
     COMMITTED_LR_RATIO,
     INIT_GAIN_SCALE,
     TUNED_ALPHA,
+    TUNED_INIT_SEED,
+    TUNED_SOLVER_DT,
     build_evaluator,
     build_optimizer,
     build_sec_vd_case,
@@ -62,8 +64,6 @@ from secvd_case import (  # noqa: E402
 from secvd_init import (  # noqa: E402
     GAIN_ORDER,
     SECVD_BATCH_SIZE,
-    SECVD_INIT_SCHEME,
-    SECVD_INIT_SEED,
     SECVD_INIT_SPREAD,
     sample_initial_gains,
 )
@@ -362,7 +362,6 @@ def _sample_starts(problem, batch_size: int, seed: int) -> dict:
         centre,
         batch_size=batch_size,
         seed=seed,
-        scheme=SECVD_INIT_SCHEME,
         spread=SECVD_INIT_SPREAD,
     )
 
@@ -698,8 +697,8 @@ def _parse_args():
     parser.add_argument(
         "--solver-dt",
         type=float,
-        default=None,
-        help="Integration step for every stage but solver-dt; the case value by default.",
+        default=TUNED_SOLVER_DT,
+        help="Integration step for every stage but solver-dt, which sweeps it.",
     )
     parser.add_argument(
         "--solver-dts",
@@ -752,7 +751,7 @@ def _parse_args():
         "--num-iters", type=int, default=10, help="Iterations per candidate."
     )
     parser.add_argument("--batch-size", type=int, default=SECVD_BATCH_SIZE)
-    parser.add_argument("--init-seed", type=int, default=SECVD_INIT_SEED)
+    parser.add_argument("--init-seed", type=int, default=None)
     parser.add_argument("--out-dir", type=Path, default=TUNING_DIR)
     parser.add_argument("--device", choices=DEVICE_CHOICES, default="auto")
     parser.add_argument("--tag", type=str, default=None)
@@ -763,6 +762,8 @@ def main() -> None:
     args = _parse_args()
     if args.alpha is None:
         args.alpha = TUNED_ALPHA[args.method]
+    if args.init_seed is None:
+        args.init_seed = TUNED_INIT_SEED[args.method]
     tag = args.tag or f"{args.stage}_{args.method}_T{args.horizon:g}"
     case = build_sec_vd_case()
     probe = build_evaluator(args.method, case=case, horizon=args.horizon)

@@ -34,6 +34,8 @@ from secvd_case import (  # noqa: E402
     COMMITTED_ALPHA,
     COMMITTED_LR_RATIO,
     FAMILY_LABEL,
+    METHODS,
+    TUNED_ALPHA,
     YOGI_EPS,
     build_optimizer,
     describe_optimizer,
@@ -157,17 +159,36 @@ def test_the_archived_description_carries_the_effective_rates():
         )
 
 
-def test_the_description_still_matches_what_the_committed_archives_recorded():
-    """The knob removal must not change how an archive describes its optimizer.
+def test_the_description_renders_the_effective_per_family_rates():
+    """Pin the rendering itself, independently of any archive.
 
-    Both committed archives store this string. Had dropping the clip and eps
-    parameters changed the rendering, the shipped results would silently start
-    disagreeing with the code that claims to reproduce them.
+    Had dropping the clip and eps parameters changed this string, the shipped
+    results would silently start disagreeing with the code that claims to
+    reproduce them.
     """
     assert (
-        describe_optimizer(3000.0, ratio=COMMITTED_LR_RATIO)
-        == "scale_by_yogi(eps=1e-08) + per-family rate{P: 3000, I: 1500, D: 300}"
+        describe_optimizer(1500.0, ratio=COMMITTED_LR_RATIO)
+        == "scale_by_yogi(eps=1e-08) + per-family rate{P: 1500, I: 750, D: 150}"
     )
+
+
+@pytest.mark.parametrize("method", METHODS)
+def test_the_committed_archive_describes_the_rate_the_code_would_run(method):
+    """A committed archive must not outlive the rate that produced it.
+
+    Lowering ``TUNED_ALPHA`` without regenerating leaves an archive whose
+    ``optimizer_metadata`` claims a rate the code no longer uses, which is
+    exactly the drift the metadata exists to make visible. Asserting the
+    agreement rather than a hand-copied literal means the two cannot separate.
+    """
+    import numpy as np
+
+    archive = CODE_DIR.parent / "data" / method / "optimization_results.npz"
+    if not archive.exists():
+        pytest.skip(f"no committed {method} archive to compare against")
+    with np.load(archive) as data:
+        stored = str(np.asarray(data["optimizer_metadata"]).item())
+    assert stored == describe_optimizer(TUNED_ALPHA[method], ratio=COMMITTED_LR_RATIO)
 
 
 def test_the_entrypoint_does_not_hardcode_its_optimizer():

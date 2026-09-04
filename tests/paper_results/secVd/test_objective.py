@@ -225,7 +225,7 @@ def test_rescoring_detects_a_loss_that_does_not_match_its_trajectory(tmp_path):
     rng = np.random.default_rng(1)
     errors = rng.normal(scale=0.01, size=(2, 41, 6))
     data = load_results(_write_archive(tmp_path, "collocated", scales, errors))
-    # Exactly the legacy failure mode: the stored loss is off by a global factor.
+    # The failure mode from issue #154: the stored loss is off by a global factor.
     data["history_loss"] = data["history_loss"] * 10.0
     result = recompute_archive_losses(data)
     assert not np.allclose(result["recomputed_init"], result["stored_init"], rtol=1e-3)
@@ -236,6 +236,6 @@ def test_rescoring_refuses_an_archive_from_a_different_objective(tmp_path):
     scales = np.asarray(configuration_space_scales(jnp.array([SEGMENT_LENGTH])))
     errors = np.zeros((2, 41, 6))
     data = load_results(_write_archive(tmp_path, "collocated", scales, errors))
-    data["objective_name"] = np.asarray("legacy_weighted_integral")
+    data["objective_name"] = np.asarray("some_other_objective_v1")
     with pytest.raises(ValueError, match="different quantities"):
         recompute_archive_losses(data)

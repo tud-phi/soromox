@@ -27,6 +27,29 @@ FIGURE_SIZE_CM = (28.0, 16.0)
 TRAJECTORY_WINDOW_S = 2.0
 BAND_ALPHA = 0.3
 LOSS_YLIM_PAD = 1.1
+PANELS = {
+    "a": "collocated loss",
+    "b": "collocated angular strain",
+    "c": "synergistic loss",
+    "d": "synergistic end-effector position",
+}
+
+
+def resolve_ylim(request, committed):
+    """Pick a panel's limits from the three states a --ylim-* flag can be in.
+
+    Args:
+        request: ``None`` when the flag was absent, an empty tuple when it was
+            passed with no values, or the two values it was passed.
+        committed: What the panel does when the flag is absent -- the shared
+            loss limit for panels A and C, ``None`` (autoscale) for B and D.
+
+    Returns:
+        Limits to apply, or ``None`` to leave the panel autoscaling.
+    """
+    if request is None:
+        return committed
+    return tuple(request) or None
 
 
 def configure_matplotlib() -> None:
@@ -100,7 +123,7 @@ def plot_loss(
     """Plot the spread across starts with the best loss per iteration on top.
 
     Args:
-        ylim: Shared limits for both loss panels; ``None`` autoscales.
+        ylim: Limits for the panel; ``None`` autoscales.
     """
     loss = np.where(np.asarray(finite_mask, dtype=bool), history_loss, np.nan)
     iterations = np.arange(1, loss.shape[0] + 1)
@@ -137,6 +160,7 @@ def _plot_three_channels(
     ylabel: str,
     panel: str,
     legend: bool,
+    ylim: tuple[float, float] | None = None,
 ) -> None:
     """Draw target, the initial spread across starts, and the best start.
 
@@ -149,6 +173,7 @@ def _plot_three_channels(
         ylabel: Axis label.
         panel: Panel letter.
         legend: Whether to draw the line-style legend.
+        ylim: Limits for the panel; ``None`` autoscales.
     """
     colors = [COLORS["x_t"], COLORS["y_t"], COLORS["z_t"]]
     for channel, color in enumerate(colors):
@@ -189,11 +214,31 @@ def _plot_three_channels(
         ylabel=ylabel,
         xlim=(float(t[0]), min(float(t[-1]), TRAJECTORY_WINDOW_S)),
     )
+    if ylim is not None:
+        ax.set_ylim(*ylim)
     _format_axes(ax, panel)
 
 
-def build_figure(data_dir: Path) -> plt.Figure:
-    """Assemble the four-panel Section Vd comparison figure."""
+def build_figure(
+    data_dir: Path,
+    *,
+    ylim_a=None,
+    ylim_b=None,
+    ylim_c=None,
+    ylim_d=None,
+) -> plt.Figure:
+    """Assemble the four-panel Section Vd comparison figure.
+
+    Args:
+        data_dir: Directory holding the two per-method archives.
+        ylim_a: Limits for the collocated loss panel. ``None`` keeps the limit
+            it shares with panel C, which is what the committed figure uses; an
+            empty tuple autoscales it to its own data instead.
+        ylim_b: Limits for the collocated strain panel; see ``ylim_a``. This
+            panel autoscales when the request is ``None`` or empty.
+        ylim_c: Limits for the synergistic loss panel; see ``ylim_a``.
+        ylim_d: Limits for the synergistic position panel; see ``ylim_b``.
+    """
     collocated = load_results(data_dir / "collocated", expected_method="collocated")
     synergistic = load_results(data_dir / "synergistic", expected_method="synergistic")
     best_batch_c = int(collocated["best_batch"])
@@ -213,7 +258,7 @@ def build_figure(data_dir: Path) -> plt.Figure:
         collocated["history_loss"],
         collocated["history_finite_mask"],
         "A",
-        ylim=loss_ylim,
+        ylim=resolve_ylim(ylim_a, loss_ylim),
     )
     _plot_three_channels(
         axes[0, 1],
@@ -224,13 +269,14 @@ def build_figure(data_dir: Path) -> plt.Figure:
         ylabel="Angular strains [rad/m]",
         panel="B",
         legend=True,
+        ylim=resolve_ylim(ylim_b, None),
     )
     plot_loss(
         axes[1, 0],
         synergistic["history_loss"],
         synergistic["history_finite_mask"],
         "C",
-        ylim=loss_ylim,
+        ylim=resolve_ylim(ylim_c, loss_ylim),
     )
     _plot_three_channels(
         axes[1, 1],
@@ -241,6 +287,7 @@ def build_figure(data_dir: Path) -> plt.Figure:
         ylabel="End-effector position [m]",
         panel="D",
         legend=False,
+        ylim=resolve_ylim(ylim_d, None),
     )
     print("Section Vd summary:")
     for name, data in (("collocated", collocated), ("synergistic", synergistic)):
@@ -265,7 +312,36 @@ def parse_args() -> argparse.Namespace:
         default=True,
         help="Overwrite existing outputs (default). --no-force refuses instead.",
     )
-    return parser.parse_args()
+    for panel, described in PANELS.items():
+        default = (
+            "shares one axis with the other loss panel"
+            if described.endswith("loss")
+            else "autoscales"
+        )
+        parser.add_argument(
+            f"--ylim-{panel}",
+            type=float,
+            nargs="*",
+            metavar="LIM",
+            help=f"Y-limits for panel {panel.upper()}, the {described} panel. "
+            f"Omit the flag to keep what the committed figure does, where this "
+            f"panel {default}; pass it with no values to autoscale this panel "
+            f"to its own data; pass LOW HIGH to set them by hand.",
+        )
+    args = parser.parse_args()
+    for panel in PANELS:
+        limits = getattr(args, f"ylim_{panel}")
+        if limits is None:
+            continue
+        if len(limits) not in (0, 2):
+            raise ValueError(
+                f"--ylim-{panel} takes no values (autoscale) or LOW HIGH, "
+                f"got {len(limits)}"
+            )
+        if len(limits) == 2 and not limits[0] < limits[1]:
+            raise ValueError(f"--ylim-{panel} needs LOW < HIGH, got {limits}")
+        setattr(args, f"ylim_{panel}", tuple(limits))
+    return args
 
 
 def main() -> None:
@@ -280,7 +356,10 @@ def main() -> None:
             f"Refusing to overwrite {existing}; drop --no-force to replace them"
         )
     configure_matplotlib()
-    figure = build_figure(args.data_dir)
+    figure = build_figure(
+        args.data_dir,
+        **{f"ylim_{panel}": getattr(args, f"ylim_{panel}") for panel in PANELS},
+    )
     args.output_dir.mkdir(parents=True, exist_ok=True)
     figure.savefig(outputs[0], dpi=300)
     figure.savefig(outputs[1], dpi=300)

@@ -56,16 +56,20 @@ def test_plot_loss_excludes_frozen_starts_from_the_band():
     matplotlib.pyplot.close(figure)
 
 
-def test_plotter_uses_synergistic_position_channels(monkeypatch):
+@pytest.fixture
+def stub_archives(monkeypatch):
+    """Serve build_figure a minimal pair of archives instead of reading data/."""
     t = np.linspace(0, 1, 4)
     common = {
-        "history_loss": np.ones((5, 1)),
         "history_finite_mask": np.ones((5, 1), dtype=bool),
         "best_batch": np.asarray(0),
         "t_ts": t,
     }
+    # Deliberately different decades: the shared loss limit then covers both and
+    # is strictly wider than either panel's own range.
     collocated = {
         **common,
+        "history_loss": np.geomspace(2e-3, 1e-3, 5)[:, None],
         "q_ts_init": np.zeros((1, 4, 6)),
         "q_ts_best": np.zeros((1, 4, 6)),
         "q_des_ts": np.zeros((4, 6)),
@@ -75,6 +79,7 @@ def test_plotter_uses_synergistic_position_channels(monkeypatch):
     synergy_pose[..., 3:6] = [1.0, 2.0, 3.0]
     synergistic = {
         **common,
+        "history_loss": np.geomspace(1e-1, 1e-4, 5)[:, None],
         "x_ts_init": synergy_pose,
         "x_ts_best": synergy_pose,
         "x_des_ts": synergy_pose[0],
@@ -86,10 +91,76 @@ def test_plotter_uses_synergistic_position_channels(monkeypatch):
             collocated if expected_method == "collocated" else synergistic
         ),
     )
+
+
+def test_plotter_uses_synergistic_position_channels(stub_archives):
     figure = plotter.build_figure(Path("unused"))
     plotted = figure.axes[3].lines[1].get_ydata()
     np.testing.assert_allclose(plotted, 1.0)
     matplotlib.pyplot.close(figure)
+
+
+def test_the_loss_panels_share_one_axis_by_default(stub_archives):
+    figure = plotter.build_figure(Path("unused"))
+    assert figure.axes[0].get_ylim() == figure.axes[2].get_ylim()
+    matplotlib.pyplot.close(figure)
+
+
+def test_an_empty_request_autoscales_one_loss_panel_off_the_shared_axis(
+    stub_archives,
+):
+    """The whole point of the empty form: panel A stops paying for panel C."""
+    shared = plotter.build_figure(Path("unused"))
+    shared_low, shared_high = shared.axes[0].get_ylim()
+    shared_c = shared.axes[2].get_ylim()
+    matplotlib.pyplot.close(shared)
+
+    figure = plotter.build_figure(Path("unused"), ylim_a=())
+    low, high = figure.axes[0].get_ylim()
+    assert (low, high) != (shared_low, shared_high)
+    assert shared_low < low and high < shared_high, (
+        "autoscaling A to its own data must tighten it inside the shared axis"
+    )
+    assert figure.axes[2].get_ylim() == shared_c, (
+        "autoscaling A must leave panel C on the shared limit"
+    )
+    matplotlib.pyplot.close(figure)
+
+
+@pytest.mark.parametrize(("panel", "axis"), [("a", 0), ("b", 1), ("c", 2), ("d", 3)])
+def test_every_panel_honours_an_explicit_limit(panel, axis, stub_archives):
+    figure = plotter.build_figure(Path("unused"), **{f"ylim_{panel}": (2e-4, 8e-2)})
+    np.testing.assert_allclose(figure.axes[axis].get_ylim(), (2e-4, 8e-2))
+    matplotlib.pyplot.close(figure)
+
+
+@pytest.mark.parametrize("panel", ["a", "b", "c", "d"])
+@pytest.mark.parametrize(
+    ("values", "message"),
+    [
+        (["3", "1"], "needs LOW < HIGH"),
+        (["1"], "takes no values"),
+        (["1", "2", "3"], "takes no values"),
+    ],
+)
+def test_a_malformed_manual_limit_is_rejected(panel, values, message, monkeypatch):
+    argv = ["plot_control_gain_optimization.py", f"--ylim-{panel}", *values]
+    monkeypatch.setattr(sys, "argv", argv)
+    with pytest.raises(ValueError, match=f"--ylim-{panel} {message}"):
+        plotter.parse_args()
+
+
+@pytest.mark.parametrize("panel", ["a", "b", "c", "d"])
+def test_an_empty_flag_parses_as_a_request_to_autoscale(panel, monkeypatch):
+    argv = ["plot_control_gain_optimization.py", f"--ylim-{panel}"]
+    monkeypatch.setattr(sys, "argv", argv)
+    args = plotter.parse_args()
+    assert getattr(args, f"ylim_{panel}") == ()
+    assert all(
+        getattr(args, f"ylim_{other}") is None
+        for other in plotter.PANELS
+        if other != panel
+    ), "an empty flag must not disturb the other panels"
 
 
 def test_resampling_matches_requested_fps():

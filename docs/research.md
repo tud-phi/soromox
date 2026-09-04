@@ -116,9 +116,9 @@ respectively, relative to their initial median values.
     These figures come from the published six-start study, whose robot models and
     objectives differ from the current Section Vd workflow; the reduction metric
     is `1 - min(loss[-1]) / median(loss[0])`. They are not regenerable by running
-    the committed scripts. See the
-    [Section Vd provenance notes](https://github.com/tud-phi/soromox/blob/main/paper_results/secVd_control_gain_optimization/README.md#provenance-of-the-published-six-start-results)
-    for what the original run was and why it cannot be reproduced as-is.
+    the committed scripts. See
+    [issue #154](https://github.com/tud-phi/soromox/issues/154) for what the
+    original run was and why it cannot be reproduced as-is.
 
 <figure markdown>
   ![Loss convergence and closed-loop responses for actuation-space and operational-space controller-gain optimization](assets/paper/control-gain-optimization.png){ .soromox-figure .soromox-figure--wide }

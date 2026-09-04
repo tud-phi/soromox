@@ -25,7 +25,11 @@ from secvd_case import (  # noqa: E402
     end_effector_pose_trajectory,
 )
 from secvd_cli import parse_optimization_args, prepare_result_dir  # noqa: E402
-from secvd_init import describe_initial_gains, sample_initial_gains  # noqa: E402
+from secvd_init import (  # noqa: E402
+    SECVD_INIT_SCHEME,
+    describe_initial_gains,
+    sample_initial_gains,
+)
 from secvd_loop import run_gain_optimization  # noqa: E402
 from secvd_objective import OBJECTIVE_NAME  # noqa: E402
 from secvd_results import (  # noqa: E402
@@ -59,10 +63,9 @@ def main() -> None:
         init_center,
         batch_size=args.batch_size,
         seed=args.init_seed,
-        scheme=args.init_scheme,
         spread=args.init_spread,
     )
-    print(f"Gain initializations ({args.init_scheme}, seed {args.init_seed}):")
+    print(f"Gain initializations ({SECVD_INIT_SCHEME}, seed {args.init_seed}):")
     print(describe_initial_gains(init_gains))
 
     history = run_gain_optimization(
@@ -111,7 +114,7 @@ def main() -> None:
         opt_vars_history=history.opt_vars,
         init_gains=init_gains,
         init_seed=args.init_seed,
-        init_scheme=args.init_scheme,
+        init_scheme=SECVD_INIT_SCHEME,
         init_spread=args.init_spread,
         objective_name=OBJECTIVE_NAME,
         objective_scales=problem.objective_scales,

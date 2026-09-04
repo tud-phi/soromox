@@ -141,10 +141,11 @@ def test_the_initialization_is_recorded_rather_than_inferred(tmp_path):
     assert float(data["init_spread"]) == 3.0
 
 
-def test_schema_v1_and_legacy_archives_are_rejected_clearly(tmp_path):
+def test_an_archive_missing_required_fields_is_rejected_clearly(tmp_path):
+    """An archive from any older schema fails this way rather than half-loading."""
     path = tmp_path / "optimization_results.npz"
     np.savez(path, history_loss=np.zeros((5, 1)))
-    with pytest.raises(ValueError, match="not supported"):
+    with pytest.raises(ValueError, match="not the current schema"):
         load_results(path)
 
 

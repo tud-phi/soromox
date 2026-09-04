@@ -19,12 +19,12 @@ and include benchmark baseline and measurement context for performance claims.
   and re-running the generator reproduces the archived initial losses to 1.8e-9.
   This answers [issue #154](https://github.com/tud-phi/soromox/issues/154) --
   the six initial gain sets, `PRNGKey(15)`, the sampling procedure, the
-  vectorized multi-start execution, and how selection and aggregation worked;
-  see `paper_results/secVd_control_gain_optimization/legacy/`.
+  vectorized multi-start execution, and how selection and aggregation worked.
+  The findings are recorded on the issue itself.
 - Restored multi-start Section Vd gain optimization: both optimizers now run six
   independent gain initializations at once through a `vmap` over the
   optimization variables and the optimizer state, with `--batch-size`,
-  `--init-seed`, `--init-scheme` and `--init-spread`. A start that turns
+  `--init-seed` and `--init-spread`. A start that turns
   non-finite is frozen at its last good iterate instead of aborting the run.
 - Added a canonical dimensionless Section Vd objective shared by both
   controllers, `(1/T) * integral ||e_hat||^2 dt`, whose characteristic scale is
@@ -85,12 +85,33 @@ and include benchmark baseline and measurement context for performance claims.
   effectively stalled: at 100 iterations and six starts it moved the gains by a
   relative step of 2.3e-05 per iteration for a median per-start improvement of
   3.14 %, with the loss still descending at the last step. The measured defaults
-  are now `secvd_case.TUNED_ALPHA` -- 3000 collocated, 1547 synergistic -- at
-  which the same budget on the same plant and the same initializations gives a
-  67.72 % median per-start improvement, and the spread across starts falls from
-  2.35x to 1.21x, so the outcome is set by the optimizer rather than by which
-  start was sampled lowest. Both rates are confirmed over the full 100-iteration
-  budget with every start alive, not over a short screening run. The per-family
+  are now `secvd_case.TUNED_ALPHA` -- 1500 collocated, 1547 synergistic -- at
+  which the same budget on the same plant gives a 43.91 % median per-start
+  improvement, and the spread across starts falls from 2.35x to 1.07x, so the
+  outcome is set by the optimizer rather than by which start was sampled lowest.
+  Note the improvement percentage is *not* comparable across initializations: the
+  collocated seed change below lowers the median initial loss from 2.26e-03 to
+  1.49e-03, so the same statistic reads 46.56 % where it read 73.33 %, while the
+  median final loss moved only 7.27e-04 to 8.16e-04. Both rates are confirmed over the full 100-iteration
+  budget with every start alive, not over a short screening run. Each is capped
+  at a quarter of the rate that diverges, which is why collocated ships 1500
+  rather than the lower-loss 3000: ranking on best loss alone selects the last
+  survivor, and at 3000 the softest start -- the one taking the largest relative
+  step -- spent 36 % of its iterations going uphill, once by 173 %, which is the
+  raggedness visible in the published loss panel. The cap costs about 15 % of the
+  final loss and cuts the worst rise on the drawn curve from +26.4 % to +4.2 %;
+  with the seed change below the drawn curve becomes monotone outright.
+  The initialization seed is now per method as well, `secvd_case.TUNED_INIT_SEED`
+  -- 2 collocated, 0 synergistic -- for the same reason: seed 0 drew a collocated
+  start at `|Kp| = 34.5` against a nominal 86.6, and that one start swung between
+  the top and the bottom of the loss band. Seed 2 draws every start at or above
+  nominal, which takes the worst rise on the band's upper edge from +58.1 % to
+  +2.4 % over 30 iterations at a slightly *lower* median loss, and over the full
+  100 iterations leaves the drawn curve monotone with no start raising the loss
+  by more than 2.4 % on any iteration. It samples
+  one-sided, so it trades some of the neighbourhood the multi-start explores for
+  a legible figure; `--init-seed 0` restores the wider draw. Synergistic is
+  untouched -- its band was already monotone. The per-family
   split `(1, 0.5, 0.1)` is unchanged, now kept by measurement: equal weighting
   goes non-finite on its first update on both problems. `--learning-rate`,
   `--lr-ratio` and `--clip` are exposed on both generators, and the effective
@@ -124,7 +145,7 @@ and include benchmark baseline and measurement context for performance claims.
   presentation only. The loss panels are log-scaled, since at the tuned rates
   the loss falls more than a decade in a few iterations and the rest of the
   descent was sub-pixel on a linear axis; cropping the iteration axis instead
-  would have misreported the collocated run, which completes 21 % of its total
+  would have misreported the collocated run, which completes 22 % of its total
   descent after iteration 50. The tracking panels display the first 2 s of the
   5 s rollout -- the objective still integrates the full horizon -- because
   measured 2 % settling times are 0.81 s initial and 0.57 s optimized for the
@@ -336,8 +357,29 @@ and include benchmark baseline and measurement context for performance claims.
   standard `SoftRobot` systems automatically, while robot-defined hooks remain
   available for specialized visualization behavior.
 
+### Removed
+
+- Removed the recovered Section Vd generator and every trace of its conventions
+  from the live case: the `legacy_mixed_v1` initialization scheme with its
+  absolute gain box and sorted-subkey order, the `--init-scheme` flag and the
+  `scheme` parameter it fed, and the tests that exercised them. The recovery had
+  one job, answering [issue #154](https://github.com/tud-phi/soromox/issues/154),
+  where its findings are recorded; carrying a second sampler that belonged to a
+  different robot invited it into new work. Archives keep
+  their `init_scheme` field, now fixed at `log_uniform_v1` from
+  `secvd_init.SECVD_INIT_SCHEME`, so the committed data is unchanged and a
+  future sampler is still distinguishable.
+
 ### Fixed
 
+- Fixed the Section Vd generator and tuning study defaulting `--solver-dt` to the
+  case's reference `1e-4` rather than the `1e-3` both committed archives record
+  and every reported measurement was taken at. Following any documented recipe
+  therefore ran ten times finer and ten times slower than the numbers it claimed
+  to reproduce, and produced archives that could not be compared against the
+  committed ones. Both CLIs now default to `secvd_case.TUNED_SOLVER_DT = 1e-3`,
+  the coarsest step the `solver-dt` stage accepted; `SecVdCase.solver_dt` keeps
+  `1e-4` as the setpoint rollout's step and that stage's own baseline.
 - Fixed forward-kinematics, Jacobian, and energy custom JVPs to preserve
   derivatives with respect to dynamic model leaves, including fixed mounting
   poses and gravity updated inside compiled functions, across JAX and
