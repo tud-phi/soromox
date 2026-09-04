@@ -6,22 +6,31 @@ or articulated hosts without introducing an actuator-specific robot subclass.
 
 ## Work-conjugate formulation
 
-A `Transmission` defines actuator coordinates \(y_\mathrm{a}(q)\). Their Jacobian is the
-transpose of the moment matrix:
+A `Transmission` defines actuator coordinates \(y_\mathrm{a}(q)\), their
+kinematic Jacobian \(J_\mathrm{a}\), and an effort-to-generalized-force map
+\(A\):
 
 \[
-A(q) = \left(\frac{\partial y_\mathrm{a}}{\partial q}\right)^T,
-\qquad \dot y_\mathrm{a} = A(q)^T \dot q.
+J_\mathrm{a}(q)=\frac{\partial y_\mathrm{a}}{\partial q},
+\qquad
+\dot y_\mathrm{a}=J_\mathrm{a}(q)\dot q,
+\qquad
+\tau_u=A(q)e.
 \]
 
 An `EffortModel` maps user controls \(u\) to efforts \(e\) conjugate to
 \(y_\mathrm{a}\).
-The generalized force and power are
+For an ideal lossless transmission, virtual work gives
 
 \[
-\tau_u = A(q)e,
-\qquad \dot q^T\tau_u = \dot y_\mathrm{a}^T e.
+A(q)=J_\mathrm{a}(q)^T,
+\qquad
+\dot q^T\tau_u=\dot y_\mathrm{a}^T e.
 \]
+
+Loss models may make \(A\ne J_\mathrm{a}^T\). Keeping the two methods
+separate prevents force attenuation from corrupting actuator-coordinate
+velocities.
 
 `DirectEffort`, the currently available effort law, implements `e = u`.
 The split leaves room for later activation, pressure-flow, force-length,
@@ -39,8 +48,8 @@ robot = PCS(
 )
 ```
 
-Tuple order defines control slices, actuator coordinates, moment-matrix columns,
-metadata, and rendered layers.
+Tuple order defines control slices, actuator coordinates, coordinate-Jacobian
+rows, actuation-matrix columns, metadata, and rendered layers.
 
 - `actuators=None` installs direct identity actuation, preserving the ordinary
   `PCS`, `PlanarPCS`, and `GVS` behavior.
@@ -73,6 +82,7 @@ The common robot interface is:
 ```python
 y_a = robot.actuator_coordinates(q)
 y_a_dot = robot.actuator_velocities(q, qd)
+J_a = robot.actuator_coordinate_jacobian(q)
 A = robot.actuation_matrix(q)
 e = robot.actuator_efforts(q, u, qd=qd)
 tau = robot.actuation_force(q, u, qd=qd)
@@ -83,8 +93,9 @@ metadata = robot.actuator_input_metadata
 requires velocity, omitting it evaluates the law at zero actuator velocity.
 
 [Actuation-space controllers](../control/actuation-space.md) consume the same
-`actuator_coordinates(q)` contract. The coordinate transformation requires the
-moment matrix to have full column rank at its reference configuration.
+`actuator_coordinates(q)` contract. The coordinate transformation requires
+`actuator_coordinate_jacobian(q)` to have full row rank at its reference
+configuration.
 
 ## Active and passive components
 

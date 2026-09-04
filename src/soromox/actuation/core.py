@@ -1,9 +1,11 @@
 """Composable actuation primitives.
 
 The actuation model follows a work-conjugate formulation. A transmission
-defines actuator coordinates ``y_a(q)`` and their moment matrix
-``A(q) = dy_a/dq.T``. An effort model maps user controls to efforts conjugate to
-those coordinates, and generalized actuation forces are ``A(q) @ effort``.
+defines actuator coordinates ``y_a(q)``, their coordinate Jacobian
+``J_a(q) = dy_a/dq``, and an effort-to-generalized-force map ``A(q)``. For an
+ideal lossless transmission ``A = J_a.T``; lossy transmissions need not obey
+that identity. An effort model maps user controls to efforts conjugate to the
+actuator coordinates, and generalized actuation forces are ``A(q) @ effort``.
 """
 
 from __future__ import annotations
@@ -82,13 +84,55 @@ class Transmission(eqx.Module):
         ...
 
     @abstractmethod
-    def moment_matrix(self, robot: SoftRobot, q: Array) -> Array:
-        """Return ``dy_a/dq.T`` with shape ``(num_dofs, num_channels)``."""
+    def coordinate_jacobian(self, robot: SoftRobot, q: Array) -> Array:
+        """Return the transmission-coordinate Jacobian.
+
+        The Jacobian ``J_a(q)`` maps generalized velocity to transmission-
+        coordinate velocity as ``yd_a = J_a(q) @ qd``.
+
+        Args:
+            robot: Soft robot on which the transmission is installed.
+            q: Generalized coordinates with shape
+                ``(robot.num_coordinates,)``.
+
+        Returns:
+            J_a: Coordinate Jacobian with shape
+                ``(self.num_channels, robot.num_velocities)``.
+        """
+        ...
+
+    @abstractmethod
+    def actuation_matrix(self, robot: SoftRobot, q: Array) -> Array:
+        """Return the effort-to-generalized-force map.
+
+        The actuation matrix ``A(q)`` maps transmission efforts to generalized
+        force as ``tau_u = A(q) @ effort``.
+
+        Args:
+            robot: Soft robot on which the transmission is installed.
+            q: Generalized coordinates with shape
+                ``(robot.num_coordinates,)``.
+
+        Returns:
+            A: Actuation matrix with shape
+                ``(robot.num_velocities, self.num_channels)``.
+        """
         ...
 
     def velocities(self, robot: SoftRobot, q: Array, qd: Array) -> Array:
-        """Return transmission-coordinate velocities."""
-        return self.moment_matrix(robot, q).T @ qd
+        """Map generalized velocities to transmission-coordinate velocities.
+
+        Args:
+            robot: Soft robot on which the transmission is installed.
+            q: Generalized coordinates with shape
+                ``(robot.num_coordinates,)``.
+            qd: Generalized velocities with shape ``(robot.num_velocities,)``.
+
+        Returns:
+            yd_a: Transmission-coordinate velocities with shape
+                ``(self.num_channels,)``.
+        """
+        return self.coordinate_jacobian(robot, q) @ qd
 
 
 class EffortModel(eqx.Module):
@@ -193,9 +237,32 @@ class Actuator(eqx.Module):
         return self.transmission.num_channels
 
     def coordinates(self, robot: SoftRobot, q: Array) -> Array:
+        """Return this actuator's work-conjugate coordinates.
+
+        Args:
+            robot: Soft robot on which the actuator is installed.
+            q: Generalized coordinates with shape
+                ``(robot.num_coordinates,)``.
+
+        Returns:
+            y_a: Work-conjugate actuator coordinates with shape
+                ``(self.num_channels,)``.
+        """
         return self.transmission.coordinates(robot, q)
 
     def velocities(self, robot: SoftRobot, q: Array, qd: Array) -> Array:
+        """Return this actuator's work-conjugate coordinate velocities.
+
+        Args:
+            robot: Soft robot on which the actuator is installed.
+            q: Generalized coordinates with shape
+                ``(robot.num_coordinates,)``.
+            qd: Generalized velocities with shape ``(robot.num_velocities,)``.
+
+        Returns:
+            yd_a: Actuator-coordinate velocities with shape
+                ``(self.num_channels,)``.
+        """
         return self.transmission.velocities(robot, q, qd)
 
     def efforts(
@@ -205,12 +272,12 @@ class Actuator(eqx.Module):
         control: Array,
         qd: Array | None = None,
         *,
-        transmission_matrix: Array | None = None,
+        coordinate_jacobian: Array | None = None,
     ) -> Array:
         """Map controls to work-conjugate efforts for this actuator.
 
         Only transmission coordinates and velocities required by the installed
-        effort model are evaluated. A precomputed transmission matrix may be
+        effort model are evaluated. A precomputed coordinate Jacobian may be
         supplied to reuse it when evaluating actuator-coordinate velocities.
 
         Args:
@@ -221,24 +288,24 @@ class Actuator(eqx.Module):
             qd: Optional generalized velocities of shape
                 ``(robot.num_velocities,)``. If omitted for a velocity-dependent
                 effort model, zero generalized velocity is used.
-            transmission_matrix: Optional precomputed transmission matrix with
-                shape ``(robot.num_velocities, self.num_channels)``.
+            coordinate_jacobian: Optional precomputed coordinate Jacobian with
+                shape ``(self.num_channels, robot.num_velocities)``.
 
         Returns:
             e: Work-conjugate actuator efforts with shape
                 ``(self.num_channels,)``.
 
         Raises:
-            ValueError: If ``transmission_matrix`` has an incompatible shape.
+            ValueError: If ``coordinate_jacobian`` has an incompatible shape.
         """
-        if transmission_matrix is not None and transmission_matrix.shape != (
-            robot.num_velocities,
+        if coordinate_jacobian is not None and coordinate_jacobian.shape != (
             self.num_channels,
+            robot.num_velocities,
         ):
             raise ValueError(
-                "transmission_matrix must have shape "
-                f"({robot.num_velocities}, {self.num_channels}), got "
-                f"{transmission_matrix.shape}."
+                "coordinate_jacobian must have shape "
+                f"({self.num_channels}, {robot.num_velocities}), got "
+                f"{coordinate_jacobian.shape}."
             )
 
         coordinate = None
@@ -249,10 +316,10 @@ class Actuator(eqx.Module):
         if self.effort_model.requires_velocity:
             if qd is None:
                 qd = jnp.zeros_like(q)
-            if transmission_matrix is None:
+            if coordinate_jacobian is None:
                 velocity = self.velocities(robot, q, qd)
             else:
-                velocity = transmission_matrix.T @ qd
+                velocity = coordinate_jacobian @ qd
 
         return self.effort_model.effort(control, coordinate, velocity)
 
@@ -306,7 +373,33 @@ class IdentityTransmission(Transmission):
         del robot
         return q
 
-    def moment_matrix(self, robot: SoftRobot, q: Array) -> Array:
+    def coordinate_jacobian(self, robot: SoftRobot, q: Array) -> Array:
+        """Return the identity coordinate Jacobian.
+
+        Args:
+            robot: Soft robot on which the transmission is installed.
+            q: Generalized coordinates with shape
+                ``(robot.num_coordinates,)``.
+
+        Returns:
+            J_a: Identity map from generalized to actuator-coordinate
+                velocities with shape ``(self.num_channels, self.num_channels)``.
+        """
+        del robot
+        return jnp.eye(self.num_channels, dtype=q.dtype)
+
+    def actuation_matrix(self, robot: SoftRobot, q: Array) -> Array:
+        """Return the identity effort-to-generalized-force map.
+
+        Args:
+            robot: Soft robot on which the transmission is installed.
+            q: Generalized coordinates with shape
+                ``(robot.num_coordinates,)``.
+
+        Returns:
+            A: Identity actuation matrix with shape
+                ``(self.num_channels, self.num_channels)``.
+        """
         del robot
         return jnp.eye(self.num_channels, dtype=q.dtype)
 

@@ -1,49 +1,42 @@
 # Threadlike actuation
 
-Threadlike actuation models fixed paths routed through the material-frame
-cross-section of a continuum robot. A routing may span any contiguous inclusive
-range of body segments. The same geometry supports pulling tendons, pushing
-rods, simplified contractile muscles, and pressure chambers represented by an
-equivalent axial volume coordinate.
+Threadlike actuation models paths embedded in a continuum robot's material
+frame. The same geometry supports pulling tendons, pushing rods, simplified
+contractile muscles, and pressure chambers represented by an equivalent axial
+volume coordinate. A path may span any contiguous inclusive range of body
+segments.
 
-Following the general threadlike-routing formulation of
-[Renda et al. (2022)](https://doi.org/10.1109/LRA.2022.3183248), each actuator
-is represented by a path embedded in the continuum body. SoRoMoX specifies the
-path by its material-frame offset \(d(s)\) from the backbone and its derivative
-with respect to arc length. The host combines these routing fields with its
-backbone kinematics when evaluating path length and the moment matrix.
+!!! info "Threadlike-routing reference"
+    The routing geometry follows:
 
-The transmission model assumes that:
+    > Renda, F., Armanini, C., Mathew, A. T., & Boyer, F. (2022).
+    > *Geometrically-Exact Inverse Kinematic Control of Soft Manipulators With
+    > General Threadlike Actuators' Routing*. IEEE Robotics and Automation
+    > Letters, 7(3), 7311–7318.
+    > [https://doi.org/10.1109/LRA.2022.3183248](https://doi.org/10.1109/LRA.2022.3183248)
 
-- the routing is fixed in the material frame and depends only on arc length;
-- the actuator coordinate is determined by path length, scaled by a constant
-  effective area for the pressure-chamber preset; and
-- each path carries one scalar work-conjugate effort, uniform along its route.
+A routing is a material-frame offset from the backbone. `PCS`, `PlanarPCS`, and
+`GVS` combine that routing with their native strain kinematics to evaluate path
+length, coordinate velocity, and generalized actuator force.
 
-Consequently, configuration- or time-dependent rerouting, changes in chamber
-cross-section, along-path friction or slack, and internal actuator dynamics are
-outside the transmission model. Representing these effects requires an extended
-routing, transmission, or effort model.
-
-Threadlike components require continuum segment topology and the host's native
-path-integration hooks. `PCS`, `PlanarPCS`, and `GVS` provide this contract.
-Articulated hosts do not, so installing a threadlike component on them raises a
-descriptive `TypeError` during construction.
+The model assumes fixed material-frame routing, one scalar coordinate and
+effort per path, and an optional static effort loss along active paths. It does
+not model configuration-dependent rerouting, slack, actuator dynamics, or
+changes in pressure-chamber cross-section.
 
 ## Routing
 
-`ThreadlikeRouting` stores a vectorized family of paths. Linear paths use
+### Linear routing
+
+`ThreadlikeRouting` stores a vectorized path family. Linear paths use
 
 \[
-d(s) = d_0 + d_1s
+r(s)=r_0+r_1s,
 \]
 
-in the local material frame. The `intercept` and `slope` arrays have shape
-`(num_paths, 3)`, with the final axis ordered along the local material-frame
-axes. SoRoMoX aligns the backbone with the local `x` axis; the local-`x`
-component of both arrays must therefore be zero, while the `y` and `z`
-components locate the path in the cross-section. A `(3,)` vector defines a
-single path.
+where `intercept` and `slope` have shape `(num_paths, 3)` and use local
+material-frame `[x, y, z]` order. The undeformed backbone follows local `+x`,
+so both local-`x` components must be zero.
 
 ```python
 from soromox.actuation import ThreadlikeRouting
@@ -75,9 +68,9 @@ positive-curvature bend and shortens relative to the backbone.
 
 ### Custom routing laws
 
-The continuum hosts depend only on the routing contract, not on the linear
-parameterization. A custom fixed material-frame routing supplies an immutable
-parameter type plus offset and arc-length-derivative functions:
+A custom routing supplies immutable parameters and analytical offset
+functions. Friction also needs the second derivative; production code does not
+differentiate routing functions with autodiff.
 
 ```python
 import equinox as eqx
@@ -94,22 +87,57 @@ class SinusoidalRoutingParams(BaseThreadlikeRoutingParams):
     end_segment_index: tuple[int, ...] = eqx.field(static=True)
 
     @property
-    def num_paths(self):
+    def num_paths(self) -> int:
+        """Return the number of paths in this parameter batch.
+
+        Returns:
+            Number of routed paths.
+        """
         return self.amplitude.shape[0]
 
-    def validate(self):
-        if self.frequency.shape != self.amplitude.shape:
-            raise ValueError("frequency must match amplitude")
 
+def offset(params: SinusoidalRoutingParams, s: jax.Array) -> jax.Array:
+    """Return material-frame sinusoidal routing offsets.
 
-def offset(params, s):
+    Args:
+        params: Batched sinusoidal routing parameters.
+        s: Scalar backbone abscissa.
+
+    Returns:
+        Material-frame offsets with shape ``(num_paths, 3)``.
+    """
     y = params.amplitude * jnp.sin(params.frequency * s)
     return jnp.stack((jnp.zeros_like(y), y, jnp.zeros_like(y)), axis=-1)
 
 
-def derivative(params, s):
+def derivative(params: SinusoidalRoutingParams, s: jax.Array) -> jax.Array:
+    """Return the first derivative of the routing offset.
+
+    Args:
+        params: Batched sinusoidal routing parameters.
+        s: Scalar backbone abscissa.
+
+    Returns:
+        First derivatives with shape ``(num_paths, 3)``.
+    """
     y_s = params.amplitude * params.frequency * jnp.cos(params.frequency * s)
     return jnp.stack((jnp.zeros_like(y_s), y_s, jnp.zeros_like(y_s)), axis=-1)
+
+
+def second_derivative(params: SinusoidalRoutingParams, s: jax.Array) -> jax.Array:
+    """Return the second derivative of the routing offset.
+
+    Args:
+        params: Batched sinusoidal routing parameters.
+        s: Scalar backbone abscissa.
+
+    Returns:
+        Second derivatives with shape ``(num_paths, 3)``.
+    """
+    y_ss = -(params.frequency**2) * params.amplitude * jnp.sin(
+        params.frequency * s
+    )
+    return jnp.stack((jnp.zeros_like(y_ss), y_ss, jnp.zeros_like(y_ss)), axis=-1)
 
 
 routing = ThreadlikeRouting(
@@ -121,17 +149,17 @@ routing = ThreadlikeRouting(
     ),
     offset_fn=offset,
     derivative_fn=derivative,
+    second_derivative_fn=second_derivative,
 )
 ```
 
-`PCS`, `PlanarPCS`, and `GVS` evaluate these two methods through the same host
-integration hooks. Custom parameter types must retain the common contiguous
-`start_segment_index` / `end_segment_index` topology contract.
+Path count and segment spans are static topology. Updating either requires
+reconstructing the routing and robot.
 
 ## Modality presets
 
-Raw path length is ℓ. Presets select the signed or scaled coordinate while
-positive input always means the named physical action.
+Let \(\ell\) be raw physical path length. Presets choose the signed or scaled
+coordinate while positive input retains its named physical meaning.
 
 | Preset | Coordinate | Positive effort | Unit |
 | --- | --- | --- | --- |
@@ -140,56 +168,216 @@ positive input always means the named physical action.
 | `muscles` | \(-\ell\) | contraction/tension | N |
 | `pressure_chambers` | \(A_\mathrm{eff}\ell\) | pressure | Pa |
 
-The pressure coordinate is volume (V=A_\mathrm{eff}\ell), so pressure and
-volume remain a work-conjugate pair.
+Pressure and equivalent volume \(V=A_\mathrm{eff}\ell\) form a
+work-conjugate pair.
 
 ```python
 from soromox.actuation import ThreadlikeActuator
-from soromox.systems import PCS
 
 actuator = ThreadlikeActuator.tendons(routing)
 robot = PCS(body_params, structure=structure, actuators=actuator)
 ```
 
-The same construction works with `PlanarPCS` and `GVS`. Mixed modalities are an
-ordered tuple:
+Pass a tuple to combine ordered actuator groups or modalities.
 
-```python
-robot = PCS(
-    body_params,
-    structure=structure,
-    actuators=(
-        ThreadlikeActuator.tendons(tendon_routing),
-        ThreadlikeActuator.push_rods(rod_routing),
-    ),
-)
-```
+## Coordinates, Jacobians, and force maps
 
-## Geometry and work coordinates
-
-Raw geometry is intentionally separate from the signed/scaled actuator
-coordinate:
+Raw geometry is separate from the actuator coordinate and force map:
 
 ```python
 actuator = robot.actuators[0]
 lengths = actuator.path_lengths(robot, q)
 length_rates = actuator.path_velocities(robot, q, qd)
+path_length_jacobian = actuator.transmission.path_length_jacobian(robot, q)
 points = actuator.path_poses(robot, q, s)
+
 coordinates = robot.actuator_coordinates(q)
+coordinate_jacobian = robot.actuator_coordinate_jacobian(q)
+actuation_matrix = robot.actuation_matrix(q)
 ```
 
-For tendons, `coordinates == -lengths`; for a pressure preset, coordinates are
-equivalent volumes. In every case,
-`jax.jacrev(robot.actuator_coordinates)(q) == robot.actuation_matrix(q).T` up
-to quadrature tolerance.
+The two matrix contracts are
 
-PCS integrates the local path basis and performs the constant-strain projection
-once. GVS applies its strain basis inside the existing quadrature. The public
-behavior is common, while each host keeps its native evaluation path.
+\[
+\dot y_a=J_a(q)\dot q,
+\qquad
+\tau_u=A(q)e,
+\]
+
+where `coordinate_jacobian` is \(J_a=\partial y_a/\partial q\) with shape
+`(num_actuators, num_velocities)`, and `actuation_matrix` is \(A\) with shape
+`(num_velocities, num_actuators)`. For a lossless transmission, virtual work
+gives \(A=J_a^T\). Friction can make them differ without changing path
+coordinates or velocities.
+
+## Continuum Capstan friction
+
+`ThreadlikeFriction.capstan(coefficient=mu)` attenuates active threadlike effort
+along increasing backbone abscissa, starting at each path's configured
+anchor. It is available for `PCS`, `PlanarPCS`, and `GVS`. The default
+`ThreadlikeFriction.frictionless()` returns unit effort ratio.
+
+### Path-turn derivation
+
+Let \(s\) be the backbone abscissa in the undeformed configuration,
+\(R(s)\in SO(3)\) the material orientation, \(p(s)\in\mathbb{R}^3\) the backbone position, and
+\(\xi=(\omega,v)\) the angular and linear Cosserat strain. Then
+
+\[
+R'=R[\omega]_\times,
+\qquad
+p'=Rv.
+\]
+
+For material routing offset \(r(s)\), the spatial path is
+\(x(s)=p(s)+R(s)r(s)\). Its derivative is
+
+\[
+x'=Ra,
+\qquad
+a=v+\omega\times r+r'.
+\]
+
+Define \(\nu=\lVert a\rVert\), material unit tangent \(u=a/\nu\), and
+spatial unit tangent \(\hat t=Ru\). Analytical differentiation gives
+
+\[
+a'=v'+\omega'\times r+\omega\times r'+r'',
+\qquad
+u'=\frac{(I-uu^T)a'}{\nu}.
+\]
+
+Consequently,
+
+\[
+\frac{d\hat t}{ds}=R(\omega\times u+u'),
+\qquad
+\rho(s)=\left\lVert\omega\times u+u'\right\rVert.
+\]
+
+`turn_rate` is \(\rho\), in radians per metre of undeformed backbone. It
+includes both material-frame rotation and change of the tangent inside that
+frame. Omitting \(u'\) is valid only when the normalized material tangent is
+constant. Inside a PCS segment, \(\omega'=v'=0\), so SoRoMoX uses the
+constant-strain specialization \(a'=\omega\times r'+r''\). Routing derivatives
+can still make \(u'\ne0\). GVS retains the full expression and computes
+\(\omega'\) and \(v'\) analytically from the derivative of its strain basis.
+
+The `accumulated_turn` from anchor \(s_0\) is
+
+\[
+\Theta(s)=\int_{s_0}^{s}\rho(\sigma)\,d\sigma.
+\]
+
+SoRoMoX evaluates this integral using the host quadrature. Genuine one-sided
+tangent jumps introduced by a piecewise host discretization contribute their
+unsigned angle at the interface.
+
+### Relation to the cited discrete model
+
+The exponential Capstan relation is established for ropes, belts, and tendons
+sliding over contact. SoRoMoX takes inspiration from a discrete spacer-disk
+tendon model:
+
+!!! info "Capstan-model reference"
+    > Feliu-Talegon, D., Alkayas, A. Y., Adamu, Y. A., Mathew, A. T., &
+    > Renda, F. (2025). *Actuation Reading Insights: Estimating Shape and
+    > Forces in Tendon-Driven Slender Soft Robots*. IEEE/ASME Transactions on
+    > Mechatronics, 30(6), 7878–7888.
+    > [https://doi.org/10.1109/TMECH.2025.3581774](https://doi.org/10.1109/TMECH.2025.3581774)
+
+In that model, each disk obeys
+
+\[
+T_i=T_{i-1}e^{-\mu\varphi_i},
+\qquad
+T_n=T_0\exp\left(-\mu\sum_i\varphi_i\right).
+\]
+
+SoRoMoX adapts that idea to distributed contact along an embedded continuum
+path:
+
+\[
+\eta(s)=\frac{e(s)}{e(s_0)}=e^{-\mu\Theta(s)}.
+\]
+
+This is not an implementation of discrete spacer disks. The current API does
+not represent discrete guide locations, guide radii, or individual guide
+reactions.
+
+### Generalized-force integration
+
+For spatial strain, the local unscaled length-gradient density is
+\(g_\xi=[r\times u;u]\). If \(B(s)\) maps generalized coordinates to strain
+and \(c\) is the modality coordinate scale, the active force map is
+
+\[
+A_\mu(q)=c\int_{s_0}^{s_1}
+\eta(q,s)B(s)^Tg_\xi(q,s)\,ds.
+\]
+
+The ratio weights every quadrature contribution; it does not merely scale the
+final matrix. Distal contributions therefore receive less of the anchor effort
+than proximal contributions.
+
+```python
+from soromox.actuation import ThreadlikeFriction
+
+actuator = ThreadlikeActuator.tendons(
+    routing,
+    friction=ThreadlikeFriction.capstan(coefficient=0.2),
+)
+```
+
+The coefficient may be a scalar shared by the family or an array of shape
+`(num_paths,)`.
+
+### Custom effort-ratio laws
+
+Custom laws receive only explicit friction state, not a host-specific context:
+
+```python
+from soromox.actuation import BaseThreadlikeFrictionParams, ThreadlikeFriction
+
+
+class HyperbolicFrictionParams(BaseThreadlikeFrictionParams):
+    coefficient: Array
+
+
+def hyperbolic_effort_ratio(
+    params: HyperbolicFrictionParams,
+    accumulated_turn: Array,
+) -> Array:
+    """Return a custom effort ratio as a function of accumulated turn.
+
+    Args:
+        params: Hyperbolic friction parameters.
+        accumulated_turn: Accumulated path turn with shape ``(num_paths,)``.
+
+    Returns:
+        Surviving effort ratios with shape ``(num_paths,)``.
+    """
+    return 1.0 / (1.0 + params.coefficient * accumulated_turn)
+
+
+friction = ThreadlikeFriction(
+    params=HyperbolicFrictionParams(coefficient=jnp.asarray(0.5)),
+    effort_ratio_fn=hyperbolic_effort_ratio,
+    is_frictionless=False,
+)
+```
+
+Parameters are differentiable leaves; the law itself is static. A custom law
+should return values in \((0,1]\) and must not read the applied effort.
+
+The current model uses the driven anchor-to-distal Capstan branch. It does not
+model sticking, direction-dependent backdriving, frictional hysteresis, or
+slack. Warp threadlike kernels currently accept only frictionless linear
+routing; automatic backend selection evaluates frictional actuation with JAX.
 
 ## Passive paths
 
-Use `ThreadlikeImpedance` for routed spring-damper mechanics:
+`ThreadlikeImpedance` implements conservative routed spring-damper mechanics:
 
 ```python
 from soromox.actuation import ThreadlikeImpedance
@@ -200,67 +388,36 @@ passive = ThreadlikeImpedance(
     damping=jnp.array([2.0]),
     rest_length=jnp.array([0.19]),
 )
-
-robot = PCS(
-    body_params,
-    structure=structure,
-    actuators=actuator,
-    passive_elements=(passive,),
-)
 ```
 
-The passive element contributes to elastic force, damping, and elastic energy;
-it never consumes an active control channel.
+It contributes elastic force, damping, and elastic energy without consuming an
+active control channel. Its `.routing` attribute stays distinct from an active
+actuator's `.transmission`; friction is intentionally active-only.
 
-## Updating routing and actuator parameters
+## Parameter updates
 
-Updates follow the same shallow immutable replacement pattern as robot body
-parameters:
+Updates use immutable replacement:
 
 ```python
 params = robot.actuators[0].params
-routing_params = params.transmission.routing.replace(
-    intercept=new_intercepts,
-)
+routing_params = params.transmission.routing.replace(intercept=new_intercepts)
 transmission_params = params.transmission.replace(routing=routing_params)
-robot = robot.update_actuator_params(
-    0,
-    transmission=transmission_params,
-)
+robot = robot.update_actuator_params(0, transmission=transmission_params)
 ```
 
-Routing coefficients, coordinate scales, effort bounds, and passive mechanical
-values are updateable. Segment spans and path counts are static topology and
-require reconstruction. Colors, radii, and line widths belong to renderer
-configuration rather than actuator parameters.
+Routing coefficients, coordinate scales, friction coefficients, effort bounds,
+and passive mechanical values are updateable. Path counts and segment spans are
+static topology and require reconstruction.
 
 ## Rendering
 
-The renderer-side actuation adapter converts threadlike path queries into semantic
-`ActuatorVisualLayer` objects with path points, modality kind, and optional input
-scalar data. Physics objects do not import renderer primitives or store visual
-style. Generic renderers draw swept geometry when a radius is configured and fall
-back to polylines otherwise.
-
-```python
-from soromox.rendering import ActuatorStyleConfig, RendererColorConfig
-
-visuals = RendererColorConfig(
-    actuators=ActuatorStyleConfig(
-        kind_colors={"tendon": (0.85, 0.2, 0.15)},
-        kind_radii={"tendon": 5e-4},
-    )
-)
-renderer.show(q, actuator_inputs=u, color_config=visuals)
-```
-
-I-SUPPORT retains its detailed bellows renderer. Its renderer accepts the same
-`actuator_inputs=` argument and also supports `pressures=` as a mutually
-exclusive convenience alias.
+Renderer adapters turn path queries into semantic visual layers. Generic
+renderers draw swept geometry when a radius is configured and use polylines
+otherwise. I-SUPPORT retains its detailed bellows renderer.
 
 ## Current limits
 
 Threadlike paths are fixed in the material frame, use contiguous segment spans,
-and have one constant coordinate scale per path. The current implementation uses
-stateless `DirectEffort`; nonlinear and stateful effort laws are future
-extensions.
+and have one constant coordinate scale per path. Active effort loss is static
+and direction-independent. Discrete guides and internal actuator dynamics are
+not implemented.

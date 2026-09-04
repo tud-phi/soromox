@@ -388,7 +388,7 @@ def test_isupport_matches_pr116_threadlike_pressure_mapping():
     pressure = jnp.array([1.0e4, 2.0e4, 3.0e4])
 
     routing = robot.actuators[0].transmission.routing
-    raw_path_matrix = robot._threadlike_moment_matrix(q, routing)
+    raw_path_matrix = robot._threadlike_actuation_matrix(q, routing)
     pressure_area = jnp.repeat(
         params.chamber_effective_pressure_area,
         robot.num_chambers_per_segment,

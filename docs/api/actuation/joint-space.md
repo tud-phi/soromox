@@ -81,7 +81,7 @@ entries must be zero. These checks belong to the tendon preset; the generic
 affine transmission does not impose them.
 
 Multiple actuator families can be installed as an ordered tuple. Their control
-slices, coordinates, moment-matrix columns, and metadata follow tuple order.
+slices, coordinates, actuation-matrix columns, and metadata follow tuple order.
 
 ## Passive tendon impedance
 

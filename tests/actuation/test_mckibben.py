@@ -73,7 +73,7 @@ def test_length_jacobian_gradient_is_finite(coincident: bool):
     """Cover the direction vector, which divides by the displacement norm.
 
     This exercises the private group-local hook directly because the public
-    moment matrix additionally needs an articulated host, which is irrelevant to
+    actuation matrix additionally needs an articulated host, which is irrelevant to
     the degeneracy under test.
     """
     transmission = make_transmission(coincident)
@@ -117,11 +117,13 @@ def test_coordinate_gradient_is_finite(coincident: bool):
 
 
 @pytest.mark.parametrize("coincident", [False, True])
-def test_moment_matrix_gradient_is_finite(coincident: bool):
-    """Exercise the public moment-matrix path through normalized directions."""
+def test_actuation_matrix_gradient_is_finite(coincident: bool):
+    """Exercise the public actuation-matrix path through normalized directions."""
     transmission = make_transmission(coincident)
     robot = SimpleNamespace(num_velocities=2)
 
-    jacobian = jax.jacrev(lambda q: transmission.moment_matrix(robot, q))(jnp.zeros(2))
+    jacobian = jax.jacrev(lambda q: transmission.actuation_matrix(robot, q))(
+        jnp.zeros(2)
+    )
 
     assert jnp.isfinite(jacobian).all()

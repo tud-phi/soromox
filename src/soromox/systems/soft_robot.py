@@ -2265,8 +2265,8 @@ class SoftRobot(DynamicalSystem):
         Return the installed transmissions' coordinate velocities.
 
         Velocities are concatenated in actuator and channel order and satisfy
-        ``yd_a = A(q).T @ qd``, where ``A(q)`` is the concatenated actuator
-        transmission matrix.
+        ``yd_a = J_a(q) @ qd``, where ``J_a(q)`` is
+        :meth:`actuator_coordinate_jacobian`.
 
         Args:
             q: Generalized coordinates of shape ``(num_coordinates,)``.
@@ -2277,20 +2277,40 @@ class SoftRobot(DynamicalSystem):
                 ``(num_actuators,)``. An unactuated robot returns an empty
                 array.
         """
+        return self.actuator_coordinate_jacobian(q) @ qd
+
+    def actuator_coordinate_jacobian(self, q: Array) -> Array:
+        """Return the Jacobian of all installed actuator coordinates.
+
+        Rows are concatenated in actuator and channel order. The Jacobian maps
+        generalized velocities to actuator-coordinate velocities according to
+        ``actuator_velocities(q, qd) = J_a(q) @ qd``.
+
+        Args:
+            q: Generalized coordinates of shape ``(num_coordinates,)``.
+
+        Returns:
+            Coordinate Jacobian ``J_a`` with shape
+            ``(num_actuators, num_velocities)``.
+        """
         if self.floating_base:
             _, q_internal = self.split_configuration(q)
-            _, qd_internal = self.split_velocity(qd)
-            return self._fixed_base_robot_at_pose().actuator_velocities(
-                q_internal, qd_internal
+            internal = self._fixed_base_robot_at_pose().actuator_coordinate_jacobian(
+                q_internal
             )
+            return jnp.pad(internal, ((0, 0), (self.num_base_velocities, 0)))
         if not self.actuators:
-            return jnp.zeros((0,), dtype=q.dtype)
+            return jnp.zeros((0, self.num_velocities), dtype=q.dtype)
         return jnp.concatenate(
-            tuple(actuator.velocities(self, q, qd) for actuator in self.actuators)
+            tuple(
+                actuator.transmission.coordinate_jacobian(self, q)
+                for actuator in self.actuators
+            ),
+            axis=0,
         )
 
     def _actuation_matrix(self, q: Array) -> Array:
-        """Return the protected differentiable JAX transmission matrix."""
+        """Return the protected differentiable JAX actuation matrix."""
 
         if self.floating_base:
             _, q_internal = self.split_configuration(q)
@@ -2301,7 +2321,7 @@ class SoftRobot(DynamicalSystem):
             return jnp.zeros((self.num_velocities, 0), dtype=q.dtype)
         return jnp.concatenate(
             tuple(
-                actuator.transmission.moment_matrix(self, q)
+                actuator.transmission.actuation_matrix(self, q)
                 for actuator in self.actuators
             ),
             axis=1,
@@ -2309,16 +2329,16 @@ class SoftRobot(DynamicalSystem):
 
     def actuation_matrix(self, q: Array, *, backend: str | None = None) -> Array:
         """
-        Return the actuator transmission matrix ``A(q)``.
+        Return the actuation matrix ``A(q)``.
 
-        ``A(q)`` is the concatenated moment-arm matrix of the installed
-        transmissions. It maps work-conjugate actuator efforts ``e`` to
-        generalized forces,
+        ``A(q)`` is the concatenated effort-to-generalized-force map of the
+        installed transmissions:
 
         ``tau_u = A(q) @ e``.
 
-        Equivalently, ``A(q).T`` is the Jacobian of the actuator coordinates
-        with respect to the generalized coordinates.
+        For ideal lossless transmissions, ``A(q)`` equals
+        ``actuator_coordinate_jacobian(q).T``. A lossy transmission can break
+        that equality while preserving the kinematic coordinate Jacobian.
 
         Args:
             q: Generalized coordinates of shape (num_coordinates,).
@@ -2326,7 +2346,7 @@ class SoftRobot(DynamicalSystem):
                 implementation supports JAX execution.
 
         Returns:
-            A: Actuator transmission matrix of shape
+            A: Actuation matrix of shape
                 (num_velocities, num_actuators).
         """
         if backend not in (None, "auto", "jax"):
@@ -2341,7 +2361,7 @@ class SoftRobot(DynamicalSystem):
         u: Array,
         qd: Array | None = None,
         *,
-        actuation_matrix: Array | None = None,
+        coordinate_jacobian: Array | None = None,
     ) -> Array:
         """
         Map user controls to work-conjugate actuator efforts.
@@ -2356,15 +2376,15 @@ class SoftRobot(DynamicalSystem):
             q: Generalized coordinates of shape (num_coordinates,).
             u: Actuator controls of shape (num_actuators,).
             qd: Optional generalized velocities of shape (num_velocities,).
-            actuation_matrix: Optional precomputed actuator transmission matrix
-                with shape ``(num_velocities, num_actuators)``. It is reused for
-                velocity-dependent effort laws.
+            coordinate_jacobian: Optional precomputed actuator-coordinate
+                Jacobian with shape ``(num_actuators, num_velocities)``. It is
+                reused for velocity-dependent effort laws.
 
         Returns:
             e: Work-conjugate actuator efforts of shape (num_actuators,).
 
         Raises:
-            ValueError: If ``u`` or ``actuation_matrix`` has an incompatible
+            ValueError: If ``u`` or ``coordinate_jacobian`` has an incompatible
                 shape.
         """
         if self.floating_base:
@@ -2372,30 +2392,30 @@ class SoftRobot(DynamicalSystem):
             qd_internal = None
             if qd is not None:
                 _, qd_internal = self.split_velocity(qd)
-            internal_matrix = (
+            internal_jacobian = (
                 None
-                if actuation_matrix is None
-                else actuation_matrix[self.num_base_velocities :]
+                if coordinate_jacobian is None
+                else coordinate_jacobian[:, self.num_base_velocities :]
             )
             return self._fixed_base_robot_at_pose().actuator_efforts(
                 q_internal,
                 u,
                 qd=qd_internal,
-                actuation_matrix=internal_matrix,
+                coordinate_jacobian=internal_jacobian,
             )
         u = jnp.asarray(u)
         if u.shape != (self.num_actuators,):
             raise ValueError(
                 f"u must have shape ({self.num_actuators},), got {u.shape}."
             )
-        if actuation_matrix is not None and actuation_matrix.shape != (
-            self.num_velocities,
+        if coordinate_jacobian is not None and coordinate_jacobian.shape != (
             self.num_actuators,
+            self.num_velocities,
         ):
             raise ValueError(
-                "actuation_matrix must have shape "
-                f"({self.num_velocities}, {self.num_actuators}), got "
-                f"{actuation_matrix.shape}."
+                "coordinate_jacobian must have shape "
+                f"({self.num_actuators}, {self.num_velocities}), got "
+                f"{coordinate_jacobian.shape}."
             )
         if not self.actuators:
             return jnp.zeros((0,), dtype=u.dtype)
@@ -2403,8 +2423,8 @@ class SoftRobot(DynamicalSystem):
         start = 0
         for actuator in self.actuators:
             stop = start + actuator.num_channels
-            actuator_transmission_matrix = (
-                None if actuation_matrix is None else actuation_matrix[:, start:stop]
+            actuator_coordinate_jacobian = (
+                None if coordinate_jacobian is None else coordinate_jacobian[start:stop]
             )
             efforts.append(
                 actuator.efforts(
@@ -2412,7 +2432,7 @@ class SoftRobot(DynamicalSystem):
                     q,
                     u[start:stop],
                     qd=qd,
-                    transmission_matrix=actuator_transmission_matrix,
+                    coordinate_jacobian=actuator_coordinate_jacobian,
                 )
             )
             start = stop
@@ -2422,11 +2442,18 @@ class SoftRobot(DynamicalSystem):
         """Return the protected differentiable JAX generalized actuator force."""
 
         actuation_matrix = self._actuation_matrix(q)
+        coordinate_jacobian = (
+            self.actuator_coordinate_jacobian(q)
+            if any(
+                actuator.effort_model.requires_velocity for actuator in self.actuators
+            )
+            else None
+        )
         effort = self.actuator_efforts(
             q,
             u,
             qd=qd,
-            actuation_matrix=actuation_matrix,
+            coordinate_jacobian=coordinate_jacobian,
         )
         return actuation_matrix @ effort
 
@@ -2442,7 +2469,7 @@ class SoftRobot(DynamicalSystem):
         Compute the generalized actuation force.
 
         The installed effort models first map the ordered controls ``u`` to
-        work-conjugate actuator efforts ``e``. The actuator transmission matrix
+        work-conjugate actuator efforts ``e``. The actuation matrix
         then maps those efforts to generalized forces as
 
         ``tau_u = A(q) @ e``.

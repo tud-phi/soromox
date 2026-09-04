@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import equinox as eqx
 import jax
@@ -27,6 +28,9 @@ from soromox.utils.geometry.rotations import (
 from soromox.utils.numerics import safe_norm, safe_normalize
 
 from .core import Actuator, ActuatorMetadata, DirectEffort, Transmission
+
+if TYPE_CHECKING:
+    from soromox.systems.soft_robot import SoftRobot
 
 
 class ArticulatedMcKibbenTransmissionParams(BaseSystemParams):
@@ -142,7 +146,7 @@ class ArticulatedMcKibbenTransmission(Transmission):
     The transmission owns fixed and moving attachment geometry for grouped
     universal joints on a spatial articulated host. It computes effective
     muscle lengths, the volume-like coordinate work-conjugate to pressure, its
-    analytic moment matrix, and renderer-facing endpoint segments without
+    analytic actuation matrix, and renderer-facing endpoint segments without
     embedding those mechanics in a particular articulated robot class.
     """
 
@@ -245,7 +249,7 @@ class ArticulatedMcKibbenTransmission(Transmission):
         )
         return length.reshape((self.num_channels,))
 
-    def coordinates(self, robot, q: Array) -> Array:
+    def coordinates(self, robot: SoftRobot, q: Array) -> Array:
         """Return pressure-work coordinates for all McKibben muscles.
 
         The coordinate is ``(B**2 - length**2) * length / (4*pi*N**2)`` and has
@@ -303,7 +307,7 @@ class ArticulatedMcKibbenTransmission(Transmission):
         )
         return effective_length, jnp.stack([dlength_dqx, dlength_dqy], axis=-1)
 
-    def _moment_matrix_group(self, robot, q: Array, group_index: Array) -> Array:
+    def _actuation_matrix_group(self, robot, q: Array, group_index: Array) -> Array:
         """Scatter one group's analytic pressure-to-generalized-force block.
 
         The local block is ``d(y_a)/d(length) * d(length)/d(q_pair)`` and is
@@ -325,14 +329,41 @@ class ArticulatedMcKibbenTransmission(Transmission):
             .set(local_block.T)
         )
 
-    def moment_matrix(self, robot, q: Array) -> Array:
-        """Return the analytic pressure-to-generalized-force matrix ``A(q)``."""
+    def coordinate_jacobian(self, robot: SoftRobot, q: Array) -> Array:
+        """Return the pressure-work coordinate Jacobian.
+
+        The Jacobian maps generalized velocity to the rates of the volume-like
+        coordinates work-conjugate to pressure.
+
+        Args:
+            robot: Articulated robot hosting the transmission.
+            q: Generalized coordinates with shape
+                ``(robot.num_coordinates,)``.
+
+        Returns:
+            J_a: Coordinate Jacobian with shape
+                ``(self.num_channels, robot.num_velocities)``.
+        """
+        return self.actuation_matrix(robot, q).T
+
+    def actuation_matrix(self, robot: SoftRobot, q: Array) -> Array:
+        """Return the analytical pressure-to-generalized-force matrix.
+
+        Args:
+            robot: Articulated robot hosting the transmission.
+            q: Generalized coordinates with shape
+                ``(robot.num_coordinates,)``.
+
+        Returns:
+            A: Actuation matrix with shape
+                ``(robot.num_velocities, self.num_channels)``.
+        """
         if self.num_channels == 0:
             return jnp.zeros((robot.num_velocities, 0), dtype=q.dtype)
         indices = jnp.arange(self.params.num_groups)
-        matrices = jax.vmap(lambda index: self._moment_matrix_group(robot, q, index))(
-            indices
-        )
+        matrices = jax.vmap(
+            lambda index: self._actuation_matrix_group(robot, q, index)
+        )(indices)
         return jnp.sum(matrices, axis=0)
 
     def axial_forces(self, q: Array, pressures: Array) -> Array:

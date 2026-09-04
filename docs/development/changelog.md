@@ -15,11 +15,21 @@ and include benchmark baseline and measurement context for performance claims.
 
 - Added renderer-neutral cross-section contours and loft construction, with a
   registration hook for extending both swept 3D renderers with new geometries.
+- Added opt-in routing friction to threadlike transmissions, selected with
+  `friction=` on active `ThreadlikeActuator` presets. The continuum Capstan
+  model applies `exp(-mu * accumulated_turn)` to each local force contribution
+  and supports `PCS`, `PlanarPCS`, and `GVS`. Routed-path turn includes the
+  analytical material-tangent derivative; custom routings provide an
+  analytical second derivative. Parameters remain differentiable leaves under
+  JAX transformations. See
+  [threadlike actuation](../api/actuation/threadlike.md#continuum-capstan-friction).
 
 ### Changed
 
 - Open3D and Viser swept backbones now preserve circular, elliptical, and
   rectangular cross-sections, including dimensions that vary with abscissa.
+- Made `ActuationSpaceDynamics` use the actuator-coordinate Jacobian for its
+  coordinate map and transform a potentially lossy actuation matrix explicitly.
 
 ### Performance
 
@@ -31,6 +41,11 @@ and include benchmark baseline and measurement context for performance claims.
   material-`y` offset shortens under positive `kappa_z`. Existing planar
   threadlike models that compensated for the previous sign must update their
   routing offsets or actuator directions.
+- Replaced `Transmission.moment_matrix(...)` with the explicit
+  `coordinate_jacobian(...)` and `actuation_matrix(...)` contracts. Added
+  `SoftRobot.actuator_coordinate_jacobian(...)`. For ideal transmissions the
+  two matrices remain transposes; lossy transmissions need not satisfy that
+  identity. No compatibility alias is retained.
 - Renamed the Viser `cylinder_sections` and Open3D `tube_resolution` options to
   the geometry-neutral `cross_section_resolution`.
 
@@ -45,6 +60,10 @@ and include benchmark baseline and measurement context for performance claims.
   ends, which previously rendered tapered profiles as piecewise-constant.
 
 ### Documentation
+
+- Documented the continuum Capstan adaptation, complete path-turn derivation,
+  all symbols, distinction from discrete spacer disks, explicit matrix
+  contracts, and custom routing and effort-ratio laws.
 
 ### Contributors
 

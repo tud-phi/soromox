@@ -183,7 +183,7 @@ area
 A_eff = pi * (chamber_outer_radius**2 - chamber_inner_radius**2).
 ```
 
-The pressure-conjugate coordinates, velocities, efforts, moment matrix, and
+The pressure-conjugate coordinates, velocities, efforts, actuation matrix, and
 generalized force use the shared actuation interface:
 
 ```python
@@ -195,7 +195,7 @@ tau = robot.actuation_force(q, pressures, qd=qd)
 ```
 
 For the current `DirectEffort` model, `pressure_efforts == pressures`. The
-effective area is part of the transmission coordinate and moment matrix rather
+effective area is part of the transmission coordinate and actuation matrix rather
 than a separate pressure-to-force conversion API.
 
 I-SUPPORT's specialized renderer continues to draw the detailed bellows and
