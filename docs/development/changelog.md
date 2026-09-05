@@ -17,6 +17,9 @@ and include benchmark baseline and measurement context for performance claims.
   with a shared dimensionless objective, tuned settings, schema-v3 archives,
   and regression coverage; see
   [issue #154](https://github.com/tud-phi/soromox/issues/154).
+- Added a dynamic UMArm joint-space tracking example with
+  `FeedforwardCompensationTracker`, balanced antagonistic pressure offsets,
+  tracking plots, and pressure-colored Viser recording.
 - Added renderer-neutral cross-section contours and loft construction, with a
   registration hook for extending both swept 3D renderers with new geometries.
 
