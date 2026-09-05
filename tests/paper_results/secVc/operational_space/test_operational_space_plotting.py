@@ -18,7 +18,6 @@ if str(MODULE_DIR) not in sys.path:
     sys.path.insert(0, str(MODULE_DIR))
 
 import operational_space_impedance_common as common  # noqa: E402
-import plot_impedance_feedback_linearization as feedback  # noqa: E402
 import plot_operational_space_impedance_paper_figure as paper_plot  # noqa: E402
 from trajectory_primitives import TaskSpaceTrajectoryConfig  # noqa: E402
 
@@ -55,27 +54,6 @@ def _synthetic_operational_run() -> common.PCSImpedanceRun:
     )
 
 
-def _write_feedback_results(path: Path) -> None:
-    t = np.linspace(0.0, 0.2, 3)
-    arrays: dict[str, np.ndarray] = {
-        "controller_modes": np.asarray(feedback.CONTROLLER_MODES),
-    }
-    for mode_index, mode in enumerate(feedback.CONTROLLER_MODES, start=1):
-        scale = float(mode_index)
-        arrays.update(
-            {
-                f"{mode}_t": t,
-                f"{mode}_position_mm": scale * np.column_stack((t, 2 * t, 3 * t)),
-                f"{mode}_position_desired_mm": np.column_stack((t, t, t)),
-                f"{mode}_position_error_mm": scale * np.asarray((0.3, 0.2, 0.1)),
-                f"{mode}_orientation_deg": scale * np.column_stack((3 * t, 2 * t, t)),
-                f"{mode}_orientation_desired_deg": np.column_stack((t, t, t)),
-                f"{mode}_orientation_error_deg": scale * np.asarray((0.6, 0.4, 0.2)),
-            }
-        )
-    np.savez(path, **arrays)
-
-
 def test_operational_canonical_figure_layout(monkeypatch):
     monkeypatch.setattr(common.shutil, "which", lambda _: None)
     run = _synthetic_operational_run()
@@ -94,27 +72,4 @@ def test_operational_canonical_figure_layout(monkeypatch):
     desired_lines = [fig.axes[0].lines[index] for index in (1, 3, 5)]
     assert all(line.get_linewidth() == 2.0 for line in desired_lines)
     assert all(line.get_zorder() == 5 for line in desired_lines)
-    plt.close(fig)
-
-
-def test_feedback_error_axis_uses_saved_error_norms(monkeypatch, tmp_path):
-    monkeypatch.setattr(feedback.shutil, "which", lambda _: None)
-    input_path = tmp_path / "feedback_results.npz"
-    _write_feedback_results(input_path)
-    results = feedback.load_results(input_path)
-    fig, ax = plt.subplots()
-    feedback.plot_feedback_error_axis(
-        ax,
-        results,
-        quantity="position",
-        units="mm",
-        show_legend=False,
-    )
-
-    np.testing.assert_allclose(
-        ax.lines[0].get_ydata(), results["full"]["position_error_mm"]
-    )
-    np.testing.assert_allclose(
-        ax.lines[1].get_ydata(), results["partial"]["position_error_mm"]
-    )
     plt.close(fig)

@@ -23,8 +23,6 @@ ENTRY_POINTS = (
     "control_pcs_with_impedance.py",
     "plot_control_pcs_with_impedance.py",
     "plot_operational_space_impedance_paper_figure.py",
-    "compare_impedance_feedback_linearization.py",
-    "plot_impedance_feedback_linearization.py",
 )
 
 
