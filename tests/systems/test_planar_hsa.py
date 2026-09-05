@@ -387,6 +387,15 @@ def test_gravitational_energy(seed: int = 0):
             )
 
 
+def test_rotated_fixed_base_gravity_matches_raw_potential_gradient() -> None:
+    robot = _create_robot().with_fixed_base_pose(jnp.array([0.73, 0.03, -0.02]))
+    q = jnp.array([-0.1, 0.02, 0.1])
+
+    dU_dq = grad(robot._gravitational_energy)(q)
+
+    assert_allclose(dU_dq, robot.gravitational_force(q), rtol=1e-9, atol=1e-11)
+
+
 def test_kinetic_energy(seed: int = 0):
     """
     Test the kinetic energy computation.

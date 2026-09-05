@@ -964,15 +964,6 @@ class PlanarHSA(PlanarPCS):
         )
         return Jd_ps, Jd_tips
 
-    def _integration_kinematics_gravity(
-        self, q: Array
-    ) -> tuple[Array, Array, Array, Array, Array]:
-        """Return only pose/Jacobian data needed by gravitational forces."""
-        Ws_scaled, g_ps, J_ps, _, _, _, _, g_tips, J_tips = (
-            self._integration_geometry_full(q)
-        )
-        return Ws_scaled, g_ps, J_ps, g_tips, J_tips
-
     def _mass_geometry_from_integration(
         self, geometry: tuple[Array, ...], full: bool
     ) -> tuple[Array, ...]:
@@ -1821,26 +1812,25 @@ class PlanarHSA(PlanarPCS):
             gravity @ (payload_cog - base_translation)
         )
 
-    def _gravitational_energy(self, q: Array) -> Array:
-        """Return gravitational potential energy for active coordinates."""
-        return self._gravitational_energy_full_from_xi(self.strain(q))
-
     @eqx.filter_jit
-    def _floating_gravitational_energy(self, q: Array) -> Array:
+    def _gravitational_energy(self, q: Array) -> Array:
         """
-        Compute absolute floating-base HSA gravitational potential energy.
+        Compute fixed- or floating-base HSA gravitational potential energy.
 
-        The implementation contracts native rod densities and discrete platform
-        masses with positions directly. It does not evaluate Jacobians or build
-        spatial inertia matrices.
+        Floating models contract native rod densities and discrete platform
+        masses with world positions directly. They do not evaluate Jacobians or
+        build spatial inertia matrices.
 
         Args:
-            q: Total floating-base configuration with shape
-                ``(num_coordinates,)``.
+            q: Fixed-base active coordinates or total floating-base
+                configuration.
 
         Returns:
             Absolute gravitational potential energy as a scalar.
         """
+        if not self.floating_base:
+            return self._gravitational_energy_full_from_xi(self.strain(q))
+
         _, q_internal = self.split_configuration(q)
         xi = self.strain(q_internal)
         points, weights = self._quadrature()
@@ -1873,77 +1863,81 @@ class PlanarHSA(PlanarPCS):
                 vmap(rod_energy)(jnp.arange(self.num_rods_per_segment, dtype=jnp.int32))
             )
             mass, _, relative_cog = self._platform_mass_properties(segment_index)
-            tip = self._forward_backbone_from_xi(xi, self.L_cum[segment_index + 1])
-            cosine, sine = jnp.cos(tip[0]), jnp.sin(tip[0])
-            cog = tip[1:] + jnp.array(
-                [
-                    cosine * relative_cog[0] - sine * relative_cog[1],
-                    sine * relative_cog[0] + cosine * relative_cog[1],
-                ]
-            )
+            tip_transform = self._backbone_transform(xi, self.L_cum[segment_index + 1])
+            cog = (
+                tip_transform
+                @ jnp.concatenate(
+                    [relative_cog, jnp.ones((1,), dtype=relative_cog.dtype)]
+                )
+            )[:2]
             return rods - mass * (world_position(cog) @ gravity)
 
         energy = jnp.sum(
             vmap(segment_energy)(jnp.arange(self.num_segments, dtype=jnp.int32))
         )
-        end_effector = self._forward_end_effector_from_xi(xi)
-        cosine, sine = jnp.cos(end_effector[0]), jnp.sin(end_effector[0])
-        payload_cog = end_effector[1:] + jnp.array(
-            [
-                cosine * self.platform_center_of_gravity[0]
-                - sine * self.platform_center_of_gravity[1],
-                sine * self.platform_center_of_gravity[0]
-                + cosine * self.platform_center_of_gravity[1],
-            ]
-        )
+        _, tip_transforms = self._segment_bases_and_tips(xi)
+        payload_cog = (tip_transforms[-1] @ self.payload_transform)[:2, 2]
         return energy - self.platform_mass * (world_position(payload_cog) @ gravity)
 
     def _assemble_gravity_force(self, q: Array, *, full: bool = False) -> Array:
-        """Assemble gravity from pose/Jacobian data only."""
-        Ws, g_ps, J_full, g_tips, J_tips = self._integration_kinematics_gravity(q)
-        basis = jnp.eye(self.num_strains, dtype=J_full.dtype) if full else self.B_xi
-        J_ps = jnp.einsum("sqab,bd->sqad", J_full, basis)
-        rod_transforms = self.rod_transforms
-        rod_adjoint_inverses = self.rod_adjoint_inverses
-        J_rods = jnp.einsum("srab,sqbd->sqrad", rod_adjoint_inverses, J_ps)
-        g_rods = jnp.einsum("sqab,srbc->sqrac", g_ps, rod_transforms)
-        rod_local_gravity = jnp.einsum(
-            "sqrab,b->sqra",
-            vmap(vmap(vmap(se2.adjoint_inverse)))(g_rods),
-            self.g,
-        )
-        rod_gravity_wrench = jnp.einsum(
-            "srab,sqrb->sqra", self.rod_mass_matrices, rod_local_gravity
-        )
-        G_rods = -jnp.einsum("sq,sqrad,sqra->d", Ws, J_rods, rod_gravity_wrench)
+        """Assemble fixed- or floating-base gravity from one geometry pass."""
+        if self.floating_base and full:
+            raise ValueError("Full-strain gravity is only defined for fixed-base HSA.")
+        q = self.normalize_configuration(q)
+        q_internal = self.split_configuration(q)[1] if self.floating_base else q
+        geometry = self._integration_geometry_full(q_internal)
+        (
+            weights,
+            rod_transforms,
+            rod_jacobians,
+            rod_mass_matrices,
+            cog_transforms,
+            cog_jacobians,
+            masses,
+            _,
+            payload_jacobian,
+            payload_transform,
+            payload_mass_matrix,
+        ) = self._mass_geometry_from_integration(geometry, full=full)
 
-        tip_indices = jnp.arange(self.num_segments, dtype=jnp.int32)
-        J_tips = J_tips[tip_indices, tip_indices]
-        J_tips = jnp.einsum("sab,bd->sad", J_tips, basis)
-        J_cogs = jnp.einsum("sab,sbd->sad", self.cog_adjoint_inverses, J_tips)
-        g_cogs = jnp.einsum("sab,sbc->sac", g_tips, self.cog_transforms)
-        cog_matrices = jnp.zeros((*self.segment_masses.shape, 3, 3), dtype=Ws.dtype)
-        cog_matrices = cog_matrices.at[:, 0, 0].set(self.segment_inertias)
-        cog_matrices = cog_matrices.at[:, 1, 1].set(self.segment_masses)
-        cog_matrices = cog_matrices.at[:, 2, 2].set(self.segment_masses)
-        cog_gravity_wrench = jnp.einsum(
-            "sab,sb->sa",
-            cog_matrices,
-            jnp.einsum(
-                "sab,b->sa",
-                vmap(se2.adjoint_inverse)(g_cogs),
-                self.g,
-            ),
-        )
-        G_cogs = -jnp.einsum("sad,sa->d", J_cogs, cog_gravity_wrench)
+        def project_gravity(
+            transforms: Array,
+            point_masses: Array,
+            jacobians_body: Array,
+        ) -> Array:
+            linear_jacobians = jnp.einsum(
+                "...ij,...jk->...ik",
+                transforms[..., :2, :2],
+                jacobians_body[..., 1:, :],
+            )
+            if not self.floating_base:
+                return -jnp.einsum(
+                    "...,...ij,i->j", point_masses, linear_jacobians, self.g[1:]
+                )
+            return self._gravitational_force_from_base_relative_points(
+                q,
+                transforms[..., :2, 2],
+                point_masses,
+                linear_jacobians,
+            )
 
-        J_payload = self.payload_adjoint_inverse @ J_tips[-1]
-        g_payload = g_tips[-1] @ self.payload_transform
-        payload_gravity_wrench = self.payload_mass_matrix @ (
-            se2.adjoint_inverse(g_payload) @ self.g
+        rod_weighted_masses = weights[..., None] * rod_mass_matrices[:, None, :, 1, 1]
+        gravity_rods = project_gravity(
+            rod_transforms,
+            rod_weighted_masses,
+            rod_jacobians,
         )
-        G_payload = -J_payload.T @ payload_gravity_wrench
-        return G_rods + G_cogs + G_payload
+        gravity_cogs = project_gravity(
+            cog_transforms,
+            masses,
+            cog_jacobians,
+        )
+        gravity_payload = project_gravity(
+            payload_transform,
+            payload_mass_matrix[1, 1],
+            payload_jacobian,
+        )
+        return gravity_rods + gravity_cogs + gravity_payload
 
     def inertia_matrix(self, q: Array) -> Array:
         """Return the active-coordinate generalized inertia matrix.

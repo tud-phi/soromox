@@ -33,6 +33,7 @@ from soromox.systems import (
     PlanarPCSStructure,
     StrainBasisSpec,
 )
+from soromox.systems.soft_robot import SoftRobot
 from soromox.systems.system_state import SystemState
 
 jax.config.update("jax_enable_x64", True)
@@ -229,6 +230,191 @@ def test_articulated_floating_state_and_dynamics_contract(factory) -> None:
     assert_allclose(elastic_force[:num_base], 0.0, atol=0.0)
     assert_allclose(damping_matrix[:num_base], 0.0, atol=0.0)
     assert_allclose(damping_matrix[:, :num_base], 0.0, atol=0.0)
+
+
+@pytest.mark.parametrize(
+    "factory", [_spatial_pcs, _planar_pcs, _gvs, _planar_hsa, _articulated, _pendulum]
+)
+def test_floating_gravity_matches_raw_energy_tangent(factory) -> None:
+    robot = factory()
+    base_pose = (
+        jnp.array([0.0, 2**-0.5, 0.0, 2**-0.5, 0.03, -0.02, 0.01])
+        if not robot.is_planar
+        else jnp.array([0.73, 0.03, -0.02])
+    )
+    q = robot.pack_configuration(
+        jnp.zeros((robot.num_internal_dofs,), dtype=jnp.float64),
+        base_pose=base_pose,
+    )
+    zero_velocity = jnp.zeros((robot.num_velocities,), dtype=jnp.float64)
+    configuration_velocity_map = jax.jacfwd(
+        lambda velocity: robot.configuration_derivative(q, velocity)
+    )(zero_velocity)
+    expected = configuration_velocity_map.T @ jax.grad(robot._gravitational_energy)(q)
+    actual = robot.gravitational_force(q)
+    _, _, assembled = robot.dynamics_terms(q, zero_velocity)
+
+    assert_allclose(robot.gravitational_energy(q), robot._gravitational_energy(q))
+    assert_allclose(actual, expected, rtol=1.0e-9, atol=1.0e-11)
+    assert_allclose(actual, assembled, rtol=1.0e-9, atol=1.0e-11)
+    _, gravity_tangent = jvp(
+        robot.gravitational_force,
+        (q,),
+        (jnp.linspace(-0.02, 0.03, robot.num_coordinates),),
+    )
+    assert bool(jnp.all(jnp.isfinite(gravity_tangent)))
+
+
+@pytest.mark.parametrize(
+    "factory", [_spatial_pcs, _planar_pcs, _gvs, _planar_hsa, _articulated, _pendulum]
+)
+def test_floating_gravity_uses_analytical_force_path(
+    factory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    robot = factory()
+    base_pose = (
+        jnp.array([0.0, 2**-0.5, 0.0, 2**-0.5, 0.03, -0.02, 0.01])
+        if not robot.is_planar
+        else jnp.array([0.73, 0.03, -0.02])
+    )
+    q = robot.pack_configuration(
+        jnp.zeros((robot.num_internal_dofs,), dtype=jnp.float64),
+        base_pose=base_pose,
+    )
+
+    def fail_if_called(*args, **kwargs):
+        del args, kwargs
+        raise AssertionError("generic autodiff or complete dynamics path was used")
+
+    monkeypatch.setattr(type(robot), "dynamics_terms", fail_if_called)
+    monkeypatch.setattr(SoftRobot, "_gravitational_force", fail_if_called)
+
+    gravity = robot.gravitational_force(q)
+
+    assert gravity.shape == (robot.num_velocities,)
+    assert bool(jnp.all(jnp.isfinite(gravity)))
+
+
+@pytest.mark.parametrize("factory", [_spatial_pcs, _planar_pcs])
+@pytest.mark.parametrize("floating_base", [False, True])
+def test_pcs_gravity_reuses_one_pose_pass_and_energy_skips_jacobians(
+    factory,
+    floating_base: bool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    robot = factory()
+    base_pose = (
+        jnp.array([0.0, 2**-0.5, 0.0, 2**-0.5, 0.03, -0.02, 0.01])
+        if not robot.is_planar
+        else jnp.array([0.73, 0.03, -0.02])
+    )
+    if floating_base:
+        q = robot.pack_configuration(
+            jnp.zeros((robot.num_internal_dofs,), dtype=jnp.float64),
+            base_pose=base_pose,
+        )
+    else:
+        robot = robot._fixed_base_robot_at_pose(base_pose)
+        q = jnp.zeros((robot.num_internal_dofs,), dtype=jnp.float64)
+
+    robot_type = type(robot)
+    original_forward = robot_type._forward_kinematics_abscissa_batched
+    calls = 0
+
+    def counted_forward(self, q_, points):
+        nonlocal calls
+        calls += 1
+        return original_forward(self, q_, points)
+
+    monkeypatch.setattr(
+        robot_type, "_forward_kinematics_abscissa_batched", counted_forward
+    )
+    with jax.disable_jit():
+        gravity = robot.gravitational_force(q)
+    assert bool(jnp.all(jnp.isfinite(gravity)))
+    assert calls == 1
+
+    def fail_if_called(*args, **kwargs):
+        del args, kwargs
+        raise AssertionError("gravitational energy assembled Jacobians")
+
+    monkeypatch.setattr(robot_type, "_J_local_abscissa_batched", fail_if_called)
+    with jax.disable_jit():
+        energy = robot.gravitational_energy(q)
+    assert bool(jnp.isfinite(energy))
+
+
+@pytest.mark.parametrize("floating_base", [False, True])
+def test_gvs_gravity_reuses_one_pose_pass_and_energy_skips_jacobians(
+    floating_base: bool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    robot = _gvs()
+    base_pose = jnp.array([0.0, 2**-0.5, 0.0, 2**-0.5, 0.03, -0.02, 0.01])
+    if floating_base:
+        q = robot.pack_configuration(
+            jnp.zeros((robot.num_internal_dofs,), dtype=jnp.float64),
+            base_pose=base_pose,
+        )
+    else:
+        robot = robot._fixed_base_robot_at_pose(base_pose)
+        q = jnp.zeros((robot.num_internal_dofs,), dtype=jnp.float64)
+
+    robot_type = type(robot)
+    original_kinematics = robot_type._integration_pose_jacobians
+    calls = 0
+
+    def counted_kinematics(self, q_):
+        nonlocal calls
+        calls += 1
+        return original_kinematics(self, q_)
+
+    monkeypatch.setattr(robot_type, "_integration_pose_jacobians", counted_kinematics)
+    with jax.disable_jit():
+        gravity = robot.gravitational_force(q)
+    assert bool(jnp.all(jnp.isfinite(gravity)))
+    assert calls == 1
+
+    def fail_if_called(*args, **kwargs):
+        del args, kwargs
+        raise AssertionError("gravitational energy assembled Jacobians")
+
+    monkeypatch.setattr(robot_type, "_integration_pose_jacobians", fail_if_called)
+    with jax.disable_jit():
+        energy = robot.gravitational_energy(q)
+    assert bool(jnp.isfinite(energy))
+
+
+@pytest.mark.parametrize("floating_base", [False, True])
+def test_planar_hsa_gravity_uses_one_geometry_pass(
+    floating_base: bool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    robot = _planar_hsa()
+    base_pose = jnp.array([0.73, 0.03, -0.02])
+    if floating_base:
+        q = robot.pack_configuration(
+            jnp.zeros((robot.num_internal_dofs,), dtype=jnp.float64),
+            base_pose=base_pose,
+        )
+    else:
+        robot = robot._fixed_base_robot_at_pose(base_pose)
+        q = jnp.zeros((robot.num_internal_dofs,), dtype=jnp.float64)
+
+    robot_type = type(robot)
+    original_geometry = robot_type._integration_geometry_full
+    calls = 0
+
+    def counted_geometry(self, q_):
+        nonlocal calls
+        calls += 1
+        return original_geometry(self, q_)
+
+    monkeypatch.setattr(robot_type, "_integration_geometry_full", counted_geometry)
+    with jax.disable_jit():
+        gravity = robot.gravitational_force(q)
+    assert bool(jnp.all(jnp.isfinite(gravity)))
+    assert calls == 1
 
 
 def test_spatial_quaternion_derivative_and_retraction_are_consistent() -> None:

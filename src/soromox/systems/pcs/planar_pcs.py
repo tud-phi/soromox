@@ -920,7 +920,8 @@ class PlanarPCS(SoftRobot):
         longitudinal backbone direction.
 
         Args:
-            q (Array): generalized coordinates of shape (num_active_strains,).
+            q (Array): Fixed-base generalized coordinates or total floating-base
+                configuration.
 
         Returns:
             xi (Array): strain vector of shape (num_active_strains,)
@@ -2744,60 +2745,59 @@ class PlanarPCS(SoftRobot):
 
         return C
 
-    @eqx.filter_jit
-    def _gravitational_full_force(self, q: Array) -> Array:
+    def _gravity_quadrature_kinematics(
+        self, q: Array, *, with_jacobians: bool
+    ) -> tuple[Array, Array, Array | None]:
         """
-        Compute the full gravitational force acting on the robot.
+        Return quadrature mass points in the active kinematics frame.
 
         Args:
-            q (Array): generalized coordinates of shape (num_active_strains,).
+            q (Array): Fixed-base generalized coordinates or total floating-base
+                configuration.
+            with_jacobians (bool): Whether to compute the analytical linear
+                Jacobians at the quadrature points.
 
         Returns:
-            G (Array): Full gravitational force of shape (num_strains,).
+            point_positions (Array): Quadrature-point positions in the inertial
+                frame for a fixed base or the base frame for a floating base.
+            weighted_masses (Array): Quadrature-weighted point masses.
+            linear_jacobians (Array | None): Linear Jacobians in the same frame
+                as ``point_positions``, or ``None`` when not requested.
         """
-        Xs_scaled, Ws_scaled = vmap(
-            scale_gaussian_quadrature, in_axes=(None, None, 0, 0)
-        )(
-            self.integration_points,
-            self.integration_weights,
-            self.L_cum[:-1],
-            self.L_cum[1:],
+        q_internal = self.split_configuration(q)[1] if self.floating_base else q
+        kinematics_robot = self._fixed_base_robot_at_pose()
+        assert self.dynamics_local_points is not None
+        assert self.weighted_mass_diagonals is not None
+        points = self.dynamics_local_points[:, :-1] + self.L_cum[:-1, None]
+        num_points = points.shape[1]
+        points_flat = points.reshape(-1)
+        point_poses = kinematics_robot._forward_kinematics_abscissa_batched(
+            q_internal, points_flat
+        ).reshape(self.num_segments, num_points, 3)
+        point_positions = point_poses[..., 1:]
+        weighted_masses = self.weighted_mass_diagonals[..., 1]
+        if not with_jacobians:
+            return point_positions, weighted_masses, None
+
+        jacobians_body_full = kinematics_robot._J_local_abscissa_batched(
+            q_internal, points_flat
+        ).reshape(
+            self.num_segments,
+            num_points,
+            3,
+            self.num_strains,
         )
-
-        chi_ps = self._forward_kinematics_abscissa_batched(q, Xs_scaled.flatten())
-        g_ps = vmap(poses.planar_pose_to_transform)(chi_ps.reshape(-1, 3))
-        g_ps = g_ps.reshape(self.num_segments, self.num_integration_points, 3, 3)
-
-        J_ps = self._J_local_abscissa_batched(q, Xs_scaled.flatten())
-        J_ps = J_ps.reshape(
-            self.num_segments, self.num_integration_points, *J_ps.shape[1:]
+        jacobians_body = jnp.einsum("...ij,jk->...ik", jacobians_body_full, self.B_xi)
+        rotations = vmap(vmap(poses.planar_pose_to_transform))(point_poses)[..., :2, :2]
+        linear_jacobians = jnp.einsum(
+            "...ij,...jk->...ik", rotations, jacobians_body[..., 1:, :]
+        ).reshape(
+            self.num_segments,
+            num_points,
+            2,
+            self.num_internal_dofs,
         )
-
-        def G_i(i: Array) -> Array:
-            M_i = self._local_mass_matrix(i)
-
-            def G_ij(j: Array) -> Array:
-                Ws_ij = Ws_scaled[i][j]
-                g_ij = g_ps[i, j]
-                J_ij = J_ps[i, j]
-
-                Ad_g_inv_ij = se2.adjoint_inverse(g_ij)
-
-                return -Ws_ij * J_ij.T @ M_i @ Ad_g_inv_ij @ self.g
-
-            G_blocks_segment_i = vmap(G_ij)(
-                jnp.arange(1, self.num_integration_points - 1)
-            )
-
-            return G_blocks_segment_i
-
-        G_blocks_tot = vmap(G_i)(jnp.arange(self.num_segments))
-
-        G_full = jnp.sum(
-            G_blocks_tot, axis=(0, 1)
-        )  # Sum over links and quadrature points
-
-        return G_full
+        return point_positions, weighted_masses, linear_jacobians
 
     @eqx.filter_jit
     def _gravitational_force(self, q: Array) -> Array:
@@ -2808,13 +2808,22 @@ class PlanarPCS(SoftRobot):
             q (Array): generalized coordinates of shape (num_active_strains,).
 
         Returns:
-            G (Array): Gravitational force of shape (num_active_strains,).
+            G (Array): Gravitational force in generalized-velocity coordinates.
         """
-        G_full = self._gravitational_full_force(q)
-
-        G = self.B_xi.T @ G_full
-
-        return G
+        point_positions, weighted_masses, linear_jacobians = (
+            self._gravity_quadrature_kinematics(q, with_jacobians=True)
+        )
+        assert linear_jacobians is not None
+        if not self.floating_base:
+            return -jnp.einsum(
+                "...,...ij,i->j", weighted_masses, linear_jacobians, self.g[1:]
+            )
+        return self._gravitational_force_from_base_relative_points(
+            q,
+            point_positions,
+            weighted_masses,
+            linear_jacobians,
+        )
 
     def _material_operators(self) -> tuple[Array, Array, Array]:
         """Return unit Young, shear, and material-damping link matrices."""
@@ -3151,85 +3160,19 @@ class PlanarPCS(SoftRobot):
         Compute the gravitational energy of the robot.
 
         Args:
-            q (Array): generalized coordinates of shape (num_active_strains,).
+            q (Array): Fixed-base generalized coordinates or total floating-base
+                configuration.
 
         Returns:
-            U_G (float): Gravitational energy of the robot.
+            U_G (Array): Gravitational energy of the robot.
         """
-        Xs_scaled, Ws_scaled = vmap(
-            scale_gaussian_quadrature, in_axes=(None, None, 0, 0)
-        )(
-            self.integration_points,
-            self.integration_weights,
-            self.L_cum[:-1],
-            self.L_cum[1:],
+        point_positions, weighted_masses, _ = self._gravity_quadrature_kinematics(
+            q, with_jacobians=False
         )
-
-        chi_ps = self._forward_kinematics_abscissa_batched(q, Xs_scaled.flatten())
-        chi_ps = chi_ps.reshape(self.num_segments, self.num_integration_points, 3)
-
-        def U_G_i(i: Array) -> Array:
-            rho_i = self.rho[i]
-            A_i = self._local_cross_sectional_area(i)
-
-            def U_G_ij(j: Array) -> Array:
-                Ws_ij = Ws_scaled[i][j]
-                chi_ij = chi_ps[i, j]
-                p_j = chi_ij.at[0].set(0.0)
-
-                return -Ws_ij * rho_i * A_i * jnp.dot(p_j, self.g)
-
-            U_G_blocks_segment_i = vmap(U_G_ij)(
-                jnp.arange(1, self.num_integration_points - 1)
-            )
-
-            return U_G_blocks_segment_i
-
-        U_G_blocks_tot = vmap(U_G_i)(jnp.arange(self.num_segments))
-
-        U_G = jnp.sum(U_G_blocks_tot, axis=(0, 1))  # Sum over segments and Gauss points
-
-        return U_G
-
-    @eqx.filter_jit
-    def _floating_gravitational_energy(self, q: Array) -> Array:
-        """
-        Compute absolute floating-base gravitational potential energy.
-
-        The quadrature recurrence evaluates positions only. It does not build
-        Jacobians or spatial inertia matrices.
-
-        Args:
-            q: Total floating-base configuration with shape
-                ``(num_coordinates,)``.
-
-        Returns:
-            Absolute gravitational potential energy as a scalar.
-        """
-        _, q_internal = self.split_configuration(q)
-        points, weights = vmap(scale_gaussian_quadrature, in_axes=(None, None, 0, 0))(
-            self.integration_points,
-            self.integration_weights,
-            self.L_cum[:-1],
-            self.L_cum[1:],
-        )
-        relative_poses = (
-            self._fixed_base_robot_at_pose()._forward_kinematics_abscissa_batched(
-                q_internal, points.reshape(-1)
-            )
-        )
-        relative_positions = relative_poses.reshape(
-            self.num_segments, self.num_integration_points, 3
-        )[..., 1:]
-        weighted_masses = (
-            weights
-            * self.rho[:, None]
-            * vmap(self._local_cross_sectional_area)(
-                jnp.arange(self.num_segments, dtype=jnp.int32)
-            )[:, None]
-        )
-        return self._floating_gravitational_energy_from_points(
-            q, relative_positions, weighted_masses
+        if not self.floating_base:
+            return -jnp.sum(weighted_masses * (point_positions @ self.g[1:]))
+        return self._gravitational_energy_from_base_relative_points(
+            q, point_positions, weighted_masses
         )
 
     @eqx.filter_jit

@@ -1735,7 +1735,9 @@ class SoftRobot(DynamicalSystem):
             )
         return jnp.concatenate([jacobians_base, jacobians_internal_world], axis=-1)
 
-    def _floating_world_positions(self, q: Array, relative_positions: Array) -> Array:
+    def _world_positions_from_base_relative(
+        self, q: Array, relative_positions: Array
+    ) -> Array:
         """
         Transform base-relative points into the inertial frame.
 
@@ -1744,8 +1746,8 @@ class SoftRobot(DynamicalSystem):
         matrices.
 
         Args:
-            q: Total floating-base configuration with shape
-                ``(num_coordinates,)``.
+            q: Fixed-base internal coordinates or total floating-base
+                configuration, with shape ``(num_coordinates,)``.
             relative_positions: Base-relative points with trailing dimension two
                 for planar systems or three for spatial systems.
 
@@ -1759,19 +1761,19 @@ class SoftRobot(DynamicalSystem):
         translation = transform[:linear_dimension, linear_dimension]
         return jnp.einsum("ij,...j->...i", rotation, relative_positions) + translation
 
-    def _floating_gravitational_energy_from_points(
+    def _gravitational_energy_from_base_relative_points(
         self, q: Array, relative_positions: Array, masses: Array
     ) -> Array:
         """
-        Compute floating-base gravitational energy from point masses.
+        Compute gravitational energy from base-relative point masses.
 
         Quadrature weights must already be folded into ``masses``. This direct
         contraction is intended for system-specific energy paths and never
         constructs Jacobians or spatial inertia matrices.
 
         Args:
-            q: Total floating-base configuration with shape
-                ``(num_coordinates,)``.
+            q: Fixed-base internal coordinates or total floating-base
+                configuration, with shape ``(num_coordinates,)``.
             relative_positions: Base-relative mass locations with trailing
                 dimension two or three.
             masses: Scalar masses broadcastable to the leading point axes.
@@ -1779,10 +1781,84 @@ class SoftRobot(DynamicalSystem):
         Returns:
             Absolute gravitational potential energy as a scalar.
         """
-        positions = self._floating_world_positions(q, relative_positions)
+        positions = self._world_positions_from_base_relative(q, relative_positions)
         linear_dimension = positions.shape[-1]
         gravity = jnp.asarray(self.g[-linear_dimension:], dtype=q.dtype)
         return -jnp.sum(masses * (positions @ gravity))
+
+    def _gravitational_force_from_base_relative_points(
+        self,
+        q: Array,
+        relative_positions: Array,
+        masses: Array,
+        linear_jacobians_internal: Array,
+    ) -> Array:
+        """Project point-mass gravity through analytical linear Jacobians.
+
+        The point locations and internal Jacobians are expressed in the robot
+        base frame. For fixed models, only the internal Jacobians are rotated
+        into the world frame. For floating models, the rigid-base rotational
+        and translational columns are prepended analytically.
+
+        Args:
+            q: Fixed-base internal coordinates or total floating-base
+                configuration.
+            relative_positions: Base-relative mass locations with trailing
+                dimension two or three.
+            masses: Scalar masses broadcastable to the leading point axes.
+            linear_jacobians_internal: Base-frame linear Jacobians with the
+                same leading point axes and trailing shape
+                ``(linear_dimension, num_internal_dofs)``.
+
+        Returns:
+            Gravitational generalized force in generalized-velocity
+            coordinates.
+        """
+        transform = self.base_transform_from_configuration(q)
+        linear_dimension = 2 if self.is_planar else 3
+        rotation = transform[:linear_dimension, :linear_dimension]
+        jacobians_internal_world = jnp.einsum(
+            "ij,...jk->...ik", rotation, linear_jacobians_internal
+        )
+
+        if self.floating_base:
+            world_offsets = jnp.einsum("ij,...j->...i", rotation, relative_positions)
+            if self.is_planar:
+                jacobians_base = jnp.zeros(
+                    (*relative_positions.shape[:-1], 2, 3),
+                    dtype=linear_jacobians_internal.dtype,
+                )
+                jacobians_base = jacobians_base.at[..., 0, 0].set(
+                    -world_offsets[..., 1]
+                )
+                jacobians_base = jacobians_base.at[..., 1, 0].set(world_offsets[..., 0])
+                jacobians_base = jacobians_base.at[..., 0, 1].set(1.0)
+                jacobians_base = jacobians_base.at[..., 1, 2].set(1.0)
+            else:
+                offset_x = world_offsets[..., 0]
+                offset_y = world_offsets[..., 1]
+                offset_z = world_offsets[..., 2]
+                jacobians_base = jnp.zeros(
+                    (*relative_positions.shape[:-1], 3, 6),
+                    dtype=linear_jacobians_internal.dtype,
+                )
+                jacobians_base = jacobians_base.at[..., 0, 1].set(offset_z)
+                jacobians_base = jacobians_base.at[..., 0, 2].set(-offset_y)
+                jacobians_base = jacobians_base.at[..., 1, 0].set(-offset_z)
+                jacobians_base = jacobians_base.at[..., 1, 2].set(offset_x)
+                jacobians_base = jacobians_base.at[..., 2, 0].set(offset_y)
+                jacobians_base = jacobians_base.at[..., 2, 1].set(-offset_x)
+                jacobians_base = jacobians_base.at[..., 0, 3].set(1.0)
+                jacobians_base = jacobians_base.at[..., 1, 4].set(1.0)
+                jacobians_base = jacobians_base.at[..., 2, 5].set(1.0)
+            jacobians_world = jnp.concatenate(
+                [jacobians_base, jacobians_internal_world], axis=-1
+            )
+        else:
+            jacobians_world = jacobians_internal_world
+
+        gravity = jnp.asarray(self.g[-linear_dimension:], dtype=q.dtype)
+        return -jnp.einsum("...,...ij,i->j", masses, jacobians_world, gravity)
 
     def _augment_floating_body_kinematics(
         self,
@@ -1888,29 +1964,6 @@ class SoftRobot(DynamicalSystem):
         """
         raise NotImplementedError(
             f"{type(self).__name__} does not implement fused floating-base dynamics."
-        )
-
-    def _floating_gravitational_energy(self, q: Array) -> Array:
-        """
-        Compute absolute floating-base gravitational potential energy.
-
-        Concrete systems must implement a direct position/mass contraction and
-        must not route this operation through augmented dynamics assembly.
-
-        Args:
-            q: Total floating-base configuration with shape
-                ``(num_coordinates,)``.
-
-        Returns:
-            Absolute gravitational potential energy as a scalar.
-
-        Raises:
-            NotImplementedError: If the concrete system does not implement a
-                direct floating-base energy path.
-        """
-        raise NotImplementedError(
-            f"{type(self).__name__} does not implement floating-base gravitational "
-            "energy."
         )
 
     def _floating_internal_inertia_addition(self, q_internal: Array) -> Array:
@@ -2197,9 +2250,6 @@ class SoftRobot(DynamicalSystem):
         Returns:
             G: Gravitational force of shape (num_velocities,).
         """
-        if self.floating_base:
-            zeros = jnp.zeros((self.num_velocities,), dtype=q.dtype)
-            return self._assemble_floating_dynamics_terms(q, zeros)[2]
         return self._gravitational_force(q)
 
     def potential_force(self, q: Array) -> Array:
@@ -2220,11 +2270,15 @@ class SoftRobot(DynamicalSystem):
         """
         Protected gravitational-force hook.
 
-        The default implementation differentiates the protected
-        :meth:`_gravitational_energy` hook. Subclasses may override this method
-        with an analytical or fused implementation. Differentiating the
-        protected energy hook avoids recursively invoking the public
-        custom-JVP energy wrapper.
+        The default implementation differentiates the unified protected
+        :meth:`_gravitational_energy` hook. For a spatial floating base, its
+        quaternion coordinate gradient is pulled back to the six-dimensional
+        generalized-velocity space through :meth:`configuration_derivative`.
+        This position-only path does not assemble inertia or Coriolis terms.
+
+        This generic fallback uses runtime autodiff. Performance-sensitive
+        subclasses should override it with an analytical implementation for
+        both fixed- and floating-base configurations.
 
         Args:
             q: Generalized coordinates of shape ``(num_coordinates,)``.
@@ -2232,7 +2286,17 @@ class SoftRobot(DynamicalSystem):
         Returns:
             G: Gravitational generalized force of shape ``(num_velocities,)``.
         """
-        return grad(lambda q_: self._gravitational_energy(q_))(q)
+        if not self.floating_base:
+            return grad(lambda q_: self._gravitational_energy(q_))(q)
+
+        q = self.normalize_configuration(q)
+        coordinate_gradient = grad(lambda q_: self._gravitational_energy(q_))(q)
+        zero_velocity = jnp.zeros((self.num_velocities,), dtype=q.dtype)
+        _, pullback = jax.vjp(
+            lambda velocity: self.configuration_derivative(q, velocity),
+            zero_velocity,
+        )
+        return pullback(coordinate_gradient)[0]
 
     def actuator_coordinates(self, q: Array) -> Array:
         """
@@ -2703,7 +2767,7 @@ class SoftRobot(DynamicalSystem):
             U_g: Gravitational potential energy (scalar).
         """
         if self.floating_base:
-            return self._floating_gravitational_energy(q)
+            return self._gravitational_energy(q)
         if custom_jvp_enabled():
             return SoftRobot._gravitational_energy_custom_jvp(self, q)
         return self._gravitational_energy(q)
@@ -2713,7 +2777,9 @@ class SoftRobot(DynamicalSystem):
         Protected primal gravitational-energy hook for custom autodiff wrappers.
 
         Subclasses that inherit the public SoftRobot gravitational_energy method
-        should override this hook.
+        should override this hook for both fixed- and floating-base
+        configurations. Since ``floating_base`` is static, implementations may
+        branch without tracing or evaluating the inactive path.
         """
         raise NotImplementedError(
             f"{type(self).__name__} must implement _gravitational_energy."

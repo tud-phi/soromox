@@ -2253,24 +2253,6 @@ class GVS(SoftRobot):
         eta = J @ qd
         return weight * (J.T @ (M @ Jd_qd + se3.coadjoint(eta) @ M @ eta))
 
-    def _gravity_integrand(self, weight: Array, g: Array, J: Array, M: Array) -> Array:
-        """
-        Compute one quadrature contribution to generalized gravity.
-
-        Args:
-            weight: Length-scaled quadrature weight, shape ``()``.
-            g: Homogeneous SE(3) pose at the quadrature node, shape ``(4, 4)``.
-            J: Body-frame Jacobian at the quadrature node, shape
-                ``(6, self.num_internal_dofs)``.
-            M: Local spatial mass matrix at the quadrature node, shape
-                ``(6, 6)``.
-
-        Returns:
-            G_ij: Generalized gravity contribution, shape
-            ``(self.num_internal_dofs,)``.
-        """
-        return -weight * J.T @ M @ se3.adjoint_inverse(g) @ self.g
-
     # =========================================================================
     @eqx.filter_jit
     def _forward_kinematics_gauss(self, q_gathered: Array) -> Array:
@@ -3089,7 +3071,8 @@ class GVS(SoftRobot):
         Compute the pose and body-frame Jacobian at ``s`` in one scan.
 
         Args:
-            q (Array): generalized coordinates of shape (num_dofs,).
+            q (Array): Fixed-base generalized coordinates or total floating-base
+                configuration.
             s (Array): point coordinate along the robot in the interval [0, L].
 
         Returns:
@@ -5630,6 +5613,41 @@ class GVS(SoftRobot):
 
         return G_full
 
+    def _gravity_quadrature_kinematics(
+        self, q: Array, *, with_jacobians: bool
+    ) -> tuple[Array, Array, Array | None]:
+        """
+        Return quadrature mass points in the active kinematics frame.
+
+        Args:
+            q (Array): Fixed-base generalized coordinates or total floating-base
+                configuration.
+            with_jacobians (bool): Whether to compute the analytical linear
+                Jacobians at the quadrature points.
+
+        Returns:
+            point_positions (Array): Quadrature-point positions in the inertial
+                frame for a fixed base or the base frame for a floating base.
+            weighted_masses (Array): Quadrature-weighted point masses.
+            linear_jacobians (Array | None): Linear Jacobians in the same frame
+                as ``point_positions``, or ``None`` when not requested.
+        """
+        q_internal = self.split_configuration(q)[1] if self.floating_base else q
+        weighted_masses = self.inner_weighted_mass_diagonals[..., 3]
+        if not with_jacobians:
+            poses = self._forward_kinematics_gauss(self._min_size_gathered(q_internal))[
+                :, 1 : self.max_num_integration_points - 1
+            ]
+            return poses[..., :3, 3], weighted_masses, None
+
+        _, poses, jacobians_body = self._integration_pose_jacobians(q_internal)
+        linear_jacobians = jnp.einsum(
+            "...ij,...jk->...ik",
+            poses[..., :3, :3],
+            jacobians_body[..., 3:, :],
+        )
+        return poses[..., :3, 3], weighted_masses, linear_jacobians
+
     @eqx.filter_jit
     def _gravitational_force(self, q: Array) -> Array:
         """
@@ -5639,20 +5657,22 @@ class GVS(SoftRobot):
             q (Array): generalized coordinates of shape (num_dofs,).
 
         Returns:
-            G (Array): Gravitational force vector, shape (num_dofs, 1)
+            G (Array): Gravitational force in generalized-velocity coordinates.
         """
-        weights, g_quads, J_quads = self._integration_pose_jacobians(q)
-        Ms_inner = self._inner_mass_matrices()
-
-        def segment_terms(i: Array) -> Array:
-            def point_term(j: Array) -> Array:
-                return self._gravity_integrand(
-                    weights[i, j], g_quads[i, j], J_quads[i, j], Ms_inner[i, j]
-                )
-
-            return vmap(point_term)(jnp.arange(self.max_num_integration_points - 2))
-
-        return jnp.sum(vmap(segment_terms)(jnp.arange(self.num_segments)), axis=(0, 1))
+        point_positions, weighted_masses, linear_jacobians = (
+            self._gravity_quadrature_kinematics(q, with_jacobians=True)
+        )
+        assert linear_jacobians is not None
+        if not self.floating_base:
+            return -jnp.einsum(
+                "...,...ij,i->j", weighted_masses, linear_jacobians, self.g[3:]
+            )
+        return self._gravitational_force_from_base_relative_points(
+            q,
+            point_positions,
+            weighted_masses,
+            linear_jacobians,
+        )
 
     @eqx.filter_jit
     def _stiffness_full_matrix(self) -> Array:
@@ -5744,63 +5764,19 @@ class GVS(SoftRobot):
         not use runtime autodiff.
 
         Args:
-            q (Array): generalized coordinates of shape ``(num_dofs,)``.
+            q (Array): Fixed-base generalized coordinates or total floating-base
+                configuration.
 
         Returns:
             U_g (Array): Gravitational potential energy as a scalar array.
         """
-        q_gathered = self._min_size_gathered(q)
-        g_list = self._forward_kinematics_gauss(q_gathered)
-        gravity_linear = self.g[3:]
-
-        def U_G_i(i: Array) -> Array:
-            """Compute the gravitational energy contribution of one segment."""
-            length_i = self.segment_lengths[i]
-            weights = self.integration_weights[
-                i, 1 : self.max_num_integration_points - 1
-            ]
-            mass_density = (
-                jnp.trace(
-                    self.mass_matrices[
-                        i, 1 : self.max_num_integration_points - 1, 3:, 3:
-                    ],
-                    axis1=-2,
-                    axis2=-1,
-                )
-                / 3.0
-            )
-            positions = g_list[i, 1 : self.max_num_integration_points - 1, :3, 3]
-            height_along_gravity = positions @ gravity_linear
-            return -length_i * jnp.sum(weights * mass_density * height_along_gravity)
-
-        return jnp.sum(vmap(U_G_i)(jnp.arange(self.num_segments)))
-
-    @eqx.filter_jit
-    def _floating_gravitational_energy(self, q: Array) -> Array:
-        """
-        Compute absolute floating-base gravitational potential energy.
-
-        This follows the position-only Gauss recurrence and contracts cached
-        scalar mass densities directly. No Jacobians or spatial inertia
-        matrices are assembled.
-
-        Args:
-            q: Total floating-base configuration with shape
-                ``(num_coordinates,)``.
-
-        Returns:
-            Absolute gravitational potential energy as a scalar.
-        """
-        _, q_internal = self.split_configuration(q)
-        relative_poses = self._forward_kinematics_gauss(
-            self._min_size_gathered(q_internal)
-        )[:, 1 : self.max_num_integration_points - 1]
-        relative_positions = relative_poses[..., :3, 3]
-        weighted_masses = (
-            self.inner_integration_weights * self.inner_mass_diagonals[..., 3]
+        point_positions, weighted_masses, _ = self._gravity_quadrature_kinematics(
+            q, with_jacobians=False
         )
-        return self._floating_gravitational_energy_from_points(
-            q, relative_positions, weighted_masses
+        if not self.floating_base:
+            return -jnp.sum(weighted_masses * (point_positions @ self.g[3:]))
+        return self._gravitational_energy_from_base_relative_points(
+            q, point_positions, weighted_masses
         )
 
     def actuation_matrix(
