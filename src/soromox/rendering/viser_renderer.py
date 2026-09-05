@@ -491,8 +491,9 @@ class ViserRenderer(BaseSoftRobotRenderer):
         # Note: Viser doesn't support setting background color via API
         # Background is controlled by the client/browser theme
 
-        # Set Z-up coordinate convention for the scene
-        self._server.scene.set_up_direction("-z")
+        # Use Viser's +Z-up scene convention. A camera may still select a
+        # different up vector without changing the scene coordinates.
+        self._server.scene.set_up_direction("+z")
 
         # Initialize empty scene handles
         self._scene_handles = SceneHandles()

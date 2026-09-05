@@ -36,21 +36,6 @@ a restrained translucent mesh of the canonical spherical reference
 surface. The plotting command is intentionally plot-only and no longer accepts
 rendering or video arguments.
 
-## Feedback-Linearization Comparison
-
-Generate one NPZ containing the matched full and partial controller rollouts,
-then plot it without rerunning either controller:
-
-```bash
-uv run --extra paper_results python paper_results/secVc_model_based_control/operational_space_impedance_control/code/compare_impedance_feedback_linearization.py --output /tmp/soromox-secVc/operational/data/impedance_feedback_linearization_comparison.npz
-uv run --extra paper_results python paper_results/secVc_model_based_control/operational_space_impedance_control/code/plot_impedance_feedback_linearization.py --input /tmp/soromox-secVc/operational/data/impedance_feedback_linearization_comparison.npz --output-dir /tmp/soromox-secVc/operational/outputs
-```
-
-Use `--force` before replacing existing artifacts. Full CPU simulations include
-JAX compilation and may take several minutes. Viser video output additionally
-requires the rendering dependencies and a working video encoder; no physical
-robot hardware is required.
-
 ## Canonical Paper Figure
 
 Generate the four-panel partial-feedback-linearization trajectory figure from
@@ -65,9 +50,6 @@ uv run --extra paper_results python paper_results/secVc_model_based_control/oper
 - `data/control_pcs_with_impedance_trajectory.npz` stores the canonical trajectory
   study, controller metadata, states, references, inputs, and the geometric
   position/orientation RMSE, reference-span, and NRMSE values used in the paper.
-- `data/impedance_feedback_linearization_comparison.npz` stores both matched
-  feedback-linearization rollouts, geometric errors, settings, and runtimes for
-  the standalone comparison diagnostic.
 - `outputs/operational_space_impedance_control.pdf` is the canonical paper
   figure showing position and orientation tracking and component errors for the
   partial-feedback-linearization controller.
@@ -78,6 +60,6 @@ uv run --extra paper_results python paper_results/secVc_model_based_control/oper
 - `outputs/operational_space_impedance_snapshots.pdf` is the compact 15.2 cm-wide
   four-frame strip with per-frame timestamps and the paper-style time arrow.
 
-Standalone trajectory, configuration, and feedback-linearization plots are
-reproducible diagnostics and remain uncommitted. The checked-in NPZ files were
-regenerated from scratch with the current Section Vc generators.
+Standalone trajectory and configuration plots are reproducible diagnostics and
+remain uncommitted. The checked-in NPZ file was regenerated from scratch with
+the current Section Vc generator.

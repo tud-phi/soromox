@@ -103,6 +103,7 @@ if __name__ == "__main__":
     # ======================================================
     robot = ISupport(
         params=params,
+        # Hanging mounting with an additional 90-degree backbone-axis roll.
         base_pose=jnp.array([0.5, 0.5, -0.5, 0.5, 0.0, 0.0, 0.0]),
         structure=ISupportStructure(
             pcs_segment_counts=pcs_segment_counts,

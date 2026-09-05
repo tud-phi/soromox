@@ -26,6 +26,7 @@ from soromox.systems import (
     LinkSpec,
     SystemState,
 )
+from soromox.utils.geometry import poses
 
 jax.config.update("jax_enable_x64", True)  # double precision
 
@@ -60,7 +61,7 @@ if __name__ == "__main__":
             )
             for index in range(num_segments)
         ],
-        gravity=jnp.array([0.0, 0.0, 9.81]),
+        gravity=jnp.array([0.0, 0.0, -9.81]),
     )
     active_tendon_routing = ThreadlikeRouting.linear(
         intercept=2e-2 * jnp.array([[0.0, 1.0, 0.0], [0.0, -1.0, 0.0]]),
@@ -84,7 +85,7 @@ if __name__ == "__main__":
     # ======================================================
     robot = PCS(
         params=body_params,
-        base_pose=jnp.array([0.5, -0.5, 0.5, 0.5, 0.0, 0.0, 0.0]),
+        base_pose=poses.spatial_mounting_pose("hanging"),
         actuators=ThreadlikeActuator.tendons(active_tendon_routing),
         passive_elements=(passive_tendon,),
     )

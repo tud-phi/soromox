@@ -31,6 +31,8 @@ and include benchmark baseline and measurement context for performance claims.
   with a shared gravity-down camera.
 - Unified fixed- and floating-base gravity with shared analytical point-mass
   quadrature, avoiding runtime autodiff and full spatial gravity contractions.
+- Standardized example mounting declarations with named poses and conventional
+  world-down gravity, and aligned Section Vf rendering with zero gravity.
 - Open3D and Viser swept backbones now preserve circular, elliptical, and
   rectangular cross-sections, including dimensions that vary with abscissa.
 
@@ -51,6 +53,9 @@ and include benchmark baseline and measurement context for performance claims.
 
 - Fixed analytical gravitational forces for rotated mounts in
   `ArticulatedSoftRobot` and `PlanarHSA`.
+- Set Viser scenes to +Z-up while preserving explicit camera-up selections.
+- Corrected the Section Ve camera and render artifacts so +Z gravity appears
+  downward.
 - Fixed `DynamicalSystem` API documentation to avoid assuming second-order
   `[q, qd]` states or configuration-only projection.
 - Made Viser discrete cross-section markers consistent with Open3D: circular,

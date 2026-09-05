@@ -146,6 +146,7 @@ def main() -> None:
     camera_config = CameraConfig(
         position=(x, y, 0.325),
         look_at=(0.0, 0.0, 0.125),
+        up=(0.0, 0.0, -1.0),
         fov=60.0,
     )
 

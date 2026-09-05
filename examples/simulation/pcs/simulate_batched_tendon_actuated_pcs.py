@@ -28,6 +28,7 @@ from soromox.systems import (
     PCSStructure,
     SystemState,
 )
+from soromox.utils.geometry import poses
 
 DEFAULT_OPEN3D_VIDEO_PATH = (
     Path(__file__).resolve().parent
@@ -60,7 +61,7 @@ def build_robot() -> PCS:
             )
             for index in range(num_segments)
         ],
-        gravity=jnp.array([0.0, 0.0, 9.81]),
+        gravity=jnp.array([0.0, 0.0, -9.81]),
     )
     active_tendon_routing = ThreadlikeRouting.linear(
         intercept=jnp.array(
@@ -72,7 +73,7 @@ def build_robot() -> PCS:
 
     return PCS(
         params=body_params,
-        base_pose=jnp.array([0.5, -0.5, 0.5, 0.5, 0.0, 0.0, 0.0]),
+        base_pose=poses.spatial_mounting_pose("hanging"),
         structure=PCSStructure(),
         actuators=ThreadlikeActuator.tendons(active_tendon_routing),
     )

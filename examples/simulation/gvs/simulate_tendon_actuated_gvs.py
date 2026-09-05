@@ -16,6 +16,7 @@ from soromox.systems import (
     StrainBasisSpec,
     SystemState,
 )
+from soromox.utils.geometry import poses
 
 jax.config.update("jax_enable_x64", True)
 # jax.config.update("jax_platform_name", "gpu")  # or "cpu"
@@ -103,7 +104,7 @@ active_tendon_routing = ThreadlikeRouting.linear(
 )
 # attention: 0DEG -> Y+, 180DEG -> Y-, 90DEG -> Z+, 270DEG -> Z-
 
-base_pose = jnp.array([0.0, jnp.sqrt(0.5), 0.0, jnp.sqrt(0.5), 0.0, 0.0, 0.0])
+base_pose = poses.spatial_mounting_pose("hanging")
 
 # 2 link version
 segments = [
@@ -122,7 +123,6 @@ robot = GVS.from_segments(
     scale_rotational_basis_by_length=True,
 )
 # debug: check g0
-# from soromox.utils.geometry import poses
 # g0_test = poses.quaternion_pose_to_transform(base_pose)
 # print("g0_test:\n", g0_test[:3,:3])
 

@@ -35,6 +35,7 @@ from soromox.systems import (
     LinkSpec,
     SystemState,
 )
+from soromox.utils.geometry import poses
 
 FIGURES_DIR = Path(__file__).resolve().parent / "figures"
 
@@ -51,8 +52,7 @@ def main(
     num_segments = 2
     rho = 1070 * jnp.ones((num_segments,))  # Volumetric density [kg/m^3]
 
-    # Define the initial scalar-last quaternion base pose.
-    base_pose = jnp.array([0.5, -0.5, 0.5, 0.5, 0.0, 0.0, 0.0])
+    base_pose = poses.spatial_mounting_pose("hanging")
 
     segment_lengths = 1e-1 * jnp.ones((num_segments,))
     material_damping_coefficient = 362.0
@@ -69,7 +69,7 @@ def main(
             )
             for index in range(num_segments)
         ],
-        gravity=jnp.array([0.0, 0.0, 9.81]),
+        gravity=jnp.array([0.0, 0.0, -9.81]),
     )
 
     # Tendons
@@ -148,7 +148,7 @@ def main(
     def x_des_fn(t):
         """Desired FULL end-effector pose as a function of time."""
         # Start from rest position and move in y-z plane
-        # The robot initially points along the x-axis (after the base rotation)
+        # The robot initially hangs along the world -z axis.
         period = 4.0
         amplitude_y = 0.02  # 2 cm amplitude in y
         amplitude_z = 0.01  # 1 cm amplitude in z
