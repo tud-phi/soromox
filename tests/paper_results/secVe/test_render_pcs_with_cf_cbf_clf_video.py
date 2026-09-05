@@ -67,3 +67,4 @@ def test_explicit_trajectory_controls_style_and_recording_terminates(
     assert captured["render_kwargs"]["record_path"] == str(output_path)
     assert captured["render_kwargs"]["loop"] is False
     assert captured["render_kwargs"]["close_when_recording_done"] is True
+    assert captured["render_kwargs"]["camera_config"].up == (0.0, 0.0, -1.0)

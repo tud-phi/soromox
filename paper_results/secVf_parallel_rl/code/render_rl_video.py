@@ -262,7 +262,7 @@ def build_rl_robot(
             )
             for index in range(num_segments)
         ],
-        gravity=jnp.array([0.0, 0.0, 9.81]),
+        gravity=jnp.zeros((3,)),
     )
     return PCS(
         params=body_params,

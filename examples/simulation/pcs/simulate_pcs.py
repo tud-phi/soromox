@@ -17,6 +17,7 @@ from soromox.rendering import (
     get_color_theme,
 )
 from soromox.systems import PCS, LinkSpec, SystemState
+from soromox.utils.geometry import poses
 
 jnp.set_printoptions(
     threshold=jnp.inf,
@@ -45,7 +46,7 @@ if __name__ == "__main__":
             )
             for index in range(num_segments)
         ],
-        gravity=jnp.array([0.0, 0.0, 9.81]),  # Gravity vector [m/s^2]
+        gravity=jnp.array([0.0, 0.0, -9.81]),
     )
 
     # ======================================================
@@ -53,9 +54,7 @@ if __name__ == "__main__":
     # ======================================================
     robot = PCS(
         params=params,
-        base_pose=jnp.array(
-            [0.5, -0.5, 0.5, 0.5, 0.0, 0.0, 0.0]
-        ),  # Initial position and orientation
+        base_pose=poses.spatial_mounting_pose("hanging"),
     )
 
     # =====================================================

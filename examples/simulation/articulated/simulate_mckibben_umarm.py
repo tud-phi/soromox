@@ -17,14 +17,14 @@ from soromox.systems import (
     McKibbenActuatedUMArm,
     SystemState,
 )
+from soromox.utils.geometry import poses
 
 PSI_TO_PA = 6894.75729
 DEFAULT_VIDEO_PATH = (
     Path(__file__).resolve().parent / "videos" / "simulate_mckibben_umarm.mp4"
 )
-UMARM_Z_DOWN_BASE_POSE = jnp.array(
-    [0.0, 2**-0.5, 0.0, 2**-0.5, 0.0, 0.0, 1.2],
-    dtype=jnp.float64,
+UMARM_Z_DOWN_BASE_POSE = poses.spatial_mounting_pose(
+    "hanging", jnp.array([0.0, 0.0, 1.2], dtype=jnp.float64)
 )
 
 

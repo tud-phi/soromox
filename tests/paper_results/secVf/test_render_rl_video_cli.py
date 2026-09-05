@@ -151,6 +151,7 @@ def test_camera_uses_fixed_paper_view_for_one_arm_and_auto_fit_for_grid():
     assert grid.distance_factor == render_rl_video.GRID_CAMERA_DISTANCE_FACTOR
     assert grid.position_offset == render_rl_video.GRID_CAMERA_POSITION_OFFSET
     robot = render_rl_video.build_rl_robot()
+    assert_allclose(robot.params.gravity, np.zeros(3))
     camera_pos, look_at = grid.compute_auto_position(
         np.array([1.0, 2.0, 3.0]),
         0.5,

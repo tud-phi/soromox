@@ -161,12 +161,16 @@ class FakeViserGeometryHandle:
 
 class FakeViserScene:
     def __init__(self):
+        self.up_direction = None
         self.line_segments = []
         self.icospheres = []
         self.trimeshes = []
         self.simple_meshes = []
         self.batched_meshes = []
         self.grids = []
+
+    def set_up_direction(self, direction):
+        self.up_direction = direction
 
     def add_grid(self, **kwargs):
         handle = FakeViserGeometryHandle(**kwargs)
@@ -216,6 +220,29 @@ class FakeViserActuatorServer:
 
     def get_port(self):
         return 8080
+
+
+def test_viser_server_uses_world_positive_z_as_scene_up(monkeypatch):
+    import soromox.rendering.viser_renderer as viser_module
+
+    class StartableFakeServer(FakeViserActuatorServer):
+        def __init__(self, *, host, port):
+            super().__init__()
+            self.host = host
+            self.port = port
+
+        def stop(self):
+            pass
+
+    monkeypatch.setattr(viser_module.viser, "ViserServer", StartableFakeServer)
+    robot = DummySpatialRobot(jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]))
+    renderer = viser_module.ViserRenderer(robot, auto_start=False)
+
+    renderer.start()
+    try:
+        assert renderer.server.scene.up_direction == "+z"
+    finally:
+        renderer.stop()
 
 
 class FakeViserGuiHandle:
@@ -308,6 +335,36 @@ def test_viser_camera_uses_shared_up_and_radian_fov():
     assert_allclose(client.camera.up_direction, np.array([0.0, 0.0, 1.0]), atol=1e-12)
     assert_allclose(client.camera.fov, np.pi / 3.0, atol=1e-12)
     assert server.on_client_connect_callback is not None
+
+
+def test_viser_scene_up_does_not_override_custom_camera_up():
+    from soromox.rendering.viser_renderer import ViserRenderer
+
+    robot = DummySpatialRobot(jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]))
+    renderer = ViserRenderer(robot, auto_start=False)
+    connected_client = FakeViserClient()
+    server = FakeViserServer({})
+    renderer._server = server
+    curves = np.array([[[0.0, 0.0, 0.0], [0.0, 1.0, 0.0]]])
+    config = CameraConfig(
+        fov=45.0,
+        position=(1.0, -2.0, 3.0),
+        look_at=(0.0, 0.5, 0.0),
+        up=(0.0, 0.0, -1.0),
+    )
+
+    renderer._setup_camera(curves, camera_config=config)
+    assert server.on_client_connect_callback is not None
+    server.on_client_connect_callback(connected_client)
+
+    assert_allclose(connected_client.camera.position, config.position, atol=1e-12)
+    assert_allclose(connected_client.camera.look_at, config.look_at, atol=1e-12)
+    assert_allclose(
+        connected_client.camera.up_direction,
+        np.array([0.0, 0.0, -1.0]),
+        atol=1e-12,
+    )
+    assert_allclose(connected_client.camera.fov, np.pi / 4.0, atol=1e-12)
 
 
 def test_viser_camera_accepts_full_trajectory_curves_for_bounds():

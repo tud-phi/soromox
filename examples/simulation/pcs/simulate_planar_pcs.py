@@ -10,6 +10,7 @@ from diffrax import Tsit5
 jax.config.update("jax_enable_x64", True)  # double precision
 from soromox.rendering import MatplotlibRenderer, OpenCVPlanarRenderer
 from soromox.systems import LinkSpec, PlanarPCS, SystemState
+from soromox.utils.geometry import poses
 
 jnp.set_printoptions(
     threshold=jnp.inf,
@@ -45,7 +46,7 @@ if __name__ == "__main__":
             )
             for index in range(num_segments)
         ],
-        gravity=jnp.array([0.0, 9.81]),  # gravity vector [m/s^2] UP!
+        gravity=jnp.array([0.0, -9.81]),
     )
 
     # ======================================================
@@ -53,7 +54,7 @@ if __name__ == "__main__":
     # ======================================================
     robot = PlanarPCS(
         params=params,
-        base_pose=jnp.array([jnp.pi / 2, 0.0, 0.0]),
+        base_pose=poses.planar_mounting_pose("hanging"),
     )
 
     J, Jd = robot.jacobian_and_time_derivative(

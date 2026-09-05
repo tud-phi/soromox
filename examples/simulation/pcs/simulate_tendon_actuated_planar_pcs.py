@@ -14,6 +14,7 @@ from soromox.systems import (
     PlanarPCSStructure,
     SystemState,
 )
+from soromox.utils.geometry import poses
 
 if __name__ == "__main__":
     num_segments = 2  # number of segments in the robot
@@ -61,7 +62,7 @@ if __name__ == "__main__":
     # ======================================================
     robot = PlanarPCS(
         params=body,
-        base_pose=jnp.array([jnp.pi / 2, 0.0, 0.0]),
+        base_pose=poses.planar_mounting_pose("upright"),
         structure=PlanarPCSStructure(strain_selector=strain_selector),
         actuators=ThreadlikeActuator.tendons(active_tendon_routing),
     )
