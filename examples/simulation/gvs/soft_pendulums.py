@@ -36,7 +36,7 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 
-from soromox.actuation import AffineJointActuator
+from soromox.actuation import AffineGeneralizedCoordinateActuator
 from soromox.systems import (
     GVS,
     GVSSegment,
@@ -328,11 +328,11 @@ def _direct_input(
     units: str,
     bound: float | None,
     name: str,
-) -> AffineJointActuator:
+) -> AffineGeneralizedCoordinateActuator:
     routing = (
         jnp.zeros((1, num_dofs), dtype=jnp.float64).at[0, coordinate_index].set(1.0)
     )
-    return AffineJointActuator.from_routing(
+    return AffineGeneralizedCoordinateActuator.from_routing(
         routing,
         lower_bounds=None if bound is None else -bound,
         upper_bounds=bound,

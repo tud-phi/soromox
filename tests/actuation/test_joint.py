@@ -10,9 +10,9 @@ from numpy.testing import assert_allclose
 from system_param_builders import articulated_params, pcs_params, pendulum_params
 
 from soromox.actuation import (
-    AffineJointActuator,
-    AffineJointTransmission,
-    AffineJointTransmissionParams,
+    AffineGeneralizedCoordinateActuator,
+    AffineGeneralizedCoordinateTransmission,
+    AffineGeneralizedCoordinateTransmissionParams,
     ArticulatedTendonActuator,
     ArticulatedTendonImpedance,
     ThreadlikeActuator,
@@ -209,13 +209,13 @@ def _spatial_pcs(*, actuators=None):
     return PCS(params, PCSStructure(num_gauss_points=3), actuators=actuators)
 
 
-def test_affine_joint_transmission_coordinates_jacobian_and_power():
-    params = AffineJointTransmissionParams(
+def test_affine_generalized_coordinate_transmission_coordinates_jacobian_and_power():
+    params = AffineGeneralizedCoordinateTransmissionParams(
         routing_matrix=_routing(),
         reference_configuration=jnp.array([0.1, -0.05, 0.02]),
         coordinate_offset=jnp.array([0.03, 0.04]),
     )
-    transmission = AffineJointTransmission(params)
+    transmission = AffineGeneralizedCoordinateTransmission(params)
     robot = Pendulum(_body_params(), actuators=_actuator())
     q = jnp.array([0.25, -0.2, 0.15])
     qd = jnp.array([0.4, -0.1, 0.3])
@@ -236,9 +236,9 @@ def test_affine_joint_transmission_coordinates_jacobian_and_power():
     assert_allclose(qd @ tau, yad @ effort, rtol=1e-12, atol=1e-12)
 
 
-def test_affine_joint_actuator_maps_signed_effort_without_clipping():
+def test_affine_generalized_coordinate_actuator_maps_signed_effort_without_clipping():
     routing = jnp.array([[1.0, 0.0, -0.5]])
-    actuator = AffineJointActuator.from_routing(
+    actuator = AffineGeneralizedCoordinateActuator.from_routing(
         routing,
         reference_configuration=jnp.array([0.1, 0.0, -0.2]),
         coordinate_offset=jnp.array([0.3]),
@@ -388,8 +388,8 @@ def test_tendon_topology_validation_and_independent_parameter_updates():
 def test_generic_affine_map_accepts_pcs_coordinates_but_tendon_preset_rejects_pcs():
     robot = _spatial_pcs()
     matrix = jnp.arange(robot.num_internal_dofs, dtype=jnp.float64)[None, :] * 0.01
-    transmission = AffineJointTransmission(
-        AffineJointTransmissionParams(
+    transmission = AffineGeneralizedCoordinateTransmission(
+        AffineGeneralizedCoordinateTransmissionParams(
             routing_matrix=matrix,
             reference_configuration=jnp.zeros((robot.num_internal_dofs,)),
             coordinate_offset=jnp.array([0.2]),

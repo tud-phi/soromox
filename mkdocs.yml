@@ -99,7 +99,7 @@ nav:
           - Shared Configuration: api/rendering/configuration.md
       - Actuation:
           - Actuation Model: api/actuation/index.md
-          - Joint-Space Actuation: api/actuation/joint-space.md
+          - Generalized-Coordinate Actuation: api/actuation/generalized-coordinate.md
           - Threadlike Actuation: api/actuation/threadlike.md
           - API Reference: api/actuation/reference.md
       - Control:

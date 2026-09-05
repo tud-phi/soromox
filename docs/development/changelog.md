@@ -22,10 +22,10 @@ and include benchmark baseline and measurement context for performance claims.
   tracking plots, and pressure-colored Viser recording.
 - Added renderer-neutral cross-section contours and loft construction, with a
   registration hook for extending both swept 3D renderers with new geometries.
-- Added signed direct `AffineJointActuator` routing and affine-curvature GVS
-  examples for the R-SIP, force-actuated Soft Cart-Pole, Soft Pendubot, and
-  Soft Furuta Pendulum, including semantic upright/hanging configurations,
-  open-loop simulations, summary plots, and Viser rendering.
+- Added signed direct `AffineGeneralizedCoordinateActuator` routing and
+  affine-curvature GVS examples for the R-SIP, force-actuated Soft Cart-Pole,
+  Soft Pendubot, and Soft Furuta Pendulum, including semantic upright/hanging
+  configurations, open-loop simulations, summary plots, and Viser rendering.
 
 ### Changed
 

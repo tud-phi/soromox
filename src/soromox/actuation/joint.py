@@ -70,7 +70,7 @@ def _validate_articulated_tendon_host(robot) -> None:
         )
 
 
-class AffineJointTransmissionParams(BaseSystemParams):
+class AffineGeneralizedCoordinateTransmissionParams(BaseSystemParams):
     """Parameters for an affine mapping to actuator coordinates.
 
     Attributes:
@@ -112,8 +112,10 @@ class AffineJointTransmissionParams(BaseSystemParams):
         if jnp.asarray(self.coordinate_offset).shape != (matrix.shape[0],):
             raise ValueError(f"coordinate_offset must have shape ({matrix.shape[0]},).")
 
-    def assert_same_topology(self, other: AffineJointTransmissionParams) -> None:
-        if not isinstance(other, AffineJointTransmissionParams):
+    def assert_same_topology(
+        self, other: AffineGeneralizedCoordinateTransmissionParams
+    ) -> None:
+        if not isinstance(other, AffineGeneralizedCoordinateTransmissionParams):
             raise ValueError("Changing transmission type requires reconstruction.")
         if other.routing_matrix.shape != self.routing_matrix.shape:
             raise ValueError(
@@ -121,14 +123,16 @@ class AffineJointTransmissionParams(BaseSystemParams):
             )
 
 
-class AffineJointTransmission(Transmission):
+class AffineGeneralizedCoordinateTransmission(Transmission):
     """Affine actuator coordinates ``R @ (q - q_ref) + y_a0``."""
 
-    params: AffineJointTransmissionParams
+    params: AffineGeneralizedCoordinateTransmissionParams
 
-    def __init__(self, params: AffineJointTransmissionParams) -> None:
-        if not isinstance(params, AffineJointTransmissionParams):
-            raise TypeError("params must be AffineJointTransmissionParams.")
+    def __init__(self, params: AffineGeneralizedCoordinateTransmissionParams) -> None:
+        if not isinstance(params, AffineGeneralizedCoordinateTransmissionParams):
+            raise TypeError(
+                "params must be AffineGeneralizedCoordinateTransmissionParams."
+            )
         params.validate_for_update()
         self.params = params
 
@@ -148,17 +152,17 @@ class AffineJointTransmission(Transmission):
         return self.params.routing_matrix.T
 
     def with_params(
-        self, params: AffineJointTransmissionParams
-    ) -> AffineJointTransmission:
+        self, params: AffineGeneralizedCoordinateTransmissionParams
+    ) -> AffineGeneralizedCoordinateTransmission:
         self.params.assert_same_topology(params)
         params.validate_for_update()
-        return AffineJointTransmission(params)
+        return AffineGeneralizedCoordinateTransmission(params)
 
-    def update_params(self, **updates: Any) -> AffineJointTransmission:
+    def update_params(self, **updates: Any) -> AffineGeneralizedCoordinateTransmission:
         return self.with_params(self.params.replace(**updates))
 
 
-class AffineJointActuatorParams(BaseSystemParams):
+class AffineGeneralizedCoordinateActuatorParams(BaseSystemParams):
     """Parameters for signed direct effort through an affine coordinate map.
 
     ``transmission`` defines actuator work coordinates
@@ -174,7 +178,7 @@ class AffineJointActuatorParams(BaseSystemParams):
         upper_bounds: Descriptive upper control bound for every channel.
     """
 
-    transmission: AffineJointTransmissionParams
+    transmission: AffineGeneralizedCoordinateTransmissionParams
     lower_bounds: Array
     upper_bounds: Array
 
@@ -195,10 +199,10 @@ class AffineJointActuatorParams(BaseSystemParams):
             raise ValueError("lower_bounds must not exceed upper_bounds.")
 
 
-class AffineJointActuator(Actuator):
+class AffineGeneralizedCoordinateActuator(Actuator):
     """Apply signed controls through a constant affine coordinate map.
 
-    The actuator combines :class:`AffineJointTransmission` with
+    The actuator combines :class:`AffineGeneralizedCoordinateTransmission` with
     :class:`DirectEffort`. For a routing matrix ``R``, reference configuration
     ``q_ref``, and coordinate offset ``y_a0``, its work-conjugate actuator
     coordinates and velocities are
@@ -217,8 +221,8 @@ class AffineJointActuator(Actuator):
     those bounds still produce the corresponding linear generalized force.
     """
 
-    _params: AffineJointActuatorParams
-    _transmission: AffineJointTransmission
+    _params: AffineGeneralizedCoordinateActuatorParams
+    _transmission: AffineGeneralizedCoordinateTransmission
     _effort_model: DirectEffort
     _metadata: ActuatorMetadata
     name: str = eqx.field(static=True)
@@ -226,21 +230,25 @@ class AffineJointActuator(Actuator):
     def __init__(
         self,
         *,
-        params: AffineJointActuatorParams,
+        params: AffineGeneralizedCoordinateActuatorParams,
         labels: tuple[str, ...] | None = None,
         units: str | tuple[str, ...] = "generalized effort",
-        name: str = "affine_joint_actuator",
+        name: str = "affine_generalized_coordinate_actuator",
     ) -> None:
-        if not isinstance(params, AffineJointActuatorParams):
-            raise TypeError("params must be AffineJointActuatorParams.")
+        if not isinstance(params, AffineGeneralizedCoordinateActuatorParams):
+            raise TypeError("params must be AffineGeneralizedCoordinateActuatorParams.")
         params.validate_for_update()
         count = params.transmission.num_channels
         if labels is None:
-            labels = tuple(f"joint_effort_{index}" for index in range(count))
+            labels = tuple(
+                f"generalized_coordinate_effort_{index}" for index in range(count)
+            )
         if len(labels) != count:
             raise ValueError("labels must contain one entry per actuator channel.")
         self._params = params
-        self._transmission = AffineJointTransmission(params.transmission)
+        self._transmission = AffineGeneralizedCoordinateTransmission(
+            params.transmission
+        )
         self._effort_model = DirectEffort()
         self._metadata = ActuatorMetadata(
             labels=labels,
@@ -262,8 +270,8 @@ class AffineJointActuator(Actuator):
         upper_bounds: Array | float | None = None,
         labels: tuple[str, ...] | None = None,
         units: str | tuple[str, ...] = "generalized effort",
-        name: str = "affine_joint_actuator",
-    ) -> AffineJointActuator:
+        name: str = "affine_generalized_coordinate_actuator",
+    ) -> AffineGeneralizedCoordinateActuator:
         """Construct signed direct actuation from an affine routing matrix.
 
         Bounds are exposed through :class:`ActuatorMetadata` and are not
@@ -279,7 +287,7 @@ class AffineJointActuator(Actuator):
             lower_bounds = -jnp.inf
         if upper_bounds is None:
             upper_bounds = jnp.inf
-        transmission = AffineJointTransmissionParams(
+        transmission = AffineGeneralizedCoordinateTransmissionParams(
             routing_matrix=matrix,
             reference_configuration=jnp.asarray(reference_configuration),
             coordinate_offset=_channel_array(
@@ -287,7 +295,7 @@ class AffineJointActuator(Actuator):
             ),
         )
         return cls(
-            params=AffineJointActuatorParams(
+            params=AffineGeneralizedCoordinateActuatorParams(
                 transmission=transmission,
                 lower_bounds=_channel_array(lower_bounds, count, "lower_bounds"),
                 upper_bounds=_channel_array(upper_bounds, count, "upper_bounds"),
@@ -298,11 +306,11 @@ class AffineJointActuator(Actuator):
         )
 
     @property
-    def params(self) -> AffineJointActuatorParams:
+    def params(self) -> AffineGeneralizedCoordinateActuatorParams:
         return self._params
 
     @property
-    def transmission(self) -> AffineJointTransmission:
+    def transmission(self) -> AffineGeneralizedCoordinateTransmission:
         return self._transmission
 
     @property
@@ -321,12 +329,14 @@ class AffineJointActuator(Actuator):
                 f"expected {robot.num_internal_dofs}, got {matrix.shape[1]}."
             )
 
-    def with_params(self, params: BaseSystemParams) -> AffineJointActuator:
-        if not isinstance(params, AffineJointActuatorParams):
-            raise TypeError("params must be AffineJointActuatorParams.")
+    def with_params(
+        self, params: BaseSystemParams
+    ) -> AffineGeneralizedCoordinateActuator:
+        if not isinstance(params, AffineGeneralizedCoordinateActuatorParams):
+            raise TypeError("params must be AffineGeneralizedCoordinateActuatorParams.")
         self.params.transmission.assert_same_topology(params.transmission)
         params.validate_for_update()
-        return AffineJointActuator(
+        return AffineGeneralizedCoordinateActuator(
             params=params,
             labels=self.metadata.labels,
             units=self.metadata.units,
@@ -337,7 +347,7 @@ class AffineJointActuator(Actuator):
 class ArticulatedTendonActuatorParams(BaseSystemParams):
     """Physical parameters for direct-effort articulated tendons."""
 
-    transmission: AffineJointTransmissionParams
+    transmission: AffineGeneralizedCoordinateTransmissionParams
     lower_bounds: Array
     upper_bounds: Array
 
@@ -360,7 +370,7 @@ class ArticulatedTendonActuator(Actuator):
     """Positive-tension actuation through fixed signed joint routing."""
 
     _params: ArticulatedTendonActuatorParams
-    _transmission: AffineJointTransmission
+    _transmission: AffineGeneralizedCoordinateTransmission
     _effort_model: DirectEffort
     _metadata: ActuatorMetadata
     name: str = eqx.field(static=True)
@@ -381,7 +391,9 @@ class ArticulatedTendonActuator(Actuator):
         if len(labels) != count:
             raise ValueError("labels must contain one entry per tendon.")
         self._params = params
-        self._transmission = AffineJointTransmission(params.transmission)
+        self._transmission = AffineGeneralizedCoordinateTransmission(
+            params.transmission
+        )
         self._effort_model = DirectEffort()
         self._metadata = ActuatorMetadata(
             labels=labels,
@@ -432,7 +444,7 @@ class ArticulatedTendonActuator(Actuator):
         count, num_dofs = matrix.shape
         if reference_configuration is None:
             reference_configuration = jnp.zeros((num_dofs,), dtype=matrix.dtype)
-        transmission = AffineJointTransmissionParams(
+        transmission = AffineGeneralizedCoordinateTransmissionParams(
             routing_matrix=matrix,
             reference_configuration=jnp.asarray(reference_configuration),
             coordinate_offset=_channel_array(
@@ -454,7 +466,7 @@ class ArticulatedTendonActuator(Actuator):
         return self._params
 
     @property
-    def transmission(self) -> AffineJointTransmission:
+    def transmission(self) -> AffineGeneralizedCoordinateTransmission:
         return self._transmission
 
     @property
@@ -498,7 +510,7 @@ class ArticulatedTendonActuator(Actuator):
 class ArticulatedTendonImpedanceParams(BaseSystemParams):
     """Spring-damper parameters for articulated tendon coordinates."""
 
-    transmission: AffineJointTransmissionParams
+    transmission: AffineGeneralizedCoordinateTransmissionParams
     stiffness: Array
     damping: Array
 
@@ -520,7 +532,7 @@ class ArticulatedTendonImpedance(PassiveElement):
     """Passive spring-damper mechanics in affine tendon coordinates."""
 
     _params: ArticulatedTendonImpedanceParams
-    transmission: AffineJointTransmission
+    transmission: AffineGeneralizedCoordinateTransmission
     name: str = eqx.field(static=True)
 
     def __init__(
@@ -533,7 +545,7 @@ class ArticulatedTendonImpedance(PassiveElement):
             raise TypeError("params must be ArticulatedTendonImpedanceParams.")
         params.validate_for_update()
         self._params = params
-        self.transmission = AffineJointTransmission(params.transmission)
+        self.transmission = AffineGeneralizedCoordinateTransmission(params.transmission)
         self.name = name
 
     @classmethod
@@ -573,7 +585,7 @@ class ArticulatedTendonImpedance(PassiveElement):
             reference_configuration = jnp.zeros((num_dofs,), dtype=matrix.dtype)
         return cls(
             params=ArticulatedTendonImpedanceParams(
-                transmission=AffineJointTransmissionParams(
+                transmission=AffineGeneralizedCoordinateTransmissionParams(
                     routing_matrix=matrix,
                     reference_configuration=jnp.asarray(reference_configuration),
                     coordinate_offset=_channel_array(
@@ -637,10 +649,10 @@ class ArticulatedTendonImpedance(PassiveElement):
 
 
 __all__ = [
-    "AffineJointActuator",
-    "AffineJointActuatorParams",
-    "AffineJointTransmission",
-    "AffineJointTransmissionParams",
+    "AffineGeneralizedCoordinateActuator",
+    "AffineGeneralizedCoordinateActuatorParams",
+    "AffineGeneralizedCoordinateTransmission",
+    "AffineGeneralizedCoordinateTransmissionParams",
     "ArticulatedTendonActuator",
     "ArticulatedTendonActuatorParams",
     "ArticulatedTendonImpedance",
