@@ -140,7 +140,7 @@ def render_motion(
         camera_config: Optional model-specific camera configuration. The shared
             side view is used when omitted.
     """
-    q_ts, _ = split_state(trajectory.y, robot.num_dofs)
+    q_ts, _ = split_state(trajectory.y, robot.num_internal_dofs)
     renderer_type = SoftCartPoleViserRenderer if cart else ViserRenderer
     renderer = renderer_type(
         robot,

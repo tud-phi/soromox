@@ -45,6 +45,7 @@ from soromox.systems import (
     StrainBasisSpec,
     SystemState,
 )
+from soromox.utils.geometry import poses
 
 jax.config.update("jax_enable_x64", True)
 
@@ -427,12 +428,10 @@ def make_soft_pendubot(config: SoftSwingUpPendulumConfig) -> GVS:
         bound=10.0,
         name="soft_pendubot_first_joint",
     )
-    sqrt_half = jnp.sqrt(jnp.asarray(0.5))
-    hanging_base_pose = jnp.array([sqrt_half, 0.0, sqrt_half, 0.0, 0.0, 0.0, 0.0])
     return GVS.from_segments(
         segments,
         gravity=jnp.array([0.0, 0.0, -config.gravity]),
-        base_pose=hanging_base_pose,
+        base_pose=poses.spatial_mounting_pose("hanging"),
         scale_rotational_basis_by_length=True,
         actuators=(actuator,),
     )
@@ -470,7 +469,7 @@ def make_soft_furuta(config: SoftSwingUpPendulumConfig) -> GVS:
     return GVS.from_segments(
         [arm, soft_link],
         gravity=jnp.array([0.0, 0.0, -config.gravity]),
-        base_pose=jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+        base_pose=poses.spatial_mounting_pose("horizontal"),
         scale_rotational_basis_by_length=True,
         actuators=(actuator,),
     )
@@ -549,8 +548,10 @@ def simulate_open_loop(
 ) -> SystemState:
     """Simulate a constant-input open-loop trajectory."""
     q0 = jnp.asarray(initial_configuration, dtype=jnp.float64)
-    if q0.shape != (robot.num_dofs,):
-        raise ValueError(f"initial_configuration must have shape ({robot.num_dofs},).")
+    if q0.shape != (robot.num_internal_dofs,):
+        raise ValueError(
+            f"initial_configuration must have shape ({robot.num_internal_dofs},)."
+        )
     if control is None:
         u = jnp.zeros((robot.num_actuators,), dtype=q0.dtype)
     else:
@@ -560,7 +561,7 @@ def simulate_open_loop(
         if u.shape != (robot.num_actuators,):
             raise ValueError(f"control must have shape ({robot.num_actuators},).")
     if external_force is None:
-        external_force = jnp.zeros((robot.num_dofs,), dtype=q0.dtype)
+        external_force = jnp.zeros((robot.num_internal_dofs,), dtype=q0.dtype)
     initial_state = SystemState(t=0.0, y=jnp.concatenate([q0, jnp.zeros_like(q0)]))
     return robot.rollout_to(
         initial_state=initial_state,
@@ -585,8 +586,8 @@ def save_summary_figure(
     """Save coordinate, tip, energy, and 3-D backbone plots."""
     import matplotlib.pyplot as plt
 
-    q_ts, v_ts = split_state(trajectory.y, robot.num_dofs)
-    if len(coordinate_labels) != robot.num_dofs:
+    q_ts, v_ts = split_state(trajectory.y, robot.num_internal_dofs)
+    if len(coordinate_labels) != robot.num_internal_dofs:
         raise ValueError("coordinate_labels must contain one label per coordinate.")
     s_points = jnp.linspace(0.0, robot.length, 100)
     poses_ts = jax.vmap(robot.forward_kinematics_abscissa_batched, in_axes=(0, None))(

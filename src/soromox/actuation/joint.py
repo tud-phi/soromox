@@ -315,10 +315,10 @@ class AffineJointActuator(Actuator):
 
     def validate_structure_for_robot(self, robot) -> None:
         matrix = jnp.asarray(self.params.transmission.routing_matrix)
-        if matrix.shape[1] != robot.num_dofs:
+        if matrix.shape[1] != robot.num_internal_dofs:
             raise ValueError(
                 "routing_matrix must have one column per degree of freedom; "
-                f"expected {robot.num_dofs}, got {matrix.shape[1]}."
+                f"expected {robot.num_internal_dofs}, got {matrix.shape[1]}."
             )
 
     def with_params(self, params: BaseSystemParams) -> AffineJointActuator:

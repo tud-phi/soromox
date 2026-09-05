@@ -110,7 +110,7 @@ def test_render_motion_forwards_model_specific_camera(monkeypatch):
     robot = make_soft_cart_pole(SoftInvertedPendulumConfig())
     trajectory = SystemState(
         t=jnp.array([0.0, 0.1]),
-        y=jnp.zeros((2, 2 * robot.num_dofs)),
+        y=jnp.zeros((2, 2 * robot.num_internal_dofs)),
     )
     camera = CameraConfig(
         fov=45.0,

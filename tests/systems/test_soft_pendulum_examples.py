@@ -52,7 +52,7 @@ def models(sip_config, paper_config):
 
 def test_original_sip_parameters_and_tip_torque_are_retained(sip_config):
     robot = make_fixed_pendulum(sip_config)
-    assert robot.num_dofs == 2
+    assert robot.num_internal_dofs == 2
     assert robot.num_actuators == 0
     assert robot.structure.scale_rotational_basis_by_length
     assert_allclose(robot.K, sip_config.stiffness)
@@ -123,7 +123,7 @@ def test_coordinate_order_topology_axes_and_length_scaling(models):
     }
     for name, robot in models.items():
         num_dofs, segment_dofs, joints = expected[name]
-        assert robot.num_dofs == num_dofs
+        assert robot.num_internal_dofs == num_dofs
         assert tuple(map(tuple, np.asarray(robot.dofs_per_segment))) == segment_dofs
         assert (
             tuple(
@@ -200,7 +200,7 @@ def test_actuation_matrices_labels_units_and_bounds(models):
     }
     for name, robot in models.items():
         routing, label, units, lower, upper = expected[name]
-        q = jnp.zeros((robot.num_dofs,))
+        q = jnp.zeros((robot.num_internal_dofs,))
         assert_allclose(robot.actuation_matrix(q)[:, 0], routing)
         metadata = robot.actuator_input_metadata[0]
         assert metadata.labels == (label,)
@@ -298,7 +298,7 @@ def test_short_zero_and_bounded_input_rollouts_are_finite(
         solver_dt=1e-3,
         save_dt=0.01,
     )
-    assert trajectory.y.shape == (2, 2 * robot.num_dofs)
+    assert trajectory.y.shape == (2, 2 * robot.num_internal_dofs)
     assert jnp.all(jnp.isfinite(trajectory.y))
-    q_ts, qd_ts = split_state(trajectory.y, robot.num_dofs)
-    assert q_ts.shape == qd_ts.shape == (2, robot.num_dofs)
+    q_ts, qd_ts = split_state(trajectory.y, robot.num_internal_dofs)
+    assert q_ts.shape == qd_ts.shape == (2, robot.num_internal_dofs)
