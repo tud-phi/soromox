@@ -1355,6 +1355,18 @@ def test_pcs_gravitational_energy_gradient_matches_force() -> None:
     assert_allclose(dU_dq, model.gravitational_force(q), rtol=RTOL, atol=ATOL)
 
 
+def test_rotated_fixed_base_gravity_matches_raw_potential_gradient() -> None:
+    model, _ = make_pcs(num_segments=1)
+    model = model.with_fixed_base_pose(
+        jnp.array([0.0, 2**-0.5, 0.0, 2**-0.5, 0.03, -0.02, 0.01])
+    )
+    q = random_q(model, jax.random.PRNGKey(315), scale=0.02)
+
+    dU_dq = jax.grad(model._gravitational_energy)(q)
+
+    assert_allclose(dU_dq, model.gravitational_force(q), rtol=RTOL, atol=ATOL)
+
+
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
 def test_forward_dynamics_matches_manual_computation(num_segments: int):
     model, _ = make_pcs(num_segments=num_segments, total_length=PCS_TOTAL_LENGTH)

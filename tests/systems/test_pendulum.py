@@ -395,6 +395,20 @@ def test_gravity_matches_potential_gradient(N):
     assert_allclose(G, dU_dq, rtol=Tolerance.rtol(), atol=Tolerance.atol())
 
 
+def test_rotated_fixed_base_gravity_matches_raw_potential_gradient() -> None:
+    robot = make_pendulum(3).with_fixed_base_pose(jnp.array([0.73, 0.03, -0.02]))
+    q = jnp.array([-0.25, 0.1, 0.5])
+
+    dU_dq = jax.grad(robot._gravitational_energy)(q)
+
+    assert_allclose(
+        dU_dq,
+        robot.gravitational_force(q),
+        rtol=Tolerance.rtol(),
+        atol=Tolerance.atol(),
+    )
+
+
 @pytest.mark.parametrize("N", [2, 3])
 def test_forward_dynamics_rest_with_zero_forces(N):
     robot = make_pendulum(N)

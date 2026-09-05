@@ -369,6 +369,34 @@ def test_spatial_mixed_axis_chain_matches_dense_matrix_equation():
     assert_allclose(qdd, qdd_dense, rtol=Tolerance.rtol(), atol=Tolerance.atol())
 
 
+def test_rotated_fixed_base_forward_dynamics_matches_dense_matrix_equation():
+    robot = make_spatial_robot().with_fixed_base_pose(
+        jnp.array([0.0, 2**-0.5, 0.0, 2**-0.5, 0.2, -0.1, 0.7])
+    )
+    q = jnp.array([0.2, -0.3, 0.4])
+    qd = jnp.array([0.5, -0.2, 0.3])
+    u = jnp.array([0.1, -0.05, 0.2])
+    tau_ext = jnp.array([0.02, 0.01, -0.03])
+
+    y = jnp.concatenate([q, qd])
+    _, qdd = jnp.split(
+        robot.forward_dynamics(jnp.array(0.0), y, (u, tau_ext)),
+        2,
+    )
+    inertia, coriolis_velocity, gravity = robot.dynamics_terms(q, qd)
+    rhs = (
+        robot.actuation_force(q, u)
+        + tau_ext
+        - coriolis_velocity
+        - gravity
+        - robot.elastic_force(q)
+        - robot.damping_matrix(q) @ qd
+    )
+    qdd_dense = jnp.linalg.solve(inertia, rhs)
+
+    assert_allclose(qdd, qdd_dense, rtol=Tolerance.rtol(), atol=Tolerance.atol())
+
+
 @pytest.mark.parametrize("num_links", [2, 3])
 def test_batched_kinematics_and_jacobian_match_pointwise_evaluation(num_links):
     robot = make_articulated_robot(num_links)

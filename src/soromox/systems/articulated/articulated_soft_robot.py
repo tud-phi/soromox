@@ -88,7 +88,7 @@ class ArticulatedSoftRobot(SoftRobot):
         m: Link masses, shape `(num_links,)`.
         I_com: Link inertia matrices about each COM, expressed in the post-joint
             link frame, shape `(num_links, 3, 3)`.
-        g: Gravity acceleration vector in the base frame, shape `(3,)`.
+        g: Gravity acceleration vector in the world frame, shape `(3,)`.
         K: Joint stiffness matrix, shape `(num_links, num_links)`.
         D: Joint damping matrix, shape `(num_links, num_links)`.
         q_ref_k: Rest configuration for the joint springs, shape `(num_links,)`.
@@ -801,45 +801,60 @@ class ArticulatedSoftRobot(SoftRobot):
         Compute gravitational potential energy.
 
         Args:
-            q: Joint coordinates, shape `(num_links,)`.
+            q: Fixed-base joint coordinates or total floating-base
+                configuration.
 
         Returns:
             Gravitational potential energy as a scalar.
         """
+        if self.floating_base:
+            _, q_internal = self.split_configuration(q)
+            _, _, com_frames, _ = self._kinematic_frames(q_internal)
+            return self._gravitational_energy_from_base_relative_points(
+                q, com_frames[:, :3, 3], self.m
+            )
+
         g_coms = self.forward_kinematics_coms(q)
         p_coms = g_coms[:, :3, 3]
         return -jnp.sum(self.m * (p_coms @ self.g))
 
     @eqx.filter_jit
-    def _floating_gravitational_energy(self, q: Array) -> Array:
-        """
-        Compute absolute floating-base gravitational potential energy.
-
-        Args:
-            q: Total floating-base configuration with shape
-                ``(num_coordinates,)``.
-
-        Returns:
-            Absolute gravitational potential energy as a scalar.
-        """
-        _, q_internal = self.split_configuration(q)
-        _, _, com_frames, _ = self._kinematic_frames(q_internal)
-        return self._floating_gravitational_energy_from_points(
-            q, com_frames[:, :3, 3], self.m
-        )
-
-    @eqx.filter_jit
     def _gravitational_force(self, q: Array) -> Array:
         """
-        Compute generalized gravitational forces.
+        Compute generalized gravitational forces analytically from COM Jacobians.
 
         Args:
-            q: Joint coordinates, shape `(num_links,)`.
+            q: Fixed-base joint coordinates or total floating-base
+                configuration.
 
         Returns:
-            Gravity vector, shape `(num_links,)`.
+            Gravity vector in generalized-velocity coordinates.
         """
-        return jax.grad(self._gravitational_energy)(q)
+        q_internal = self.split_configuration(q)[1] if self.floating_base else q
+        _, com_frames, screws = self._com_chain_kinematics(q_internal)
+        jacobians = self._jacobian_for_points(
+            screws,
+            jnp.arange(self.num_links),
+            com_frames[:, :3, 3],
+        )
+        positions = com_frames[:, :3, 3]
+        linear_jacobians = jacobians[:, 3:, :]
+
+        if not self.floating_base:
+            base_transform = self.base_transform_from_configuration(q)
+            base_rotation_transpose = base_transform[:3, :3].T
+            positions = jnp.einsum(
+                "ij,nj->ni",
+                base_rotation_transpose,
+                positions - base_transform[:3, 3],
+            )
+            linear_jacobians = jnp.einsum(
+                "ij,njk->nik", base_rotation_transpose, linear_jacobians
+            )
+
+        return self._gravitational_force_from_base_relative_points(
+            q, positions, self.m, linear_jacobians
+        )
 
     @eqx.filter_jit
     def stiffness_matrix(self) -> Array:
@@ -1016,9 +1031,16 @@ class ArticulatedSoftRobot(SoftRobot):
             qdd_i = (u_i - U_i @ a_i) / d_i
             return a_i + S_i * qdd_i, qdd_i
 
+        # The ABA recursion is expressed in the robot's mounting frame, whereas
+        # ``self.g`` follows the world-frame convention used by gravitational
+        # potential energy and the dense dynamics path.  Rotating gravity into
+        # the mounting frame is essential for non-identity fixed-base poses.
+        # Translation does not affect a uniform gravity field.
+        gravity_base = self.base_transform[:3, :3].T @ self.g
+
         _, qdd = lax.scan(
             _acceleration_step,
-            jnp.concatenate([jnp.zeros(3, dtype=q.dtype), -self.g]),
+            jnp.concatenate([jnp.zeros(3, dtype=q.dtype), -gravity_base]),
             (Xup, S, c, U, d, u),
         )
 

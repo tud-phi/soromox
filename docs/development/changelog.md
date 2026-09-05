@@ -26,6 +26,8 @@ and include benchmark baseline and measurement context for performance claims.
   controller and optimizer settings, strict device selection,
   regenerated figures, and distinct optimized-best and initial-median animations
   with a shared gravity-down camera.
+- Unified fixed- and floating-base gravity with shared analytical point-mass
+  quadrature, avoiding runtime autodiff and full spatial gravity contractions.
 - Open3D and Viser swept backbones now preserve circular, elliptical, and
   rectangular cross-sections, including dimensions that vary with abscissa.
 
@@ -44,6 +46,8 @@ and include benchmark baseline and measurement context for performance claims.
 
 ### Fixed
 
+- Fixed analytical gravitational forces for rotated mounts in
+  `ArticulatedSoftRobot` and `PlanarHSA`.
 - Fixed `DynamicalSystem` API documentation to avoid assuming second-order
   `[q, qd]` states or configuration-only projection.
 - Made Viser discrete cross-section markers consistent with Open3D: circular,
