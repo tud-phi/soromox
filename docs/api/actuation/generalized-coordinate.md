@@ -1,14 +1,15 @@
-# Joint-space actuation
+# Generalized-coordinate actuation
 
-Joint-space transmissions map generalized configurations to work-conjugate
-actuator coordinates. The generic `AffineJointTransmission` supports any host
-with a matching generalized-coordinate dimension. The articulated-tendon
-presets additionally require serial articulated routing, as provided by
-`Pendulum` and `ArticulatedSoftRobot`.
+Generalized-coordinate transmissions map generalized configurations to
+work-conjugate actuator coordinates. The generic
+`AffineGeneralizedCoordinateTransmission` supports any host with a matching
+generalized-coordinate dimension. The articulated-tendon presets additionally
+require serial articulated routing, as provided by `Pendulum` and
+`ArticulatedSoftRobot`.
 
 ## Affine transmission coordinates
 
-`AffineJointTransmission` defines
+`AffineGeneralizedCoordinateTransmission` defines
 
 \[
 y_\mathrm{a}(q)
@@ -17,7 +18,8 @@ y_\mathrm{a}(q)
 A = R^\mathsf{T}.
 \]
 
-Here, each row of \(R\) is a signed actuator routing across the joints. The
+Here, each row of \(R\) is a signed actuator routing across the generalized
+coordinates. The
 offset \(y_{\mathrm{a},0}\) makes the coordinate value explicit at the reference
 configuration. The corresponding velocity, generalized force, and power are
 
@@ -35,6 +37,32 @@ coordinates. For example, the transmission itself can map PCS coordinates when
 its matrix width matches the PCS degrees of freedom. The articulated-tendon
 preset adds stronger serial-joint semantics and intentionally rejects continuum
 hosts.
+
+## Signed direct generalized-coordinate effort
+
+`AffineGeneralizedCoordinateActuator` combines the affine transmission with
+`DirectEffort`:
+
+```python
+import jax.numpy as jnp
+
+from soromox.actuation import AffineGeneralizedCoordinateActuator
+
+actuator = AffineGeneralizedCoordinateActuator.from_routing(
+    jnp.array([[1.0, 0.0, 0.0]]),
+    lower_bounds=-10.0,
+    upper_bounds=10.0,
+    labels=("base_joint_torque",),
+    units="N m",
+)
+```
+
+The first generalized coordinate receives the signed input directly, while the
+other coordinates remain passive. More general rows apply a fixed linear
+combination of generalized efforts. Because `DirectEffort` returns the supplied
+control unchanged, `tau = R.T @ u` and power is preserved exactly. Bounds are
+descriptive metadata only; saturation belongs in the controller, optimizer, or
+future effort model rather than being applied implicitly here.
 
 The `coordinate_offset` parameter specifies the actuator-space coordinate at
 the reference configuration:

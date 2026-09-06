@@ -14,9 +14,10 @@ the dense equations of motion.
 
 The constructor accepts the shared `actuators=` and `passive_elements=`
 interface. `actuators=None` installs identity joint-effort actuation, while an
-empty tuple creates an unactuated chain. Affine joint transmissions and
-articulated tendons use the same API as the planar `Pendulum`; see
-[Joint-space actuation](../../actuation/joint-space.md).
+empty tuple creates an unactuated chain. Affine generalized-coordinate
+transmissions and articulated tendons use the same API as the planar `Pendulum`;
+see
+[Generalized-coordinate actuation](../../actuation/generalized-coordinate.md).
 
 ## Usage
 
