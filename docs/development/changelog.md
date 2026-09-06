@@ -13,42 +13,76 @@ and include benchmark baseline and measurement context for performance claims.
 
 ### Added
 
-- Added reproducible six-start Section Vd control-gain optimization results,
-  with a shared dimensionless objective, tuned settings, schema-v3 archives,
-  and regression coverage; see
-  [issue #154](https://github.com/tud-phi/soromox/issues/154).
-- Added a dynamic UMArm joint-space tracking example with
-  `FeedforwardCompensationTracker`, balanced antagonistic pressure offsets,
-  tracking plots, and pressure-colored Viser recording.
-- Added renderer-neutral cross-section contours and loft construction, with a
-  registration hook for extending both swept 3D renderers with new geometries.
-- Added the generic signed direct `AffineGeneralizedCoordinateActuator`, with
-  affine generalized-coordinate routing and metadata-only input bounds.
-- Added affine-curvature GVS examples for the R-SIP, force-actuated Soft
-  Cart-Pole, Soft Pendubot, and Soft Furuta Pendulum, including semantic
-  upright/hanging configurations, open-loop simulations, summary plots, and
-  Viser rendering.
-
 ### Changed
-
-- Updated the Section Vd workflow with one generator and tuning study, retuned
-  controller and optimizer settings, strict device selection,
-  regenerated figures, and distinct optimized-best and initial-median animations
-  with a shared gravity-down camera.
-- Unified fixed- and floating-base gravity with shared analytical point-mass
-  quadrature, avoiding runtime autodiff and full spatial gravity contractions.
-- Standardized example mounting declarations with named poses and conventional
-  world-down gravity, and aligned Section Vf rendering with zero gravity.
-- Open3D and Viser swept backbones now preserve circular, elliptical, and
-  rectangular cross-sections, including dimensions that vary with abscissa.
-- Renamed `AffineJointTransmission` and `AffineJointTransmissionParams` to
-  `AffineGeneralizedCoordinateTransmission` and
-  `AffineGeneralizedCoordinateTransmissionParams` to reflect their support for
-  rigid-joint, continuum, and hybrid generalized coordinates.
 
 ### Performance
 
 ### Deprecated
+
+### Breaking changes
+
+### Fixed
+
+### Documentation
+
+### Contributors
+
+## [0.4.1] - 2026-09-06
+
+### Added
+
+- Added `soromox.simulation.SemiImplicitEuler`, a Diffrax-compatible kick–drift
+  integrator for `SoftRobot` rollouts that supports unequal floating-base
+  configuration and velocity dimensions, manifold retraction, and trailing
+  auxiliary state; see the [Simulation Integrators](../api/simulation/integrators.md)
+  guide and [PR #201](https://github.com/tud-phi/soromox/pull/201).
+- Added reproducible six-start Section Vd control-gain optimization results,
+  with a shared dimensionless objective, tuned settings, schema-v3 archives,
+  and regression coverage; see [PR #204](https://github.com/tud-phi/soromox/pull/204)
+  and [issue #154](https://github.com/tud-phi/soromox/issues/154).
+- Added a dynamic UMArm joint-space tracking example with
+  `FeedforwardCompensationTracker`, balanced antagonistic pressure offsets,
+  tracking plots, and pressure-colored Viser recording; see
+  [PR #207](https://github.com/tud-phi/soromox/pull/207).
+- Added the generic signed direct `AffineGeneralizedCoordinateActuator`, with
+  affine generalized-coordinate routing and metadata-only input bounds; see
+  [PR #187](https://github.com/tud-phi/soromox/pull/187).
+- Added affine-curvature GVS examples for the R-SIP, force-actuated Soft
+  Cart-Pole, Soft Pendubot, and Soft Furuta Pendulum, including semantic
+  upright/hanging configurations, open-loop simulations, summary plots, and
+  Viser rendering; see [PR #187](https://github.com/tud-phi/soromox/pull/187).
+- Added renderer-neutral cross-section contours and loft construction, with a
+  registration hook for extending both swept 3D renderers with new geometries;
+  see [PR #200](https://github.com/tud-phi/soromox/pull/200).
+
+### Changed
+
+- Extended the parallel-rollout benchmark tooling with explicit solver
+  selection, including `semi-implicit-euler`, per-case checkpointing, and
+  expected out-of-memory reporting.
+- Updated the Section Vd workflow with one generator and tuning study, retuned
+  controller and optimizer settings, strict device selection, regenerated
+  figures, and distinct optimized-best and initial-median animations with a
+  shared gravity-down camera.
+- Unified fixed- and floating-base gravity with shared analytical point-mass
+  quadrature, avoiding runtime autodiff and full spatial gravity contractions;
+  see [PR #209](https://github.com/tud-phi/soromox/pull/209).
+- Standardized example mounting declarations with named poses and conventional
+  world-down gravity, and aligned Section Vf rendering with zero gravity; see
+  [PR #208](https://github.com/tud-phi/soromox/pull/208).
+- Open3D and Viser swept backbones now preserve circular, elliptical, and
+  rectangular cross-sections, including dimensions that vary with abscissa;
+  see [PR #200](https://github.com/tud-phi/soromox/pull/200).
+
+### Performance
+
+- Refreshed the committed FP64 parallel-rollout measurements on an NVIDIA RTX
+  5090 through batch size 1,024. Automatic backend selection resolves to Warp
+  for GVS; relative to batch size 1, GVS throughput reaches 679.7× for one
+  segment and 133.6× for 32 segments at batch size 1,024. The 32-segment case
+  peaks at batch size 512 and is 1.2% lower at 1,024; see the [benchmark
+  protocol](../../paper_results/secIVb_parallel_rollouts_gpu/README.md) and
+  [PR #205](https://github.com/tud-phi/soromox/pull/205).
 
 ### Breaking changes
 
@@ -57,20 +91,29 @@ and include benchmark baseline and measurement context for performance claims.
   threadlike models that compensated for the previous sign must update their
   routing offsets or actuator directions.
 - Renamed the Viser `cylinder_sections` and Open3D `tube_resolution` options to
-  the geometry-neutral `cross_section_resolution`.
+  the geometry-neutral `cross_section_resolution`; see
+  [PR #200](https://github.com/tud-phi/soromox/pull/200).
+- Renamed `AffineJointTransmission` and `AffineJointTransmissionParams` to
+  `AffineGeneralizedCoordinateTransmission` and
+  `AffineGeneralizedCoordinateTransmissionParams` to reflect support for
+  rigid-joint, continuum, and hybrid generalized coordinates; see
+  [PR #187](https://github.com/tud-phi/soromox/pull/187).
 
 ### Fixed
 
 - Fixed analytical gravitational forces for rotated mounts in
-  `ArticulatedSoftRobot` and `PlanarHSA`.
-- Set Viser scenes to +Z-up while preserving explicit camera-up selections.
+  `ArticulatedSoftRobot` and `PlanarHSA`; see
+  [PR #209](https://github.com/tud-phi/soromox/pull/209).
+- Set Viser scenes to +Z-up while preserving explicit camera-up selections; see
+  [PR #208](https://github.com/tud-phi/soromox/pull/208).
 - Corrected the Section Ve camera and render artifacts so +Z gravity appears
-  downward.
+  downward; see [PR #208](https://github.com/tud-phi/soromox/pull/208).
 - Fixed `DynamicalSystem` API documentation to avoid assuming second-order
-  `[q, qd]` states or configuration-only projection.
-- Made Viser discrete cross-section markers consistent with Open3D: circular,
+  `[q, qd]` states or configuration-only projection; see
+  [PR #206](https://github.com/tud-phi/soromox/pull/206).
+- Fixed Viser discrete cross-section markers to match Open3D: circular,
   rectangular, and elliptical sections now use spheres, boxes, and ellipsoids,
-  respectively.
+  respectively; see [PR #200](https://github.com/tud-phi/soromox/pull/200).
 - Fixed Open3D and Viser lofting across link boundaries, which produced a short
   shape-morphing funnel when adjacent links used different cross-sections.
 - Fixed Open3D swept meshes reusing the first endpoint cross-section at both
@@ -78,7 +121,11 @@ and include benchmark baseline and measurement context for performance claims.
 
 ### Documentation
 
-### Contributors
+- Added the [Simulation Integrators](../api/simulation/integrators.md) API guide,
+  including solver compatibility and floating-base integration caveats.
+- Documented the low-dimensional soft-pendulum coordinate, actuation, material,
+  and rigid-body-assumption conventions; see
+  [PR #187](https://github.com/tud-phi/soromox/pull/187).
 
 ## [0.4.0] - 2026-09-01
 
