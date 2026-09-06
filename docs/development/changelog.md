@@ -22,10 +22,12 @@ and include benchmark baseline and measurement context for performance claims.
   tracking plots, and pressure-colored Viser recording.
 - Added renderer-neutral cross-section contours and loft construction, with a
   registration hook for extending both swept 3D renderers with new geometries.
-- Added signed direct `AffineGeneralizedCoordinateActuator` routing and
-  affine-curvature GVS examples for the R-SIP, force-actuated Soft Cart-Pole,
-  Soft Pendubot, and Soft Furuta Pendulum, including semantic upright/hanging
-  configurations, open-loop simulations, summary plots, and Viser rendering.
+- Added the generic signed direct `AffineGeneralizedCoordinateActuator`, with
+  affine generalized-coordinate routing and metadata-only input bounds.
+- Added affine-curvature GVS examples for the R-SIP, force-actuated Soft
+  Cart-Pole, Soft Pendubot, and Soft Furuta Pendulum, including semantic
+  upright/hanging configurations, open-loop simulations, summary plots, and
+  Viser rendering.
 
 ### Changed
 
@@ -39,8 +41,10 @@ and include benchmark baseline and measurement context for performance claims.
   world-down gravity, and aligned Section Vf rendering with zero gravity.
 - Open3D and Viser swept backbones now preserve circular, elliptical, and
   rectangular cross-sections, including dimensions that vary with abscissa.
-- Added selectable `explicit_affine` and `material_derived` stiffness modes to
-  the SIP, R-SIP, and Soft Cart-Pole configuration.
+- Renamed `AffineJointTransmission` and `AffineJointTransmissionParams` to
+  `AffineGeneralizedCoordinateTransmission` and
+  `AffineGeneralizedCoordinateTransmissionParams` to reflect their support for
+  rigid-joint, continuum, and hybrid generalized coordinates.
 
 ### Performance
 

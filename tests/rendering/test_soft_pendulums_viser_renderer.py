@@ -1,6 +1,11 @@
 """Tests for Viser motion rendering of the Soft Cart-Pole."""
 
+# ruff: noqa: E402
 from contextlib import contextmanager
+
+import jax
+
+jax.config.update("jax_enable_x64", True)
 
 import jax.numpy as jnp
 import pytest
