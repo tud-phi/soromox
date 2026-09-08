@@ -9,6 +9,7 @@ where code, input data, and canonical outputs are versioned together.
 ```text
 examples/
 ├── data/                         # optional inputs shared by multiple topics
+├── rendering/                    # Open3D pastel studio study; generated figures/
 ├── control/
 │   ├── actuation_space/
 │   │   ├── figures/              # generated, ignored by Git
@@ -36,3 +37,6 @@ an input or generated artifact in the example docstring or a topic README.
 
 All built-in paths are resolved from the script location, so examples can be run
 from the repository root or another working directory.
+
+See [the Open3D and Viser studio examples](rendering/README.md) for upright tapered soft
+tentacles with pastel materials, a curved grey backdrop, lighting, and shadows.

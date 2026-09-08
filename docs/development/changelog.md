@@ -16,6 +16,9 @@ and include benchmark baseline and measurement context for performance claims.
 - Added a UMArm operational-space example using
   `OperationalSpaceImpedanceControlTracker` and balanced antagonistic pressure
   inputs to track a base-parallel circle.
+- Added Open3D and Viser studio rendering examples with upright tapered GVS
+  tentacles, pastel materials, a curved grey backdrop, lighting, and shadows,
+  including native macOS image export for Open3D and browser PNG capture for Viser.
 
 ### Changed
 
