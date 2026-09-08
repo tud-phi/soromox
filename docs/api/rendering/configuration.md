@@ -239,7 +239,7 @@ automatically generated layouts. Viser additionally supports
 colors and alpha values can distinguish overlaid configurations.
 
 Open3D automatically merges each robot's backbone primitives into one dynamic
-mesh when an animated scene contains multiple robots. This removes most backend
+mesh when an interactive scene contains multiple robots. This removes most backend
 geometry registrations; set `merge_backbone_meshes=True` to force merging for
 one robot or `False` to disable it for profiling or compatibility. Viser always
 uses its instanced or color-grouped backbone representation because browser
@@ -258,6 +258,36 @@ renderer.render_sequence(
 
 ---
 
+## Open3D Appearance
+
+Pass `Open3DRenderConfig` to the renderer for shared image, video and static-view appearance:
+
+```python
+from soromox.rendering import Open3DRenderer, Open3DRenderConfig
+
+renderer = Open3DRenderer(
+    robot,
+    render_config=Open3DRenderConfig.studio(roughness=0.8, sun_intensity=50000),
+)
+image = renderer.render_frame(q)
+renderer.render_sequence(ts, q_ts, record_path="studio.mp4")
+```
+
+The studio preset adds a curved grey floor and wall, with shadows, ambient
+occlusion and a fill light. It uses world Z as up; `floor_z` positions the floor.
+`RendererColorConfig` sets robot colors; `CameraConfig` sets the camera.
+`show()` uses these settings in the modern GUI. Animated interactive previews
+reuse the scenery with approximate legacy shading and warn about visual differences.
+
+::: soromox.rendering.open3d_render_config.Open3DRenderConfig
+    options:
+      show_root_heading: true
+      show_source: false
+      heading_level: 3
+      docstring_section_style: table
+
+---
+
 ## Recording and Video Encoding
 
 All renderer families accept `record_path` for sequence output, while their
@@ -265,7 +295,8 @@ capture mechanisms differ:
 
 - Matplotlib uses its animation writers and requires FFmpeg for MP4 output.
 - Open3D and Viser use FFmpeg with `VideoEncodingConfig`.
-- Open3D writes PNG frames when `record_path` names a directory.
+- Open3D writes PNG frames when `record_path` names a directory. Video export
+  requires FFmpeg and reports failures; there is no implicit format fallback.
 - Viser can capture synchronized browser snapshots with `snapshot_paths`.
 - OpenCV uses FFmpeg when available and otherwise falls back to
   `cv2.VideoWriter`.
@@ -281,7 +312,10 @@ renderer.render_sequence(
 )
 ```
 
-Use `record_every_n` to subsample captured frames where supported. Recording
+Use `record_every_n` to subsample captured frames where supported. Open3D
+reduces video FPS by the same factor to preserve playback speed. It derives FPS
+from the median timestamp interval and warns for nonuniform timestamps; resample
+such trajectories first when exact timing matters. Recording
 depends on the backend, so consult the relevant [renderer API](renderers.md)
 for capture-only options.
 

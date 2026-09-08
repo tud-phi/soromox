@@ -16,17 +16,30 @@ and include benchmark baseline and measurement context for performance claims.
 - Added a UMArm operational-space example using
   `OperationalSpaceImpedanceControlTracker` and balanced antagonistic pressure
   inputs to track a base-parallel circle.
+- Added reusable `Open3DRenderConfig` material, lighting, shadow, ambient occlusion,
+  and curved studio backdrop settings for static views, image and video exports.
+
 - Added Open3D and Viser studio rendering examples with upright tapered GVS
   tentacles, pastel materials, a curved grey backdrop, lighting, and shadows,
   including native macOS image export for Open3D and browser PNG capture for Viser.
 
 ### Changed
 
+- Added Open3D development dependencies that follow upstream `main`, with a macOS
+  source build that compiles Metal shaders and fixes RGB image readback. Static
+  `show()` views use the modern GUI; animated previews use efficient legacy mesh
+  updates and warn about visual differences from modern rendering.
+
 ### Performance
 
 ### Deprecated
 
 ### Breaking changes
+
+- Open3D sequences with `record_path` now export through the modern renderer and
+  return without opening interactive playback. Frame selection is deterministic;
+  `record_every_n` reduces both the frame count and FPS. Playback controls and
+  `close_when_recording_done` no longer affect exports.
 
 ### Fixed
 

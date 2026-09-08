@@ -747,51 +747,165 @@ def test_open3d_ground_plane_has_surface_and_grid():
     )
 
 
-def test_open3d_closes_window_when_recording_finishes(monkeypatch):
-    pytest.importorskip("open3d")
-    from soromox.rendering.open3d_renderer import Open3DRenderer, RecordingConfig
-
-    robot = _AnimatingSpatialRobot()
-    renderer = Open3DRenderer(robot)
-    vis = Mock()
-    vis.poll_events.side_effect = [True, True, True]
-    ctrl = Mock()
-    ctrl.convert_to_pinhole_camera_parameters.return_value = Mock()
-    scene_data = type(
-        "SceneDataStub",
-        (),
-        {"ts": np.array([0.0, 1.0]), "num_frames": 2},
-    )()
-
-    monkeypatch.setattr(renderer, "_create_visualizer", Mock(return_value=(vis, ctrl)))
-    monkeypatch.setattr(renderer, "_build_scene", Mock(return_value=Mock()))
-    monkeypatch.setattr(renderer, "_setup_interactive_camera", Mock())
-    monkeypatch.setattr(
-        renderer, "_frame_intervals_from_ts", Mock(return_value=np.zeros(2))
+def test_open3d_recording_routes_to_modern_export(monkeypatch, tmp_path):
+    renderer = Open3DRenderer(_AnimatingSpatialRobot())
+    scene_data = Mock()
+    monkeypatch.setattr(renderer, "_prepare_scene_data", Mock(return_value=scene_data))
+    export = Mock()
+    viewer = Mock()
+    monkeypatch.setattr(renderer, "_export_sequence", export)
+    monkeypatch.setattr(renderer, "_run_viewer", viewer)
+    renderer.render_sequence(
+        np.array([0.0, 1.0]),
+        np.zeros((2, 3)),
+        record_path=str(tmp_path / "rollout.mp4"),
+        autoplay=False,
+        loop=True,
     )
+    assert export.call_args.args[0] is scene_data
+    viewer.assert_not_called()
+
+
+def test_open3d_interactive_preview_warns(monkeypatch):
+    renderer = Open3DRenderer(_AnimatingSpatialRobot())
+    monkeypatch.setattr(renderer, "_prepare_scene_data", Mock())
+    viewer = Mock()
+    monkeypatch.setattr(renderer, "_run_viewer", viewer)
+    with pytest.warns(UserWarning, match="legacy shading.*modern image/video"):
+        renderer.render_sequence(np.array([0.0, 1.0]), np.zeros((2, 3)))
+    viewer.assert_called_once()
+
+
+def test_open3d_export_order_fps_and_cleanup(monkeypatch, tmp_path):
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+
+    from soromox.rendering.open3d_renderer import RecordingConfig
+
+    renderer = Open3DRenderer(_AnimatingSpatialRobot(), width=4, height=2)
+    scene_data = SimpleNamespace(ts=np.arange(5) * 0.1, num_frames=5)
+    events = []
+
+    @contextmanager
+    def session(*args):
+        events.append("open")
+        try:
+            yield "renderer"
+        finally:
+            events.append("release")
+
+    def frame(render, scene, index, colors):
+        assert render == "renderer"
+        assert scene is scene_data
+        events.append(index)
+        return np.full((2, 4, 3), index, dtype=np.uint8)
+
+    writer = Mock()
+    writer.proc.returncode = 0
+    factory = Mock(return_value=writer)
+    monkeypatch.setattr(renderer, "_modern_session", session)
+    monkeypatch.setattr(renderer, "_render_modern_frame", frame)
+    monkeypatch.setattr(open3d_renderer_module, "FFmpegVideoWriter", factory)
+    renderer._export_sequence(
+        scene_data,
+        RecordingConfig(str(tmp_path / "test.mp4"), every_n=2),
+        2.0,
+        None,
+        None,
+    )
+    assert factory.call_args.args[3] == pytest.approx(10.0)
+    assert events == ["open", 0, 2, 4, "release"]
+    assert [call.args[0][0, 0, 0] for call in writer.write.call_args_list] == [0, 2, 4]
+    writer.close.assert_called_once()
+
+    # A frame failure must still finish the encoder and release its context.
+    monkeypatch.setattr(
+        renderer, "_render_modern_frame", Mock(side_effect=RuntimeError("readback"))
+    )
+    writer.reset_mock()
+    with pytest.raises(RuntimeError, match="readback"):
+        renderer._export_sequence(
+            scene_data, RecordingConfig(str(tmp_path / "broken.mp4")), 1.0, None, None
+        )
+    writer.close.assert_called_once()
+    assert events[-1] == "release"
+
+    monkeypatch.setattr(renderer, "_render_modern_frame", frame)
+    writer.proc.returncode = 1
+    writer.stderr_log = "encoder failed"
+    with pytest.raises(RuntimeError, match="FFmpeg failed.*encoder failed"):
+        renderer._export_sequence(
+            scene_data, RecordingConfig(str(tmp_path / "broken.mp4")), 1.0, None, None
+        )
+
+
+def test_open3d_png_export_preserves_selected_frame_numbers(monkeypatch, tmp_path):
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    from soromox.rendering.open3d_renderer import RecordingConfig
+
+    renderer = Open3DRenderer(_AnimatingSpatialRobot(), width=4, height=2)
+    scene = SimpleNamespace(ts=np.arange(5) / 10, num_frames=5)
+    monkeypatch.setattr(renderer, "_modern_session", lambda *args: nullcontext(None))
     monkeypatch.setattr(
         renderer,
-        "_init_recorder",
-        Mock(return_value=(None, None, "rollout.mp4")),
+        "_render_modern_frame",
+        lambda render, scene, index, colors: np.full((2, 4, 3), index, dtype=np.uint8),
     )
-    monkeypatch.setattr(renderer, "_register_key_callbacks", Mock())
-    update_scene = Mock()
-    monkeypatch.setattr(renderer, "_update_scene", update_scene)
-
-    renderer._run_viewer(
-        scene_data,
-        playback_speed=1.0,
-        autoplay=True,
-        loop=False,
-        record_cfg=RecordingConfig(
-            path="rollout.mp4",
-            close_when_done=True,
-        ),
-        window_name="test",
+    renderer._export_sequence(
+        scene, RecordingConfig(str(tmp_path), every_n=2), 1.0, None, None
     )
+    assert sorted(p.name for p in tmp_path.iterdir()) == [
+        "frame_00000.png",
+        "frame_00002.png",
+        "frame_00004.png",
+    ]
+    for index in (0, 2, 4):
+        saved = open3d_renderer_module.o3d.io.read_image(
+            str(tmp_path / f"frame_{index:05d}.png")
+        )
+        assert_array_equal(np.asarray(saved), np.full((2, 4, 3), index))
 
-    assert update_scene.call_count == 2
-    vis.destroy_window.assert_called_once_with()
+
+@pytest.mark.parametrize(
+    "timestamps,speed,every_n",
+    [
+        ([0, 0], 1, 1),
+        ([0, float("nan")], 1, 1),
+        ([0, 1], 0, 1),
+        ([0, 1], 1, 0),
+        ([0, 1], 1, 1.5),
+    ],
+)
+def test_open3d_rejects_invalid_export_timing(timestamps, speed, every_n, tmp_path):
+    from types import SimpleNamespace
+
+    from soromox.rendering.open3d_renderer import RecordingConfig
+
+    renderer = Open3DRenderer(_AnimatingSpatialRobot())
+    with pytest.raises(ValueError):
+        renderer._export_sequence(
+            SimpleNamespace(ts=np.array(timestamps), num_frames=len(timestamps)),
+            RecordingConfig(str(tmp_path), every_n=every_n),
+            speed,
+            None,
+            None,
+        )
+
+
+def test_open3d_frame_keeps_batch_dimension(monkeypatch):
+    from contextlib import nullcontext
+
+    renderer = Open3DRenderer(_AnimatingSpatialRobot())
+    prepare = Mock()
+    monkeypatch.setattr(renderer, "_prepare_scene_data", prepare)
+    monkeypatch.setattr(renderer, "_modern_session", lambda *args: nullcontext(None))
+    monkeypatch.setattr(
+        renderer, "_render_modern_frame", Mock(return_value=np.zeros((2, 4, 3)))
+    )
+    renderer.render_frame(np.zeros((5, 3)))
+    assert prepare.call_args.kwargs["q_ts"].shape == (5, 1, 3)
 
 
 def test_open3d_quit_callback_requests_close_without_destroying_window():
@@ -818,3 +932,78 @@ def test_open3d_quit_callback_requests_close_without_destroying_window():
     assert state["playing"] is False
     assert vis.close.call_count == 2
     vis.destroy_window.assert_not_called()
+
+
+def test_open3d_refuses_unpatched_mac_capture_before_creating_context(monkeypatch):
+    renderer = Open3DRenderer(_AnimatingSpatialRobot())
+    monkeypatch.setattr(open3d_renderer_module.sys, "platform", "darwin")
+    monkeypatch.setattr(open3d_renderer_module.o3d, "__version__", "0.19.0+1a9eb99")
+    factory = Mock()
+    monkeypatch.setattr(
+        open3d_renderer_module.o3d.visualization.rendering, "OffscreenRenderer", factory
+    )
+    with (
+        pytest.raises(RuntimeError, match="Metal readback fix"),
+        renderer._modern_session(Mock(), None),
+    ):
+        pytest.fail("An unpatched build must never attempt native capture")
+    factory.assert_not_called()
+
+
+def test_open3d_preview_sets_supported_smooth_shading(monkeypatch):
+    renderer = Open3DRenderer(_AnimatingSpatialRobot())
+    vis = Mock()
+    monkeypatch.setattr(
+        open3d_renderer_module.o3d.visualization,
+        "VisualizerWithKeyCallback",
+        Mock(return_value=vis),
+    )
+    renderer._create_visualizer("test")
+    assert (
+        vis.get_render_option.return_value.mesh_shade_option
+        == open3d_renderer_module.o3d.visualization.MeshShadeOption.Color
+    )
+
+
+def test_open3d_show_uses_modern_scene_with_single_frame_batch(monkeypatch):
+    import warnings
+
+    renderer = Open3DRenderer(_AnimatingSpatialRobot())
+    prepare = Mock()
+    viewer = Mock()
+    legacy = Mock()
+    monkeypatch.setattr(renderer, "_prepare_scene_data", prepare)
+    monkeypatch.setattr(renderer, "_run_modern_viewer", viewer)
+    monkeypatch.setattr(renderer, "_run_viewer", legacy)
+    with warnings.catch_warnings(record=True) as caught:
+        renderer.show(np.zeros((5, 3)))
+    assert prepare.call_args.kwargs["q_ts"].shape == (5, 1, 3)
+    assert not caught
+    viewer.assert_called_once()
+    legacy.assert_not_called()
+
+
+@pytest.mark.parametrize("interrupt", [False, True])
+def test_open3d_modern_viewer_closes_native_window_once(monkeypatch, interrupt):
+    """Normal closure and interrupted loops must not reuse destroyed GUI handles."""
+    renderer = Open3DRenderer(_AnimatingSpatialRobot())
+    app, window, widget = Mock(), Mock(), Mock()
+    monkeypatch.setattr(
+        renderer, "_create_modern_window", Mock(return_value=(app, window, widget))
+    )
+
+    def close_once():
+        """Simulate the native close callback before invalidating window handles."""
+        window.set_on_close.call_args.args[0]()
+        window.close.side_effect = AssertionError("Native window already destroyed")
+        return False
+
+    window.close.side_effect = close_once
+    app.run_one_tick.side_effect = KeyboardInterrupt if interrupt else window.close
+    if interrupt:
+        with pytest.raises(KeyboardInterrupt):
+            renderer._run_modern_viewer(Mock(), None, None)
+    else:
+        renderer._run_modern_viewer(Mock(), None, None)
+    window.close.assert_called_once()
+    assert not widget.mock_calls

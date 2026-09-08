@@ -25,7 +25,7 @@
     - **NumPy**
 
 !!! warning "Python Version Compatibility"
-    - **Open3D Rendering**: Open3D rendering is currently not compatible with Python 3.13+
+    - **Open3D Rendering**: Open3D development builds support Python 3.12, 3.13 and 3.14; rendering is tested on Apple Silicon with a patched source build.
     - **Python 3.14 on Windows**: There may currently exist an incompatibility of Python 3.14 on Windows with the package
 
 ---
@@ -100,7 +100,19 @@ pip install soromox[rendering]
     encoding when FFmpeg is unavailable.
 
 !!! note "Open3D Compatibility"
-    Open3D rendering is currently not compatible with Python 3.13+. If you need 3D visualization, please use Python 3.12 or earlier, or use the `viser` renderer instead.
+    This checkout follows Open3D `main`. The lockfile records the resolved build.
+    On macOS, `uv sync --extra rendering` builds the source with a Metal image
+    readback fix. Install Xcode with its Metal Toolchain and Homebrew `cmake`, `ninja`,
+    `openblas`, `glslang` and `spirv-cross` first; the first
+    build takes time and disk space. See the
+    [build instructions](https://github.com/tud-phi/soromox/tree/main/tools/open3d)
+    for macOS, Linux and Windows installation, graphics drivers and optional source
+    builds. Image export, video recording and modern static windows are tested on
+    Apple Silicon with Python 3.12, 3.13 and 3.14. Linux and Windows use official
+    development wheels; native rendering on those platforms has not been verified
+    in this checkout. For a source checkout, use `uv sync --extra rendering` to
+    select these dependencies; plain `pip install soromox[rendering]` uses PyPI.
+    The build instructions include explicit `pip` commands for development wheels.
 
 ### 📚 Examples Dependencies
 

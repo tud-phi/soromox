@@ -9,15 +9,19 @@ Open3D's Filament renderer supplies lighting, shadows and ambient occlusion.
 """
 
 import argparse
-import sys
 from pathlib import Path
 
 import jax
-import jax.numpy as jnp
 import numpy as np
 import open3d as o3d
 
-from soromox.rendering import evaluate_cross_sections, loft_cross_sections
+from soromox.rendering import (
+    BackboneColorConfig,
+    CameraConfig,
+    Open3DRenderConfig,
+    Open3DRenderer,
+    RendererColorConfig,
+)
 from soromox.systems import (
     GVS,
     GVSSegment,
@@ -40,7 +44,12 @@ PALETTE = [
 
 
 def make_tentacle():
-    """Two tapered GVS links with the Section Va external dimensions (metres)."""
+    """Construct two tapered GVS links with the Section Va external dimensions.
+
+    Returns:
+        Upright GVS tentacle with two fixed joints and constant six-component
+        strain coordinates per link. Lengths and radii are specified in metres.
+    """
     links = [
         LinkSpec.circular(
             length=length,
@@ -73,110 +82,40 @@ def make_tentacle():
     )
 
 
-def tentacle_mesh(robot, q, offset):
-    """Use the shared cross-section loft, preserving taper and material frames."""
-    # Include the link junction exactly; the external radius is continuous here.
-    stations = np.r_[np.linspace(0, 0.305, 125), np.linspace(0.305, 0.36, 30)[1:]]
-    transforms = np.asarray(
-        robot.forward_kinematics_abscissa_batched(jnp.asarray(q), jnp.asarray(stations))
-    )
-    sections = evaluate_cross_sections(robot, q, stations)
-    mesh = o3d.geometry.TriangleMesh()
-    for index in range(len(stations) - 1):
-        vertices, faces = loft_cross_sections(
-            transforms[index, :3, 3],
-            transforms[index + 1, :3, 3],
-            transforms[index, :3, :3],
-            transforms[index + 1, :3, :3],
-            sections[index],
-            sections[index + 1],
-            64,
-            cap_start=index == 0,
-            cap_end=index == len(stations) - 2,
-        )
-        mesh += o3d.geometry.TriangleMesh(
-            o3d.utility.Vector3dVector(vertices),
-            o3d.utility.Vector3iVector(faces),
-        )
-    mesh.remove_duplicated_vertices()
-    mesh.compute_vertex_normals()
-    mesh.translate(offset)
-    return mesh
-
-
-def material(color, roughness=0.72):
-    mat = o3d.visualization.rendering.MaterialRecord()
-    mat.shader = "defaultLit"
-    mat.base_color = [*color, 1.0]
-    mat.base_roughness = roughness
-    mat.base_metallic = 0.0
-    mat.base_reflectance = 0.35
-    return mat
-
-
-def build_scene(scene, count):
-    robot = make_tentacle()
-    # Curvatures in 1/m; no extension or shear. Each row gives two link strains.
-    poses = [
+POSES = np.array(
+    [
         [0, 0.6, 2.2, 0, 0, 0, 0, -1.0, -4.5, 0, 0, 0],
         [0, -1.0, -3.1, 0, 0, 0, 0, 1.5, 5.0, 0, 0, 0],
         [0, 0.5, 3.6, 0, 0, 0, 0, -1.5, -7.5, 0, 0, 0],
         [0, -0.8, -2.0, 0, 0, 0, 0, 1.0, -5.0, 0, 0, 0],
         [0, 0.7, 2.8, 0, 0, 0, 0, -1.0, 5.0, 0, 0, 0],
     ]
-    indices = range(5) if count == 5 else [2]
-    for index in indices:
-        x = (index - 2) * 0.23 if count == 5 else 0.0
-        offset = [x, 0.015 * (index % 2), 0.012]
-        scene.add_geometry(
-            f"tentacle_{index}",
-            tentacle_mesh(robot, poses[index], offset),
-            material(PALETTE[index]),
-        )
-        base = o3d.geometry.TriangleMesh.create_cylinder(
-            radius=0.028, height=0.012, resolution=96
-        )
-        base.compute_vertex_normals()
-        base.translate([offset[0], offset[1], 0.006])
-        scene.add_geometry(f"mount_{index}", base, material((0.16, 0.18, 0.18)))
-
-    # Sweep the floor into a curved studio wall so there is no horizon seam.
-    angles = np.linspace(0, np.pi / 2, 80)
-    profile = [(-3.0, 0.0), (0.5, 0.0)]
-    profile.extend(zip(0.5 + 0.6 * np.sin(angles[1:]), 0.6 * (1 - np.cos(angles[1:]))))
-    profile.append((1.1, 3.0))
-    vertices = [[x, y, z] for y, z in profile for x in (-3.0, 3.0)]
-    faces = [
-        face
-        for i in range(len(profile) - 1)
-        for face in ([2 * i, 2 * i + 1, 2 * i + 3], [2 * i, 2 * i + 3, 2 * i + 2])
-    ]
-    floor = o3d.geometry.TriangleMesh(
-        o3d.utility.Vector3dVector(vertices), o3d.utility.Vector3iVector(faces)
-    )
-    floor.compute_vertex_normals()
-    scene.add_geometry("floor", floor, material((0.48, 0.48, 0.48), 1.0))
-    scene.set_background([0.48, 0.48, 0.48, 1.0])
-    scene.show_skybox(False)
-    scene.set_lighting(scene.SOFT_SHADOWS, [-0.5, 0.3, -1.0])
-    scene.scene.set_sun_light([-0.25, 0.15, -1.0], [1.0, 0.97, 0.94], 60000)
-    scene.scene.enable_sun_light(True)
-    scene.scene.set_indirect_light_intensity(60000)
-    scene.scene.add_point_light(
-        "softbox_fill", [1.0, 0.98, 0.96], [-0.3, -0.4, 1.1], 35000, 4.0, False
-    )
-    scene.view.set_post_processing(True)
-    scene.view.set_ambient_occlusion(True)
-    scene.view.set_antialiasing(True)
-    scene.view.set_shadowing(True, o3d.visualization.rendering.View.ShadowType.VSM)
+)
 
 
 def main():
+    """Parse command-line options and export the prescribed studio scene.
+
+    Returns:
+        None. Writes a PNG, optionally exports an MP4, and optionally opens a
+        modern static viewer. Output paths and dimensions come from CLI options.
+
+    Raises:
+        RuntimeError: Open3D capture, image writing or video encoding fails.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--output",
         type=Path,
         default=Path(__file__).resolve().parent / "figures" / "open3d_studio.png",
+    )
+    parser.add_argument(
+        "--video-output", type=Path, help="Also export a short prescribed motion as MP4"
+    )
+    parser.add_argument(
+        "--interactive",
+        action="store_true",
+        help="Open the modern static viewer after exporting",
     )
     parser.add_argument("--count", type=int, choices=(1, 5), default=5)
     parser.add_argument("--width", type=int, default=1920)
@@ -184,41 +123,56 @@ def main():
     args = parser.parse_args()
     if args.width <= 0 or args.height <= 0:
         parser.error("width and height must be positive")
-    # macOS wheels lack EGL headless rendering; use a native graphics context.
-    window = None
-    if sys.platform == "darwin":
-        app = o3d.visualization.gui.Application.instance
-        app.initialize()
-        window = app.create_window("SoRoMoX studio", args.width, args.height)
-        scene = o3d.visualization.rendering.Open3DScene(window.renderer)
-    else:
-        renderer = o3d.visualization.rendering.OffscreenRenderer(
-            args.width, args.height
-        )
-        scene = renderer.scene
-    build_scene(scene, args.count)
+    indices = np.arange(5) if args.count == 5 else np.array([2])
+    poses = POSES[indices]
+    offsets = np.array(
+        [
+            [(index - 2) * 0.23 if args.count == 5 else 0.0, 0.015 * (index % 2), 0.012]
+            for index in indices
+        ]
+    )
+    colors = RendererColorConfig(
+        backbone=BackboneColorConfig(robot_colors=np.array(PALETTE)[indices]),
+        base_plate_color=(0.16, 0.18, 0.18),
+    )
+    renderer = Open3DRenderer(
+        make_tentacle(),
+        width=args.width,
+        height=args.height,
+        num_points=155,
+        cross_section_resolution=48,
+        base_plate_radius_scale=0.028 / 0.01541,
+        base_plate_thickness=0.012,
+        color_config=colors,
+        render_config=Open3DRenderConfig.studio(),
+    )
     distance = 1.15 if args.count == 5 else 0.70
-    scene.camera.look_at(
-        [0, 0, 0.16], [0.12 * distance, -distance, 0.16 + 0.40 * distance], [0, 0, 1]
+    camera = CameraConfig(
+        fov=35.0,
+        look_at=(0, 0, 0.16),
+        position=(0.12 * distance, -distance, 0.16 + 0.40 * distance),
     )
-    scene.camera.set_projection(
-        35.0,
-        args.width / args.height,
-        0.01,
-        250.0,
-        o3d.visualization.rendering.Camera.FovType.Vertical,
-    )
+    image = renderer.render_frame(poses, base_offsets=offsets, camera_config=camera)
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    if window is not None:
-        image = app.render_to_image(scene, args.width, args.height)
-    else:
-        image = renderer.render_to_image()
-    if not o3d.io.write_image(str(args.output), image):
+    if not o3d.io.write_image(str(args.output), o3d.geometry.Image(image)):
         raise RuntimeError(f"Could not save {args.output}")
     print(f"Saved {args.output.resolve()}")
-    if window is not None:
-        window.close()
-        app.run_one_tick()
+    if args.video_output is not None:
+        ts = np.arange(60) / 30.0
+        # Prescribed motion, with the first frame equal to the still-image poses.
+        trajectory = (
+            poses[:, None, :] * (1 + 0.15 * np.sin(2 * np.pi * ts))[None, :, None]
+        )
+        renderer.render_sequence(
+            ts,
+            trajectory,
+            base_offsets=offsets,
+            camera_config=camera,
+            record_path=str(args.video_output),
+        )
+        print(f"Saved {args.video_output.resolve()}")
+    if args.interactive:
+        renderer.show(poses, base_offsets=offsets, camera_config=camera)
 
 
 if __name__ == "__main__":

@@ -103,16 +103,35 @@ Spatial configurations use a 3D axes view controlled by `CameraConfig`.
 
 `Open3DRenderer` provides interactive spatial visualization with mesh geometry,
 camera controls, playback, screenshots, and offline frame or video capture.
-Open3D currently requires Python 3.12 or earlier because Python 3.13 wheels are
-not yet available.
+Use the [Open3D development dependency](../../installation.md);
+macOS needs the source build with the Metal readback patch.
+
+`render_frame()` and `render_sequence(..., record_path=...)` use the modern
+Filament renderer. Recordings export selected frames synchronously and return;
+interactive playback controls do not affect the export. Meshes and actuator
+lines are rebuilt for each exported frame, with a fixed camera fitted to the
+whole trajectory.
+
+`show()` displays a fixed configuration with the modern GUI and the same
+materials, lighting and backdrop as exports. It supports mouse camera controls,
+R to reset the camera, C/L to save/restore it, S to save a modern snapshot, V to
+print the camera, and Q/Esc to close the window.
+
+Sequences without `record_path` use the legacy viewer for efficient geometry
+updates. A warning explains that materials, lighting, transparency, shadows and
+ambient occlusion can differ from modern rendering. Its keyboard snapshots
+capture the animated preview appearance.
 
 Set `backbone_style="discrete"` for per-point markers or `"swept"` for a
 material-frame surface lofted from the robot's cross-section contours.
-Multi-robot sequence scenes automatically merge each robot's backbone
+Multi-robot animated previews automatically merge each robot's backbone
 primitives to reduce Open3D registrations; `merge_backbone_meshes` can force or
 disable this behavior when measuring a particular workload.
 
 ### Keyboard Controls
+
+Playback and frame-stepping shortcuts apply to animated previews. Camera,
+snapshot and close shortcuts also work in `show()`.
 
 | Key | Action |
 | --- | --- |

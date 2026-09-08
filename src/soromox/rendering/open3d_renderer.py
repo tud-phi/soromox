@@ -21,10 +21,12 @@ Controls:
 from __future__ import annotations
 
 import copy
-import os
+import sys
 import time
 import warnings
+from contextlib import contextmanager
 from dataclasses import dataclass
+from pathlib import Path
 
 import jax
 import jax.numpy as jnp
@@ -52,6 +54,7 @@ from soromox.rendering.cross_sections import (
     loft_cross_section_contours,
     loft_cross_sections,
 )
+from soromox.rendering.open3d_render_config import Open3DRenderConfig
 from soromox.rendering.video_encoding import FFmpegVideoWriter, VideoEncodingConfig
 from soromox.systems.soft_robot import SoftRobot
 
@@ -743,8 +746,10 @@ class SceneHandles:
 class Open3DRenderer(BaseSoftRobotRenderer):
     """Open3D visualization for any continuum soft robot.
 
-    Provides interactive 3D visualization with spheres for backbone,
-    optional actuator rendering, and keyboard controls.
+    Modern static views and image/video exports share materials, lighting and
+    scene settings.
+    Interactive playback uses the legacy visualizer for efficient mesh updates
+    and warns about differences in shading.
 
     Example:
         ```python
@@ -775,6 +780,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         actuator_line_width: float = 2.0,
         camera_margin_ratio: float = 0.05,
         merge_backbone_meshes: bool | None = None,
+        render_config: Open3DRenderConfig | None = None,
     ):
         """Initialize Open3D renderer.
 
@@ -804,10 +810,12 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                 primitives into one dynamic mesh. ``None`` selects merging
                 automatically for multi-robot scenes while retaining the
                 lower per-frame update cost of unmerged single-robot scenes.
+            render_config: Modern material, light, shadow and backdrop settings.
+                Animated previews approximate the scene with legacy shading.
         """
         if not OPEN3D_AVAILABLE:
             raise ImportError(
-                "Open3D is not installed. Install with: pip install open3d"
+                "Open3D is not installed. Install the rendering dependencies; see tools/open3d/README.md"
             )
 
         super().__init__(
@@ -821,6 +829,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             ground_plane_size=ground_plane_size,
         )
 
+        self.render_config = render_config or Open3DRenderConfig()
         self.backbone_style = backbone_style
         self._backbone_mode = self._resolve_backbone_mode(backbone_style)
         self._sweep_layout = None
@@ -920,6 +929,9 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             float(rgba[2]),
             float(rgba[3]),
         )
+        mat.base_roughness = self.render_config.roughness
+        mat.base_metallic = self.render_config.metallic
+        mat.base_reflectance = self.render_config.reflectance
         return mat
 
     def _blend_with_background(
@@ -1286,7 +1298,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             sections = self._cross_sections_for_points(q_frame, s_ps)
             base_color_rgba = ensure_rgba(np.asarray(cfg.base_plate_color))[0]
             base_axis = material_frames[0, :, 0]
-            if self.show_ground_plane:
+            if self.show_ground_plane and not self.render_config.studio_backdrop:
                 ground_size = self._resolve_ground_plane_size()
                 ground_plane, ground_grid = _make_ground_plane(
                     curve[0] - self.base_plate_thickness * base_axis,
@@ -1457,6 +1469,328 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                 scene.add_geometry(f"dynamic_{dyn_idx}", mesh, mat_for(rgb))
 
     # -------------------------------------------------------------------------
+    def _scene_bounds(self, scene_data: SceneData) -> tuple[np.ndarray, float]:
+        """Compute framing bounds from robot trajectories and helper spheres.
+
+        Ground planes and studio scenery do not contribute to camera framing.
+        Padding covers the base plates and the cross-sections evaluated at the
+        first robot configuration. Sphere trajectories contribute their complete
+        motion and radii.
+
+        Args:
+            scene_data: Prepared robot trajectories and optional helper spheres.
+
+        Returns:
+            Tuple containing the world-space bounding-box center, shape ``(3,)``,
+            and its largest side length in metres, with a minimum of ``1e-3``.
+        """
+        points = scene_data.curves.reshape(-1, 3)
+        sections = self._cross_sections_for_points(
+            scene_data.q_ts[0, 0], np.asarray(self._backbone_abscissae)
+        )
+        padding = max(
+            self.base_plate_thickness,
+            max(float(np.max(section.dimensions)) for section in sections)
+            * max(1.0, self.base_plate_radius_scale),
+        )
+        lower, upper = points.min(axis=0) - padding, points.max(axis=0) + padding
+        for spheres in (scene_data.static_spheres, scene_data.dynamic_spheres):
+            if spheres is None:
+                continue
+            centers = (
+                spheres.centers
+                if isinstance(spheres, SphereSet)
+                else spheres.trajectories.reshape(-1, 3)
+            )
+            if centers.size:
+                radius = float(np.max(spheres.radii))
+                lower = np.minimum(lower, centers.min(axis=0) - radius)
+                upper = np.maximum(upper, centers.max(axis=0) + radius)
+        return (lower + upper) / 2, max(float(np.max(upper - lower)), 1e-3)
+
+    def _studio_backdrop(self, scene_data: SceneData):
+        """Construct the shared studio floor and curved background wall.
+
+        The backdrop is centered on the scene in world X/Y, uses world Z as up,
+        and starts at ``render_config.floor_z``. Its dimensions scale with the
+        complete trajectory bounds, so its geometry is fixed during export.
+
+        Args:
+            scene_data: Prepared trajectories used to size and place the backdrop.
+
+        Returns:
+            Open3D triangle mesh with vertex normals and the configured backdrop
+            color. The mesh has not been added to a rendering scene.
+        """
+        center, extent = self._scene_bounds(scene_data)
+        scale = extent / 1.2
+        angles = np.linspace(0, np.pi / 2, 80)
+        profile = [(-3.0, 0.0), (0.5, 0.0)]
+        profile.extend(
+            zip(0.5 + 0.6 * np.sin(angles[1:]), 0.6 * (1 - np.cos(angles[1:])))
+        )
+        profile.append((1.1, 3.0))
+        vertices = np.array([[x, y, z] for y, z in profile for x in (-3.0, 3.0)])
+        vertices *= scale
+        vertices += [center[0], center[1], self.render_config.floor_z]
+        faces = [
+            face
+            for i in range(len(profile) - 1)
+            for face in ([2 * i, 2 * i + 1, 2 * i + 3], [2 * i, 2 * i + 3, 2 * i + 2])
+        ]
+        mesh = o3d.geometry.TriangleMesh(
+            o3d.utility.Vector3dVector(vertices), o3d.utility.Vector3iVector(faces)
+        )
+        mesh.compute_vertex_normals()
+        mesh.paint_uniform_color(self.render_config.backdrop_color)
+        return mesh
+
+    def _configure_modern_scene(self, scene, scene_data: SceneData) -> None:
+        """Apply background, illumination and post-processing to a modern scene.
+
+        The optional fill light is positioned and scaled from the trajectory
+        bounds. This method configures appearance without adding robot geometry
+        or changing the camera.
+
+        Args:
+            scene: Open3D ``Open3DScene`` owned by a GUI widget or offscreen renderer.
+            scene_data: Prepared trajectories used to size and place the fill light.
+
+        Returns:
+            None. The supplied scene is modified in place.
+        """
+        cfg = self.render_config
+        background = (
+            cfg.backdrop_color if cfg.studio_backdrop else self.background_color
+        )
+        scene.set_background(np.array([*background, 1.0]))
+        scene.show_skybox(False)
+        scene.set_lighting(scene.SOFT_SHADOWS, cfg.sun_direction)
+        scene.scene.set_sun_light(cfg.sun_direction, cfg.sun_color, cfg.sun_intensity)
+        scene.scene.enable_sun_light(cfg.sun_intensity > 0)
+        scene.scene.set_indirect_light_intensity(cfg.indirect_light_intensity)
+        scene.view.set_post_processing(True)
+        scene.view.set_antialiasing(True)
+        scene.view.set_ambient_occlusion(cfg.ambient_occlusion)
+        scene.view.set_shadowing(
+            cfg.shadows, o3d.visualization.rendering.View.ShadowType.VSM
+        )
+        if cfg.fill_intensity:
+            center, extent = self._scene_bounds(scene_data)
+            scale = extent / 1.2
+            position = np.array([center[0], center[1], cfg.floor_z]) + scale * np.array(
+                [-0.3, -0.4, 1.1]
+            )
+            scene.scene.add_point_light(
+                "studio_fill",
+                [1.0, 0.98, 0.96],
+                position,
+                cfg.fill_intensity * scale**2,
+                4.0 * scale,
+                False,
+            )
+
+    @staticmethod
+    def _require_modern_capture_support() -> None:
+        """Reject macOS builds known to abort during modern image capture.
+
+        Returns:
+            None when modern rendering and snapshot capture can be initialized.
+
+        Raises:
+            RuntimeError: The macOS Open3D build lacks the Metal readback fix.
+                The local build suffix identifies the validated patched build.
+        """
+        if sys.platform == "darwin" and not o3d.__version__.endswith(".soromox1"):
+            raise RuntimeError(
+                "Modern Open3D rendering on macOS requires the source build "
+                "with the Metal readback fix. "
+                "The unpatched development wheel can abort during capture. "
+                "See tools/open3d/README.md and run uv sync --extra rendering."
+            )
+
+    @contextmanager
+    def _modern_session(
+        self, scene_data: SceneData, camera_config: CameraConfig | None
+    ):
+        """Create a modern offscreen context with a fixed export camera.
+
+        Camera fitting considers the complete trajectory and helper spheres.
+        Explicit camera coordinates override automatic placement. The context
+        owns the native renderer for the duration of the export.
+
+        Args:
+            scene_data: Prepared geometry and trajectories for camera fitting.
+            camera_config: Camera placement and field of view, or ``None`` to
+                use ``CameraConfig`` defaults.
+
+        Yields:
+            Open3D ``OffscreenRenderer`` configured for ``width`` by ``height``
+            RGB capture. Frame geometry is populated separately.
+
+        Raises:
+            RuntimeError: The macOS installation lacks the required readback fix.
+        """
+        self._require_modern_capture_support()
+        render = o3d.visualization.rendering.OffscreenRenderer(self.width, self.height)
+        try:
+            self._configure_modern_scene(render.scene, scene_data)
+            center, extent = self._scene_bounds(scene_data)
+            config = camera_config or CameraConfig()
+            position, target = config.compute_auto_position(
+                center, extent, reference_transform=np.asarray(self.base_transform)
+            )
+            # The scenery must fit the clipping volume but must not control camera fitting.
+            distance = float(np.linalg.norm(position - target))
+            render.setup_camera(
+                config.fov,
+                target,
+                position,
+                config.compute_up(),
+                max(1e-5, extent * 1e-3),
+                distance + 20 * extent,
+            )
+            yield render
+        finally:
+            del render
+
+    def _populate_modern_scene(self, scene, scene_data, frame_idx, color_config=None):
+        """Populate one frame's modern geometry and studio backdrop.
+
+        Args:
+            scene: Modern Open3D scene to receive the geometry.
+            scene_data: Prepared robot and helper trajectories.
+            frame_idx: Zero-based trajectory frame to display.
+            color_config: Color override, or ``None`` for renderer defaults.
+
+        Returns:
+            None. Replaces scene geometry while preserving lights and camera.
+        """
+        self._populate_rendering_scene(
+            scene, scene_data, frame_idx, color_config=color_config
+        )
+        if self.render_config.studio_backdrop:
+            material = self._make_mesh_material(self.render_config.backdrop_color)
+            material.base_roughness = 1.0
+            scene.add_geometry(
+                "studio_backdrop", self._studio_backdrop(scene_data), material
+            )
+
+    def _render_modern_frame(self, render, scene_data, frame_idx, color_config=None):
+        """Render one prepared frame and copy its RGB pixels.
+
+        Args:
+            render: Configured Open3D offscreen renderer.
+            scene_data: Prepared robot and helper trajectories.
+            frame_idx: Zero-based frame to render.
+            color_config: Color override, or ``None`` for renderer defaults.
+
+        Returns:
+            Independent ``uint8`` RGB array of shape ``(height, width, 3)``.
+
+        Raises:
+            RuntimeError: Open3D returns an unexpected image shape.
+        """
+        self._populate_modern_scene(render.scene, scene_data, frame_idx, color_config)
+        # Copy before the native image/context is released.
+        frame = np.asarray(render.render_to_image())
+        if (
+            frame.ndim != 3
+            or frame.shape[:2] != (self.height, self.width)
+            or frame.shape[2] not in (3, 4)
+        ):
+            raise RuntimeError(f"Open3D returned an invalid image shape: {frame.shape}")
+        frame = frame[:, :, :3]
+        if frame.dtype != np.uint8:
+            frame = np.clip(frame * 255.0, 0, 255).astype(np.uint8)
+        return frame.copy()
+
+    def _export_sequence(
+        self, scene_data, record_cfg, playback_speed, camera_config, color_config
+    ):
+        """Export selected trajectory frames as a video or PNG sequence.
+
+        Frames are rendered in ascending index order using one graphics context
+        and a fixed camera. Video FPS is ``playback_speed / (median_dt * every_n)``;
+        a single-frame trajectory uses a nominal 30 Hz interval. Nonuniform
+        timestamps produce a warning because constant-FPS video approximates
+        their timing. Video output requires FFmpeg.
+
+        Args:
+            scene_data: Prepared trajectories with finite, increasing timestamps.
+            record_cfg: Output path, image prefix, frame stride and encoder options.
+                Video extensions select encoding; other paths are PNG directories.
+            playback_speed: Positive multiplier for the output video's frame rate.
+            camera_config: Export camera configuration, or ``None`` for defaults.
+            color_config: Color override, or ``None`` for the renderer's colors.
+
+        Returns:
+            None. Creates the output directory or video and closes the encoder
+            before returning, including when frame rendering fails.
+
+        Raises:
+            ValueError: Timestamps, playback speed or frame stride are invalid.
+            RuntimeError: Native capture, PNG writing or video finalization fails.
+            FileNotFoundError: The FFmpeg executable is unavailable for video export.
+        """
+        ts = np.asarray(scene_data.ts)
+        if not len(ts) or not np.all(np.isfinite(ts)) or np.any(np.diff(ts) <= 0):
+            raise ValueError("Export timestamps must be finite and strictly increasing")
+        if not np.isfinite(playback_speed) or playback_speed <= 0:
+            raise ValueError("playback_speed must be finite and positive")
+        if (
+            isinstance(record_cfg.every_n, bool)
+            or not isinstance(record_cfg.every_n, (int, np.integer))
+            or record_cfg.every_n < 1
+        ):
+            raise ValueError("record_every_n must be a positive integer")
+        path = Path(record_cfg.path)
+        indices = range(0, scene_data.num_frames, record_cfg.every_n)
+        video = path.suffix.lower() in {".mp4", ".mov", ".avi", ".mkv"}
+        dt = float(np.median(np.diff(ts))) if len(ts) > 1 else 1 / 30
+        if (
+            video
+            and len(ts) > 2
+            and not np.allclose(np.diff(ts), dt, rtol=1e-4, atol=1e-9)
+        ):
+            warnings.warn(
+                "Open3D video uses a constant frame rate derived from the median timestamp interval; resample nonuniform trajectories for exact timing.",
+                UserWarning,
+                stacklevel=3,
+            )
+        writer = None
+        try:
+            with self._modern_session(scene_data, camera_config) as render:
+                if video:
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    writer = FFmpegVideoWriter(
+                        str(path),
+                        self.width,
+                        self.height,
+                        playback_speed / (dt * record_cfg.every_n),
+                        input_pix_fmt="rgb24",
+                        video_config=record_cfg.video_config,
+                    )
+                else:
+                    path.mkdir(parents=True, exist_ok=True)
+                for index in indices:
+                    frame = self._render_modern_frame(
+                        render, scene_data, index, color_config
+                    )
+                    if writer is not None:
+                        writer.write(frame)
+                    else:
+                        filename = path / f"{record_cfg.prefix}{index:05d}.png"
+                        if not o3d.io.write_image(
+                            str(filename), o3d.geometry.Image(frame)
+                        ):
+                            raise RuntimeError(f"Could not save {filename}")
+        finally:
+            if writer is not None:
+                writer.close()
+        if writer is not None and writer.proc.returncode != 0:
+            raise RuntimeError(f"FFmpeg failed to finish {path}: {writer.stderr_log}")
+
     # Public API
     # -------------------------------------------------------------------------
 
@@ -1476,7 +1810,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         dynamic_spheres_radii: Array | None = None,
         dynamics_spheres_colors: Array | None = None,
     ) -> np.ndarray:
-        """Render a single configuration headlessly and return an RGB array.
+        """Render a single configuration with the modern renderer and return RGB.
 
         Args:
             q: Robot configuration of shape (DOF,) or batched (N, DOF).
@@ -1497,7 +1831,9 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         """
         scene_data = self._prepare_scene_data(
             ts=np.array([0.0], dtype=np.float64),
-            q_ts=jnp.asarray(q),
+            q_ts=jnp.asarray(q)[:, None, :]
+            if jnp.asarray(q).ndim == 2
+            else jnp.asarray(q),
             base_offsets=base_offsets,
             color_config=color_config,
             render_actuators=render_actuators,
@@ -1510,35 +1846,8 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             dynamics_spheres_colors=dynamics_spheres_colors,
         )
 
-        render = o3d.visualization.rendering.OffscreenRenderer(self.width, self.height)
-        render.scene.set_background(np.array([*self.background_color, 1.0]))
-
-        self._populate_rendering_scene(
-            render.scene, scene_data, frame_idx=0, color_config=color_config
-        )
-
-        bbox = render.scene.bounding_box
-        center = bbox.get_center()
-        extent = bbox.get_max_extent()
-
-        # Use camera config if provided, otherwise use defaults
-        config = camera_config or CameraConfig()
-        camera_pos, look_at = config.compute_auto_position(
-            center,
-            extent,
-            reference_transform=np.asarray(self.base_transform),
-        )
-        up = config.compute_up()
-
-        render.setup_camera(config.fov, look_at, camera_pos, list(up))
-
-        img = render.render_to_image()
-        frame = np.asarray(img)
-        if frame.ndim == 3 and frame.shape[2] == 4:
-            frame = frame[:, :, :3]
-        if frame.dtype != np.uint8:
-            frame = np.clip(frame * 255.0, 0.0, 255.0).astype(np.uint8)
-        return frame
+        with self._modern_session(scene_data, camera_config) as render:
+            return self._render_modern_frame(render, scene_data, 0, color_config)
 
     def show(
         self,
@@ -1556,7 +1865,10 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         dynamic_spheres_radii: Array | None = None,
         dynamics_spheres_colors: Array | None = None,
     ) -> None:
-        """Display a single frame interactively with full geometry options.
+        """Display a fixed configuration with modern materials, lighting and shadows.
+
+        Mouse controls orbit, pan and zoom. R resets the camera; C/L save and
+        restore it; S saves a modern snapshot; V prints the view; Q/Esc closes.
 
         Args:
             q: Robot configuration of shape (DOF,) or batched (N, DOF).
@@ -1577,15 +1889,13 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         """
         ts = np.array([0.0], dtype=np.float64)
         q_ts = np.asarray(q)
-        self.render_sequence(
+        if q_ts.ndim == 2:
+            q_ts = q_ts[:, None, :]
+        scene_data = self._prepare_scene_data(
             ts=ts,
             q_ts=q_ts,
-            playback_speed=1.0,
-            loop=False,
-            record_path=None,
             base_offsets=base_offsets,
             color_config=color_config,
-            camera_config=camera_config,
             render_actuators=render_actuators,
             actuator_inputs=actuator_inputs,
             static_spheres_positions=static_spheres_positions,
@@ -1595,6 +1905,199 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             dynamic_spheres_radii=dynamic_spheres_radii,
             dynamics_spheres_colors=dynamics_spheres_colors,
         )
+        self._run_modern_viewer(scene_data, camera_config, color_config)
+
+    def _create_modern_window(self, scene_data, camera_config, color_config):
+        """Create a modern window for one fixed robot configuration.
+
+        Geometry, materials, lights and backdrop are shared with image/video
+        exports. Mouse interaction changes the view. Keyboard callbacks support
+        camera reset/save/restore, RGB snapshots, camera reporting and closure.
+        Resizing updates the camera aspect ratio without resetting its pose.
+
+        Args:
+            scene_data: Prepared scene; frame zero is displayed for every robot.
+            camera_config: Initial camera configuration, or ``None`` for defaults.
+            color_config: Color override, or ``None`` for the renderer's colors.
+
+        Returns:
+            Tuple of the GUI application, window and scene widget. The caller
+            runs the event loop and owns window cleanup. Call on the main thread.
+        """
+        self._require_modern_capture_support()
+        gui = o3d.visualization.gui
+        app = gui.Application.instance
+        app.initialize()
+        window = app.create_window("Robot (Open3D)", self.width, self.height)
+        widget = gui.SceneWidget()
+        widget.scene = o3d.visualization.rendering.Open3DScene(window.renderer)
+        widget.frame = window.content_rect
+        window.add_child(widget)
+        self._configure_modern_scene(widget.scene, scene_data)
+        self._populate_modern_scene(widget.scene, scene_data, 0, color_config)
+        center, extent = self._scene_bounds(scene_data)
+        config = camera_config or CameraConfig()
+        eye, target = config.compute_auto_position(
+            center, extent, reference_transform=np.asarray(self.base_transform)
+        )
+        widget.setup_camera(
+            config.fov,
+            o3d.geometry.AxisAlignedBoundingBox(
+                center - extent / 2, center + extent / 2
+            ),
+            target,
+        )
+        widget.look_at(target, eye, config.compute_up())
+        widget.scene.camera.set_projection(
+            config.fov,
+            self.width / self.height,
+            max(1e-5, extent * 1e-3),
+            float(np.linalg.norm(eye - target)) + 20 * extent,
+            o3d.visualization.rendering.Camera.FovType.Vertical,
+        )
+
+        def capture_camera():
+            """Read the camera pose, orbit pivot and projection for restoration.
+
+            Returns:
+                Dictionary of copied world-space vectors and projection scalars.
+            """
+            camera = widget.scene.camera
+            model = np.asarray(camera.get_model_matrix()).copy()
+            return {
+                "eye": model[:3, 3],
+                "target": model[:3, 3] - model[:3, 2],
+                "up": model[:3, 1],
+                "pivot": np.asarray(widget.center_of_rotation).copy(),
+                "fov": camera.get_field_of_view(),
+                "near": camera.get_near(),
+                "far": camera.get_far(),
+            }
+
+        def restore_camera(state):
+            """Restore a captured view at the widget's current aspect ratio.
+
+            Args:
+                state: Camera dictionary returned by ``capture_camera``.
+
+            Returns:
+                None. Updates camera, orbit pivot and redraw state.
+            """
+            widget.look_at(state["target"], state["eye"], state["up"])
+            widget.center_of_rotation = state["pivot"]
+            widget.scene.camera.set_projection(
+                state["fov"],
+                max(widget.frame.width, 1) / max(widget.frame.height, 1),
+                state["near"],
+                state["far"],
+                o3d.visualization.rendering.Camera.FovType.Vertical,
+            )
+            widget.force_redraw()
+
+        initial = capture_camera()
+        saved = [initial]
+
+        def layout(_):
+            """Fit the scene widget to the resized window's content area.
+
+            Args:
+                _: GUI layout context supplied by Open3D.
+
+            Returns:
+                None. Preserves the current camera pose during resizing.
+            """
+            state = capture_camera()
+            widget.frame = window.content_rect
+            restore_camera(state)
+
+        def save_snapshot(image):
+            """Save the modern capture callback's image to the current directory.
+
+            Args:
+                image: RGB Open3D image delivered by the rendering callback.
+
+            Returns:
+                None. Writes ``frame_00000.png`` or warns if writing fails.
+            """
+            filename = "frame_00000.png"
+            if not o3d.io.write_image(filename, image):
+                warnings.warn(f"Could not save {filename}", UserWarning, stacklevel=2)
+            else:
+                print(f"[Open3D] Saved {filename}")
+
+        def on_key(event):
+            """Handle camera, snapshot and close shortcuts for a static view.
+
+            Args:
+                event: Open3D key event; only key-down events trigger actions.
+
+            Returns:
+                ``True`` for a handled shortcut, otherwise ``False``.
+            """
+            if event.type != gui.KeyEvent.Type.DOWN:
+                return False
+            if event.key in (gui.KeyName.Q, gui.KeyName.ESCAPE):
+                window.close()
+            elif event.key == gui.KeyName.R:
+                restore_camera(initial)
+            elif event.key == gui.KeyName.C:
+                saved[0] = capture_camera()
+            elif event.key == gui.KeyName.L:
+                restore_camera(saved[0])
+            elif event.key == gui.KeyName.S:
+                widget.scene.scene.render_to_image(save_snapshot)
+            elif event.key == gui.KeyName.V:
+                print(f"[Open3D] Camera: {capture_camera()}")
+            else:
+                return False
+            return True
+
+        window.set_on_layout(layout)
+        window.set_on_key(on_key)
+        return app, window, widget
+
+    def _run_modern_viewer(self, scene_data, camera_config, color_config):
+        """Display a fixed modern scene until its window closes.
+
+        Uses Open3D's main-thread event loop while preserving the shared graphics
+        engine for subsequent ``show()`` or export calls in the same process.
+
+        Args:
+            scene_data: Prepared scene whose frame zero is displayed.
+            camera_config: Initial camera settings, or ``None`` for defaults.
+            color_config: Color override, or ``None`` for the renderer's colors.
+
+        Returns:
+            None. Blocks until closure; Open3D releases the window and its scene.
+        """
+        app, window, widget = self._create_modern_window(
+            scene_data, camera_config, color_config
+        )
+        closed = [False]
+
+        def on_close():
+            """Signal that the viewer's event loop should stop.
+
+            Returns:
+                ``True`` to allow Open3D to close the window.
+            """
+            closed[0] = True
+            return True
+
+        window.set_on_close(on_close)
+        print(
+            "Open3D: drag to orbit; R=ResetCam C=CaptureCam L=LoadCam S=Snapshot V=PrintCam Q/Esc=Quit"
+        )
+        try:
+            # run_one_tick keeps the graphics engine usable for later exports or
+            # another show() call in the same Python process.
+            while not closed[0] and app.run_one_tick():
+                pass
+        finally:
+            # Open3D destroys the window and its children when it closes. The
+            # Python handles must not be accessed after that native destruction.
+            if not closed[0]:
+                window.close()
 
     def render_sequence(  # type: ignore[override]
         self,
@@ -1622,7 +2125,16 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         dynamics_spheres_colors: Array | None = None,
         window_name: str = "Robot Animation (Open3D)",
     ) -> None:
-        """Render an animated trajectory interactively or headlessly.
+        """Preview a trajectory, or export it with the modern renderer.
+
+        With ``record_path``, export all selected frames synchronously and return.
+        Without it, open the legacy interactive preview. ``autoplay``, ``loop``,
+        ``window_name`` and ``close_when_recording_done`` affect no exported frames;
+        the latter is retained for existing callers, since export always returns.
+        Video uses constant FPS derived from median timestamp spacing and
+        ``playback_speed``. ``record_every_n`` subsamples images and video, reducing
+        video FPS by the same factor to preserve playback speed.
+
 
         Args:
             ts: Time stamps of shape (T,).
@@ -1631,10 +2143,10 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             autoplay: Start playback immediately. If False, wait for space bar to play.
             loop: Whether to loop the animation when it reaches the end.
             record_path: Optional path to save frames or video (extension determines mode).
-            record_every_n: Save every n-th frame when recording images.
+            record_every_n: Export every n-th frame for both images and video.
             record_prefix: Filename prefix for recorded frames.
             video_config: Optional ffmpeg encoding configuration for video output.
-            close_when_recording_done: Close the viewer after the final recorded frame.
+            close_when_recording_done: Retained for compatibility; export always returns.
             camera_config: Camera configuration (fov, position, look_at, etc.).
                 Note: For interactive viewing, user can adjust camera with mouse.
             base_offsets: Optional base offsets of shape (N, 2/3) for batched layouts.
@@ -1654,7 +2166,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         """
         if not OPEN3D_AVAILABLE:
             raise ImportError(
-                "Open3D is not installed. Install with: pip install open3d"
+                "Open3D is not installed. Install the rendering dependencies; see tools/open3d/README.md"
             )
 
         scene_data = self._prepare_scene_data(
@@ -1677,6 +2189,18 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             every_n=record_every_n,
             video_config=video_config,
             close_when_done=close_when_recording_done,
+        )
+        if record_path is not None:
+            self._export_sequence(
+                scene_data, record_cfg, playback_speed, camera_config, color_config
+            )
+            return
+        warnings.warn(
+            "Open3D interactive preview uses legacy shading for efficient mesh updates. "
+            "Materials, lighting, transparency, shadows, and ambient occlusion may differ "
+            "from modern image/video exports; interactive snapshots capture this preview.",
+            UserWarning,
+            stacklevel=2,
         )
         self._run_viewer(
             scene_data,
@@ -1705,8 +2229,16 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             )
 
         opt = vis.get_render_option()
-        opt.background_color = np.array(self.background_color, dtype=np.float64)
+        opt.background_color = np.array(
+            self.render_config.backdrop_color
+            if self.render_config.studio_backdrop
+            else self.background_color,
+            dtype=np.float64,
+        )
         opt.line_width = self.actuator_line_width
+        opt.light_on = True
+        # Python names the C++ SmoothShade enum member "Color".
+        opt.mesh_shade_option = o3d.visualization.MeshShadeOption.Color
         return vis, vis.get_view_control()
 
     def _setup_interactive_camera(
@@ -1761,6 +2293,31 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         desired_distance = float(np.linalg.norm(camera_pos - look_at))
         zoom = 0.1 * (desired_distance / max_extent) if max_extent > 1e-9 else 0.7
         ctrl.set_zoom(zoom)
+        if self.render_config.studio_backdrop:
+            # An explicit pinhole camera avoids fitting the large studio wall.
+            # ViewControl still owns interactive orbit/pan/zoom and snapshots.
+            forward = (look_at - camera_pos) / desired_distance
+            right = np.cross(forward, up)
+            right /= np.linalg.norm(right)
+            down = np.cross(forward, right)
+            rotation = np.stack((right, down, forward))
+            parameters = o3d.camera.PinholeCameraParameters()
+            focal = self.height / (2 * np.tan(np.deg2rad(config.fov) / 2))
+            parameters.intrinsic = o3d.camera.PinholeCameraIntrinsic(
+                self.width,
+                self.height,
+                focal,
+                focal,
+                (self.width - 1) / 2,
+                (self.height - 1) / 2,
+            )
+            extrinsic = np.eye(4)
+            extrinsic[:3, :3] = rotation
+            extrinsic[:3, 3] = -rotation @ camera_pos
+            parameters.extrinsic = extrinsic
+            ctrl.convert_from_pinhole_camera_parameters(
+                parameters, allow_arbitrary=True
+            )
 
         vis.poll_events()
         vis.update_renderer()
@@ -1989,6 +2546,10 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         s_ps = np.asarray(self._backbone_abscissae, dtype=np.float64)
         ground_meshes: list = []
         ground_lines: list = []
+        if self.render_config.studio_backdrop:
+            backdrop = self._studio_backdrop(scene_data)
+            vis.add_geometry(backdrop)
+            ground_meshes.append(backdrop)
         base_meshes: list = []
         backbone_meshes: list[list[list[CachedMesh]]] = []
         merged_backbone_meshes: list[o3d.geometry.TriangleMesh | None] = []
@@ -2010,7 +2571,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             material_frames0 = scene_data.material_frames[robot_idx, frame_idx]
             q0 = scene_data.q_ts[robot_idx, frame_idx]
             sections = self._cross_sections_for_points(q0, s_ps)
-            if self.show_ground_plane:
+            if self.show_ground_plane and not self.render_config.studio_backdrop:
                 base_axis = material_frames0[0, :, 0]
                 ground_size = self._resolve_ground_plane_size()
                 ground_plane, ground_grid = _make_ground_plane(
@@ -2172,56 +2733,6 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             )
             vis.update_geometry(dynamic_batch.mesh)
 
-    def _init_recorder(
-        self,
-        record_path: str | None,
-        dt_seq: np.ndarray,
-        video_config: VideoEncodingConfig | None,
-    ) -> tuple[FFmpegVideoWriter | None, str | None, str | None]:
-        """Initialize ffmpeg writer or frame directory based on path."""
-        if record_path is None:
-            return None, None, None
-
-        frame_dir: str | None = None
-        video_writer: FFmpegVideoWriter | None = None
-        video_path: str | None = None
-
-        ext = os.path.splitext(record_path)[1].lower()
-        video_exts = {".mp4", ".mov", ".avi", ".mkv"}
-        if ext in video_exts:
-            video_path = record_path
-            fps_est = 1.0 / max(1e-6, float(np.median(dt_seq)))
-            try:
-                video_writer = FFmpegVideoWriter(
-                    video_path,
-                    int(self.width),
-                    int(self.height),
-                    fps_est,
-                    input_pix_fmt="rgb24",
-                    video_config=video_config,
-                )
-                print(f"[Open3D] Writing video to: {video_path} (fps≈{fps_est:.2f})")
-            except FileNotFoundError:
-                frame_dir = os.path.splitext(video_path)[0]
-                os.makedirs(frame_dir, exist_ok=True)
-                print(
-                    "[Open3D] ffmpeg not found; falling back to frame directory "
-                    f"{frame_dir}"
-                )
-            except Exception as exc:
-                frame_dir = os.path.splitext(video_path)[0]
-                os.makedirs(frame_dir, exist_ok=True)
-                print(
-                    f"[Open3D] ffmpeg failed to start ({exc}); "
-                    f"falling back to frame directory {frame_dir}"
-                )
-        else:
-            frame_dir = record_path
-            os.makedirs(frame_dir, exist_ok=True)
-            print(f"[Open3D] Recording frames to: {frame_dir}")
-
-        return video_writer, frame_dir, video_path
-
     def _run_viewer(
         self,
         scene_data: SceneData,
@@ -2234,7 +2745,25 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         camera_config: CameraConfig | None = None,
         color_config: RendererColorConfig | None = None,
     ) -> None:
-        """Interactive viewer with shared geometry and recording."""
+        """Play a trajectory with efficient legacy geometry updates.
+
+        Keyboard snapshots capture the preview's approximate materials and
+        lighting. Video and PNG-sequence exports use ``_export_sequence``.
+
+        Args:
+            scene_data: Prepared robot trajectories and helper geometry.
+            playback_speed: Positive multiplier for trajectory playback timing.
+            autoplay: Whether playback starts immediately when the window opens.
+            loop: Whether playback restarts after reaching the final frame.
+            record_cfg: Snapshot filename prefix; automated export is handled by
+                the modern renderer before this viewer is called.
+            window_name: Title of the native preview window.
+            camera_config: Initial camera settings, or ``None`` for defaults.
+            color_config: Color override, or ``None`` for renderer defaults.
+
+        Returns:
+            None. Blocks until closure and destroys the native preview window.
+        """
         vis, ctrl = self._create_visualizer(window_name)
         handles = self._build_scene(
             vis, scene_data, frame_idx=0, color_config=color_config
@@ -2244,9 +2773,6 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         self._setup_interactive_camera(vis, ctrl, scene_data, camera_config)
 
         dt_seq = self._frame_intervals_from_ts(scene_data.ts, playback_speed)
-        video_writer, frame_dir, video_path = self._init_recorder(
-            record_cfg.path, dt_seq, record_cfg.video_config
-        )
 
         initial_cam = ctrl.convert_to_pinhole_camera_parameters()
         saved_cam_holder = [copy.deepcopy(initial_cam)]
@@ -2258,48 +2784,11 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             "dt_seq": dt_seq,
         }
 
-        def _fallback_to_frames(reason: str):
-            nonlocal video_writer, frame_dir
-            if video_writer is not None:
-                try:
-                    video_writer.close()
-                    if video_writer.stderr_log:
-                        print(f"[Open3D] ffmpeg stderr: {video_writer.stderr_log}")
-                except Exception:
-                    pass
-            video_writer = None
-            if frame_dir is None:
-                fallback_dir = os.path.splitext(video_path or "frames")[0]
-                frame_dir = fallback_dir
-                os.makedirs(frame_dir, exist_ok=True)
-                print(
-                    f"[Open3D] ffmpeg stream failed ({reason}); "
-                    f"falling back to frame directory {frame_dir}"
-                )
-
         def _save_frame(i: int, force: bool = False) -> None:
-            if video_writer is not None:
-                try:
-                    img = np.asarray(
-                        vis.capture_screen_float_buffer(do_render=True),
-                        dtype=np.float32,
-                    )
-                    frame = np.clip(img * 255.0, 0.0, 255.0).astype(np.uint8)
-                    video_writer.write(frame)
-                    return
-                except BrokenPipeError:
-                    _fallback_to_frames("broken pipe")
-                except Exception as exc:
-                    _fallback_to_frames(str(exc))
-            if frame_dir is None:
-                if force:
-                    vis.capture_screen_image(
-                        f"{record_cfg.prefix}{i:05d}.png", do_render=True
-                    )
-                return
-            if force or (i % record_cfg.every_n) == 0:
-                fname = os.path.join(frame_dir, f"{record_cfg.prefix}{i:05d}.png")
-                vis.capture_screen_image(fname, do_render=True)
+            if force:
+                vis.capture_screen_image(
+                    f"{record_cfg.prefix}{i:05d}.png", do_render=True
+                )
 
         def update_frame(i: int) -> None:
             i = max(0, min(scene_data.num_frames - 1, i))
@@ -2347,18 +2836,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                         state["playing"] = state["playing"] and loop
                     update_frame(nxt)
                     state["last_tick"] = now
-                    if (
-                        record_cfg.close_when_done
-                        and record_cfg.path is not None
-                        and not loop
-                        and nxt == scene_data.num_frames - 1
-                    ):
-                        break
                 vis.update_renderer()
                 time.sleep(0.001)
         finally:
-            try:
-                if video_writer is not None:
-                    video_writer.close()
-            finally:
-                vis.destroy_window()
+            vis.destroy_window()
