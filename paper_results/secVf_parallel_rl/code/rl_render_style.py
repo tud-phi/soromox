@@ -39,12 +39,8 @@ def make_rl_camera_config(
     up: tuple[float, float, float] = (0.0, 0.0, 1.0),
 ) -> CameraConfig:
     """Return the camera used for the Section Vf paper renderings."""
-    radius = 1.7
-    angle = np.pi * 1.15
-    x = float(radius * np.cos(angle))
-    y = float(radius * np.sin(angle))
     return CameraConfig(
-        position=(x, y, float(2.0 * arm_length)),
+        position=(0.0, float(-2.2 * arm_length), float(1.5 * arm_length)),
         look_at=(0.0, 0.0, float(0.35 * arm_length)),
         up=up,
         fov=fov,

@@ -137,116 +137,30 @@ The presets were informed by these visual references:
 
 ## Hanging mounting
 
-Use `--mounting hanging` to compare every preset with a robot extending along
-−z and an overhead mounting surface:
+Use `--mounting hanging` with either backend to place the mounting surface overhead.
+The gallery rotates the robot, backdrop, preset lights and camera together while
+keeping camera up at +z. All six presets support this mode; captures are saved in
+`figures/presets/hanging/` by default.
 
 ```bash
 python examples/rendering/preset_gallery.py --backend open3d --mounting hanging
 python examples/rendering/preset_gallery.py --backend viser --mounting hanging
 ```
 
-The default is `--mounting upright`. Hanging captures default to
-`figures/presets/hanging/`. The mode rotates the robot, placement, ground basis,
-preset lights and camera position together, while retaining camera up at +z to
-present the composition upside down. It also works with `--count 1`,
-`--interactive`, and Open3D `--video-output`.
-
-The lighting and backdrop follow `GroundPlaneConfig.normal`. Preset lights use
-`reference="ground"`; explicitly constructed lights default to `reference="world"`.
-A −z normal uses a half-turn about world Y, keeping the backdrop behind the scene.
-Camera position and look-at must follow that orientation too; the gallery handles
-this automatically. Camera up determines whether the result appears hanging or upright.
-Open3D's environment map remains in world coordinates, so ambient shading can differ
-slightly between the two orientations even when direct lighting matches.
-
-
-The relevant architectural reference is a **ceiling cyclorama**, where the back
-wall curves into the ceiling. [Studio Sitges documents this configuration](https://www.studiositges.com/blog/ceiling_cyclorama)
-for low-angle photography. Ordinary floor cycloramas with a ceiling visible in
-the photograph do not demonstrate this geometry. The brighter mounting surface
-in these presets is an artistic lighting choice, not a claim about a universal
-ceiling-to-wall brightness ratio.
-
-### Hanging technical
+The neutral studio example illustrates the curved wall-to-ceiling backdrop, as in
+[Studio Sitges’ ceiling cyclorama](https://www.studiositges.com/blog/ceiling_cyclorama).
+The technical example shows the same transfer with an overhead grid. Open3D's
+world-oriented environment lighting can produce small shading differences between
+upright and hanging views.
 
 <div class="grid cards soromox-gallery soromox-preset-gallery" markdown>
 
--   **Open3D**
-
-    ![Hanging technical Open3D](../../assets/rendering/presets/hanging/open3d_technical.png)
-
--   **Viser**
-
-    ![Hanging technical Viser](../../assets/rendering/presets/hanging/viser_technical.png)
-
-</div>
-
-### Hanging neutral
-
-<div class="grid cards soromox-gallery soromox-preset-gallery" markdown>
-
--   **Open3D**
+-   **Neutral studio — Open3D**
 
     ![Hanging neutral Open3D](../../assets/rendering/presets/hanging/open3d_neutral.png)
 
--   **Viser**
+-   **Technical — Viser**
 
-    ![Hanging neutral Viser](../../assets/rendering/presets/hanging/viser_neutral.png)
-
-</div>
-
-### Hanging bright
-
-<div class="grid cards soromox-gallery soromox-preset-gallery" markdown>
-
--   **Open3D**
-
-    ![Hanging bright Open3D](../../assets/rendering/presets/hanging/open3d_bright.png)
-
--   **Viser**
-
-    ![Hanging bright Viser](../../assets/rendering/presets/hanging/viser_bright.png)
-
-</div>
-
-### Hanging dark
-
-<div class="grid cards soromox-gallery soromox-preset-gallery" markdown>
-
--   **Open3D**
-
-    ![Hanging dark Open3D](../../assets/rendering/presets/hanging/open3d_dark.png)
-
--   **Viser**
-
-    ![Hanging dark Viser](../../assets/rendering/presets/hanging/viser_dark.png)
-
-</div>
-
-### Hanging flat
-
-<div class="grid cards soromox-gallery soromox-preset-gallery" markdown>
-
--   **Open3D**
-
-    ![Hanging flat Open3D](../../assets/rendering/presets/hanging/open3d_flat.png)
-
--   **Viser**
-
-    ![Hanging flat Viser](../../assets/rendering/presets/hanging/viser_flat.png)
-
-</div>
-
-### Hanging clay
-
-<div class="grid cards soromox-gallery soromox-preset-gallery" markdown>
-
--   **Open3D**
-
-    ![Hanging clay Open3D](../../assets/rendering/presets/hanging/open3d_clay.png)
-
--   **Viser**
-
-    ![Hanging clay Viser](../../assets/rendering/presets/hanging/viser_clay.png)
+    ![Hanging technical Viser](../../assets/rendering/presets/hanging/viser_technical.png)
 
 </div>

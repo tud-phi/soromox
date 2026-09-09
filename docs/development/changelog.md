@@ -13,22 +13,18 @@ and include benchmark baseline and measurement context for performance claims.
 
 ### Added
 
-- Added `--mounting hanging` to the preset gallery for all six presets in Open3D
-  and Viser, with separate output paths for hanging captures and a centered
-  frontal camera for both mounting orientations.
-
 - Added a UMArm operational-space example using
   `OperationalSpaceImpedanceControlTracker` and balanced antagonistic pressure
   inputs to track a base-parallel circle.
 - Added shared scene settings for lighting, materials, shadows, ground planes and
   curved backdrops with adjustable bend height and curvature easing. Technical,
   neutral/bright/dark studio, flat and clay presets include an Open3D/Viser
-  tentacle gallery. Shared robot mounts include disk, beveled disk, truncated
+  tentacle gallery with upright and `--mounting hanging` views, separate capture
+  paths and a centered frontal camera. Shared robot mounts include disk, beveled disk, truncated
   cone and flared collar shapes, selected with
-  `config.geometry.base_plate_style`.
-- Added opt-in `GroundPlaneConfig(height_reference="base_mounting_face")` for
-  placing world floors and curved studio backdrops at the mounting face of the
-  configured robot base plate; the default world-origin height is unchanged.
+  `config.geometry.base_plate_style`. Opt-in
+  `GroundPlaneConfig(height_reference="base_mounting_face")` places floors and
+  backdrops at the base plate mounting face.
 - Added reproducible Open3D development builds for macOS and Linux x86-64,
   including Metal image capture, neutral color grading and selectable linear/ACES
   tone mapping, and surfaceless EGL exports alongside GLX interactive viewing.

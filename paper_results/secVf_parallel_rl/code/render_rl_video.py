@@ -433,11 +433,22 @@ def make_render_camera_config(
     up: tuple[float, float, float],
     distance_factor: float | None,
     position_offset: tuple[float, float, float] | None,
+    grid_span: float = 0.0,
 ) -> CameraConfig:
     """Select the fixed paper camera or a scene-aware automatic camera."""
     manual_auto_camera = distance_factor is not None or position_offset is not None
     if num_envs == 1 and not manual_auto_camera:
         return make_rl_camera_config(arm_length, fov=fov, up=up)
+    if num_envs > 1 and not manual_auto_camera:
+        # Face the rear wall squarely and fit the robot grid, excluding scenery.
+        span = grid_span + 2.0 * arm_length
+        distance = 0.75 * span / np.tan(np.deg2rad(fov / 2.0))
+        return CameraConfig(
+            position=(0.0, -0.67 * distance, 0.35 * arm_length + 0.74 * distance),
+            look_at=(0.0, 0.0, 0.35 * arm_length),
+            fov=fov,
+            up=up,
+        )
 
     defaults = (
         CameraConfig()
@@ -548,6 +559,7 @@ def render_rollout_to_mp4(
         up=args.camera_up,
         distance_factor=args.camera_distance_factor,
         position_offset=args.camera_position_offset,
+        grid_span=float(np.max(np.ptp(offsets, axis=0))),
     )
 
     static_positions = static_radii = static_colors = None
@@ -573,6 +585,20 @@ def render_rollout_to_mp4(
             colors=make_rl_color_config(color_label),
             scene=SceneConfig.studio(
                 "neutral",
+                # Dense grids otherwise cast overlapping streaks across the cove.
+                backbone_cast_shadow=rollout.num_envs == 1,
+                scene_extent=max(
+                    1.2,
+                    3.0
+                    * (float(np.max(np.ptp(offsets, axis=0))) + 2 * rollout.arm_length),
+                ),
+                backdrop=replace(
+                    SceneConfig.studio().backdrop,
+                    width=12.0,
+                    depth=8.0,
+                    height=8.0,
+                    wall_offset=0.7,
+                ),
                 ground=replace(
                     SceneConfig.studio().ground,
                     height=-0.06,
