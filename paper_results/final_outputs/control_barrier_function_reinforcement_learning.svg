@@ -6,7 +6,7 @@
   <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
    <cc:Work>
     <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
-    <dc:date>2026-09-09T17:25:48.382281</dc:date>
+    <dc:date>2026-09-09T18:04:54.006246</dc:date>
     <dc:format>image/svg+xml</dc:format>
     <dc:creator>
      <cc:Agent>
@@ -25,8 +25,9 @@
 L 513.070866 453.543307
 L 513.070866 0
 L 0 0
+L 0 453.543307
 z
-" style="fill: #ffffff"/>
+" style="fill: none"/>
   </g>
   <g id="axes_1">
    <g clip-path="url(#p53913189e3)">
@@ -178,8 +179,9 @@ iVBORw0KGgoAAAANSUhEUgAAAOUAAAEqCAYAAADqAJfDAACQKElEQVR4nO299/Msy3Uf9pm4OX3jzS8H
 L 477.155906 174.614173
 L 477.155906 22.677165
 L 277.058268 22.677165
+L 277.058268 174.614173
 z
-" style="fill: #ffffff"/>
+" style="fill: none"/>
    </g>
    <g id="matplotlib.axis_1">
     <g id="xtick_1">
@@ -822,8 +824,9 @@ L 477.155906 22.677165
 L 477.155906 424.062992
 L 477.155906 208.629921
 L 277.058268 208.629921
+L 277.058268 424.062992
 z
-" style="fill: #ffffff"/>
+" style="fill: none"/>
    </g>
    <g id="FillBetweenPolyCollection_1">
     <defs>

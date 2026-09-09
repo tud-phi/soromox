@@ -610,8 +610,8 @@ def save_composite_figure(
         )
     pdf_output.parent.mkdir(parents=True, exist_ok=True)
     with plt.style.context(PAPER_STYLE), mpl.rc_context(COMPOSITE_RC_PARAMS):
-        fig.savefig(pdf_output, dpi=300, facecolor="white", bbox_inches=None)
-        fig.savefig(svg_output, dpi=300, facecolor="white", bbox_inches=None)
+        fig.savefig(pdf_output, dpi=300, transparent=True, bbox_inches=None)
+        fig.savefig(svg_output, dpi=300, transparent=True, bbox_inches=None)
     return pdf_output, svg_output
 
 

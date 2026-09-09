@@ -221,7 +221,7 @@ def main(argv=None):
         )
         try:
             for output in outputs[:3]:
-                fig.savefig(output, dpi=300, facecolor="white", bbox_inches=None)
+                fig.savefig(output, dpi=300, transparent=True, bbox_inches=None)
         finally:
             plt.close(fig)
     sources = (

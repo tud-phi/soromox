@@ -217,5 +217,11 @@ def test_save_writes_both_formats_and_requires_force_to_overwrite(
     )
     assert pdf_output.stat().st_size > 0
     assert svg_output.stat().st_size > 0
+    import xml.etree.ElementTree as ET
+
+    svg = ET.parse(svg_output)
+    background = svg.find(".//{*}g[@id='patch_1']/{*}path")
+    assert background is not None
+    assert "fill: none" in background.attrib["style"]
     with pytest.raises(FileExistsError, match="--force"):
         composite.save_composite_figure(figure, output_base, force=False)

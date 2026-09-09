@@ -773,6 +773,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
 
             else:  # "swept" style - cylinders between points
                 self._scene_handles.discrete_backbone_batches.append([])
+                edge_caps = self._matching_swept_edge_caps(curve, robot_frames)
                 color_groups: dict[tuple[float, ...], list[int]] = {}
                 for pt_idx in edge_caps:
                     color_rgba = point_colors[robot_idx, pt_idx]
@@ -855,6 +856,28 @@ class ViserRenderer(BaseSoftRobotRenderer):
             edge_index: (False, edge_index == num_points - 2)
             for edge_index in range(max(0, num_points - 1))
         }
+
+    def _matching_swept_edge_caps(
+        self, curve: np.ndarray, frames: np.ndarray
+    ) -> dict[int, tuple[bool, bool]]:
+        """Remove buried caps only where adjacent world-space contours match."""
+        caps = self._swept_edge_caps_for_num_points(len(curve)).copy()
+        edges = list(caps)
+        tolerance = 4 * np.finfo(np.float32).eps * self.L_max
+        for left, right in zip(edges, edges[1:]):
+            if not (caps[left][1] and caps[right][0]):
+                continue
+            outgoing = (
+                curve[left + 1]
+                + self._cross_section_contours[left + 1] @ frames[left + 1].T
+            )
+            incoming = (
+                curve[right] + self._cross_section_contours[right] @ frames[right].T
+            )
+            if np.all(np.abs(outgoing - incoming) <= tolerance):
+                caps[left] = (caps[left][0], False)
+                caps[right] = (False, caps[right][1])
+        return caps
 
     def _base_plate_pose(
         self, base_point: np.ndarray
@@ -1168,11 +1191,14 @@ class ViserRenderer(BaseSoftRobotRenderer):
                     robot_batches = self._scene_handles.swept_backbone_batches[
                         robot_idx
                     ]
+                    edge_caps = self._matching_swept_edge_caps(curve, robot_frames)
                     for batch in robot_batches:
                         vertex_parts = []
+                        face_parts = []
+                        vertex_offset = 0
                         for seg_idx in batch.segment_indices:
                             cap_start, cap_end = edge_caps[seg_idx]
-                            vertices, _ = loft_cross_section_contours(
+                            vertices, faces = loft_cross_section_contours(
                                 curve[seg_idx],
                                 curve[seg_idx + 1],
                                 robot_frames[seg_idx],
@@ -1183,6 +1209,9 @@ class ViserRenderer(BaseSoftRobotRenderer):
                                 cap_end=cap_end,
                             )
                             vertex_parts.append(vertices.astype(np.float32))
+                            face_parts.append(faces.astype(np.uint32) + vertex_offset)
+                            vertex_offset += len(vertices)
+                        batch.handle.faces = np.concatenate(face_parts, axis=0)
                         batch.handle.vertices = np.concatenate(vertex_parts, axis=0)
 
     def _add_batched_spheres(

@@ -67,6 +67,10 @@ and include benchmark baseline and measurement context for performance claims.
 
 ### Fixed
 
+- Viser removes buried caps at matching swept-link contours, avoiding dark rings
+  at continuous segment boundaries. Figure 11 and Figure 13 exports preserve
+  transparent canvas and plot backgrounds.
+
 - Preset lights now follow the ground normal, and the −z backdrop keeps its wall
   behind the scene. Explicit world lights retain their coordinates. Gallery
   mounting-height selection preserves each preset's ground color and visibility.

@@ -55,3 +55,37 @@ def test_snapshot_timestamps_match_axis_labels_and_clear_row_titles():
                 )
         finally:
             assembly.plt.close(fig)
+
+
+def test_exports_preserve_transparent_canvas_and_axes(tmp_path, monkeypatch):
+    import xml.etree.ElementTree as ET
+
+    from PIL import Image
+
+    def build(*args):
+        fig, ax = assembly.plt.subplots()
+        ax.plot([0, 1], [0, 1])
+        return fig, []
+
+    monkeypatch.setattr(assembly, "build_figure", build)
+    output = tmp_path / "transparent"
+    assembly.main(
+        [
+            "--output-base",
+            str(output),
+            "--safety-dir",
+            str(tmp_path),
+            "--rl-dir",
+            str(tmp_path),
+        ]
+    )
+    pixels = np.array(Image.open(output.with_suffix(".png")))
+    assert pixels.shape[2] == 4
+    assert pixels[0, 0, 3] == 0
+    assert (
+        np.count_nonzero(pixels[:, :, 3] == 0) > pixels.shape[0] * pixels.shape[1] * 0.9
+    )
+    svg = ET.parse(output.with_suffix(".svg"))
+    for patch_id in ("patch_1", "patch_2"):
+        patch = svg.find(f".//{{*}}g[@id='{patch_id}']/{{*}}path")
+        assert "fill: none" in patch.attrib["style"]
