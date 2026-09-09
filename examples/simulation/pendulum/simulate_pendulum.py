@@ -7,8 +7,10 @@ import matplotlib.pyplot as plt
 from jax import numpy as jnp
 
 from soromox.rendering import OpenCVPlanarRenderer, ViserRenderer
-from soromox.rendering.renderer_config import (
+from soromox.rendering.config import (
+    BackboneColorConfig,
     GeometryConfig,
+    RendererColorConfig,
     RendererConfig,
     RenderOutputConfig,
 )
@@ -161,10 +163,12 @@ if __name__ == "__main__":
     output_path.parent.mkdir(parents=True, exist_ok=True)
     renderer = OpenCVPlanarRenderer(
         robot,
-        backbone_color=(0, 0, 0),
         length_scale=2.5,
         config=RendererConfig(
-            output=RenderOutputConfig(width=video_width, height=video_height)
+            output=RenderOutputConfig(width=video_width, height=video_height),
+            colors=RendererColorConfig(
+                backbone=BackboneColorConfig(segment_colors=(0.0, 0.0, 0.0))
+            ),
         ),
     )
     renderer.render_sequence(video_ts, q_ts, record_path=str(output_path))

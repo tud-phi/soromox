@@ -9,7 +9,7 @@ import numpy as np
 from diffrax import Tsit5
 
 from soromox.rendering import MatplotlibRenderer, OpenCVPlanarRenderer
-from soromox.rendering.renderer_config import (
+from soromox.rendering.config import (
     GeometryConfig,
     RendererConfig,
     RenderOutputConfig,

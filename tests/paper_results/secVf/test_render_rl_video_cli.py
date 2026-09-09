@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 from numpy.testing import assert_allclose
 
-from soromox.rendering.renderer_config import (
+from soromox.rendering.config import (
     GeometryConfig,
     RendererConfig,
     RenderOutputConfig,

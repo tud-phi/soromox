@@ -45,8 +45,10 @@ from soromox.rendering.actuators import (
     resolve_actuator_rgba,
 )
 from soromox.rendering.base import BaseSoftRobotRenderer
-from soromox.rendering.camera_config import CameraConfig
-from soromox.rendering.color_config import RendererColorConfig, ensure_rgba
+from soromox.rendering.config import DirectionalLightConfig, RendererConfig
+from soromox.rendering.config.camera import CameraConfig
+from soromox.rendering.config.colors import RendererColorConfig, ensure_rgba
+from soromox.rendering.config.output import VideoEncodingConfig
 from soromox.rendering.cross_sections import (
     CrossSection,
     cross_section_sweep_layout,
@@ -54,14 +56,13 @@ from soromox.rendering.cross_sections import (
     loft_cross_section_contours,
     loft_cross_sections,
 )
-from soromox.rendering.renderer_config import DirectionalLightConfig, RendererConfig
 from soromox.rendering.scenery import (
     backdrop_mesh,
     ground_grid,
     linear_to_srgb,
     srgb_to_linear,
 )
-from soromox.rendering.video_encoding import FFmpegVideoWriter, VideoEncodingConfig
+from soromox.rendering.video_encoding import FFmpegVideoWriter
 from soromox.systems.soft_robot import SoftRobot
 
 # ======================================================================================

@@ -303,8 +303,10 @@ def _build_linux():
         f"-DFILAMENT_PATCH_FILE={LINUX_FILAMENT_PATCH}",
         # Current Assimp/Filament sources omit standard integer/difference
         # declarations exposed transitively by older compiler libraries.
+        # Ignore unsupported warning names across Ubuntu and newer Clang releases;
+        # supported diagnostics retain their normal error handling.
         "-DCMAKE_CXX_FLAGS=-include cstddef -include cstdint "
-        "-Wno-invalid-specialization -Wno-nontrivial-memcall",
+        "-Wno-unknown-warning-option -Wno-invalid-specialization -Wno-nontrivial-memcall",
         f"-DOPEN3D_GIT_HASH={commit[:7]}.soromox1",
         f"-DPython3_EXECUTABLE={sys.executable}",
     ]

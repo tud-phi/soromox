@@ -24,7 +24,7 @@ from soromox.rendering import (
     Open3DRenderer,
     RendererColorConfig,
 )
-from soromox.rendering.renderer_config import (
+from soromox.rendering.config import (
     GeometryConfig,
     RendererConfig,
     RenderOutputConfig,

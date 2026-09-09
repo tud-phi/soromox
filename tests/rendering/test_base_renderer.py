@@ -16,15 +16,15 @@ from soromox.rendering.actuators import (
     TrajectoryActuatorVisualLayer,
 )
 from soromox.rendering.base import BaseSoftRobotRenderer
-from soromox.rendering.camera_config import CameraConfig
-from soromox.rendering.opencv_planar_renderer import OpenCVPlanarRenderer
-from soromox.rendering.renderer_config import (
+from soromox.rendering.config import (
     GeometryConfig,
     GroundPlaneConfig,
     RendererConfig,
     RenderOutputConfig,
     SceneConfig,
 )
+from soromox.rendering.config.camera import CameraConfig
+from soromox.rendering.opencv_planar_renderer import OpenCVPlanarRenderer
 from soromox.systems.components import CrossSectionGeometry
 from soromox.utils.geometry import poses
 

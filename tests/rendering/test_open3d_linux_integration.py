@@ -35,13 +35,13 @@ if os.environ.get("SOROMOX_RUN_RENDERING_INTEGRATION") != "1":
 
 pytest.importorskip("open3d")
 
-from soromox.rendering.open3d_renderer import Open3DRenderer  # noqa: E402
-from soromox.rendering.renderer_config import (  # noqa: E402
+from soromox.rendering.config import (  # noqa: E402
     GeometryConfig,
     RendererConfig,
     RenderOutputConfig,
     SceneConfig,
 )
+from soromox.rendering.open3d_renderer import Open3DRenderer  # noqa: E402
 from soromox.systems.components import CrossSectionGeometry  # noqa: E402
 
 pytestmark = pytest.mark.rendering_integration

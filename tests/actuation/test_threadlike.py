@@ -3,7 +3,7 @@ import equinox as eqx
 import jax
 import pytest
 
-from soromox.rendering.renderer_config import GeometryConfig, RendererConfig
+from soromox.rendering.config import GeometryConfig, RendererConfig
 
 jax.config.update("jax_enable_x64", True)
 

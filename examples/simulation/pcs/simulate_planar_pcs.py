@@ -7,7 +7,7 @@ import jax.numpy as jnp
 import matplotlib.pyplot as plt
 from diffrax import Tsit5
 
-from soromox.rendering.renderer_config import (
+from soromox.rendering.config import (
     GeometryConfig,
     RendererConfig,
     RenderOutputConfig,

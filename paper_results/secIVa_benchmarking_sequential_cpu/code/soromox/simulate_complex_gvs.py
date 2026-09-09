@@ -13,7 +13,7 @@ from soromox.rendering import (
     RendererColorConfig,
     ViserRenderer,
 )
-from soromox.rendering.renderer_config import GeometryConfig, RendererConfig
+from soromox.rendering.config import GeometryConfig, RendererConfig
 from soromox.systems import (
     GVS,
     GVSSegment,

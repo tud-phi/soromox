@@ -6,15 +6,15 @@ import pytest
 from numpy.testing import assert_allclose
 
 from soromox.rendering.actuators import ActuatorVisualLayer
-from soromox.rendering.camera_config import CameraConfig
-from soromox.rendering.matplotlib_renderer import MatplotlibRenderer
-from soromox.rendering.renderer_config import (
+from soromox.rendering.config import (
     GeometryConfig,
     GroundPlaneConfig,
     RendererConfig,
     RenderOutputConfig,
     SceneConfig,
 )
+from soromox.rendering.config.camera import CameraConfig
+from soromox.rendering.matplotlib_renderer import MatplotlibRenderer
 from soromox.systems.components import CrossSectionGeometry
 from soromox.utils.geometry import poses
 

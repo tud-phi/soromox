@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 import plotly.graph_objects as go
 from diffrax import Tsit5
 
-from soromox.rendering.renderer_config import GeometryConfig, RendererConfig
+from soromox.rendering.config import GeometryConfig, RendererConfig
 
 jax.config.update("jax_enable_x64", True)  # double precision
 from soromox.rendering import (

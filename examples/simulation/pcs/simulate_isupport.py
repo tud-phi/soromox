@@ -12,7 +12,7 @@ import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 
-from soromox.rendering.renderer_config import GeometryConfig, RendererConfig
+from soromox.rendering.config import GeometryConfig, RendererConfig
 
 jax.config.update("jax_enable_x64", True)  # double precision
 from soromox.rendering import (

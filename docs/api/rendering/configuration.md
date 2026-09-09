@@ -39,7 +39,7 @@ Matplotlib applies `fov` and the viewing direction from `position` to
 `look_at`; its axes limits determine the remaining framing. Open3D and Viser
 also use the explicit camera distance.
 
-::: soromox.rendering.camera_config.CameraConfig
+::: soromox.rendering.config.camera.CameraConfig
     options:
       show_root_heading: true
       show_source: false
@@ -142,7 +142,7 @@ color_config = RendererColorConfig(
 renderer.show(q, color_config=color_config)
 ```
 
-::: soromox.rendering.color_config.RendererColorConfig
+::: soromox.rendering.config.colors.RendererColorConfig
     options:
       show_root_heading: true
       show_source: false
@@ -164,7 +164,7 @@ backbone_config = BackboneColorConfig(
 )
 ```
 
-::: soromox.rendering.color_config.BackboneColorConfig
+::: soromox.rendering.config.colors.BackboneColorConfig
     options:
       show_root_heading: true
       show_source: false
@@ -237,7 +237,7 @@ legend = renderer.get_color_legend(num_robots=3, color_config=color_config)
 # Returns ColorLegend with robot labels and colors
 ```
 
-::: soromox.rendering.color_config.ColorLegend
+::: soromox.rendering.config.colors.ColorLegend
     options:
       show_root_heading: true
       show_source: false
@@ -335,7 +335,22 @@ subsurface scattering or reference-image compositing.
 See the [preset comparison gallery](../../../examples/rendering/gallery.md) for
 actual tentacle renders, references and measured limitations.
 
-::: soromox.rendering.renderer_config
+All public settings are available from `soromox.rendering.config` and re-exported
+from `soromox.rendering`. Their implementation is organized by responsibility:
+
+| Module | Contents |
+| --- | --- |
+| `config.scene` | Scene presets, lights, materials, ground planes and backdrops |
+| `config.camera` | Camera position, orientation and exposure |
+| `config.colors` | Robot/actuator colors, palettes and color resolution |
+| `config.output` | Image dimensions and video encoding settings |
+| `config.renderer` | Composed renderer settings, geometry sampling and validation |
+
+`base.py` implements shared rendering behavior. Backend scene handles and
+recording state stay with their renderers; `video_encoding.py` implements the
+FFmpeg writer.
+
+::: soromox.rendering.config
     options:
       show_root_heading: true
       show_source: false

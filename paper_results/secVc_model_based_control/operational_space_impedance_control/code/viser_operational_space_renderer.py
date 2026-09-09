@@ -18,14 +18,14 @@ from jax import Array
 from PIL import Image
 from trajectory_primitives import make_surface_geometry_metadata
 
-from soromox.rendering.camera_config import CameraConfig
-from soromox.rendering.color_config import BackboneColorConfig, RendererColorConfig
-from soromox.rendering.renderer_config import (
+from soromox.rendering.config import (
     GeometryConfig,
     RendererConfig,
     RenderOutputConfig,
     SceneConfig,
 )
+from soromox.rendering.config.camera import CameraConfig
+from soromox.rendering.config.colors import BackboneColorConfig, RendererColorConfig
 from soromox.rendering.viser_renderer import ViserRenderer
 from soromox.utils.geometry.rotations import (
     RotationRepresentation,

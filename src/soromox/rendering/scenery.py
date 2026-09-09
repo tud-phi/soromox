@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from soromox.rendering.renderer_config import GroundPlaneConfig, SceneConfig
+from soromox.rendering.config import GroundPlaneConfig, SceneConfig
 
 
 def srgb_to_linear(color):

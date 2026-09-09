@@ -19,7 +19,7 @@ from matplotlib.colors import LinearSegmentedColormap, Normalize
 from matplotlib.figure import Figure
 from matplotlib.ticker import FixedLocator, FuncFormatter
 
-from soromox.rendering.color_config import validate_rgb
+from soromox.rendering.config.colors import validate_rgb
 from soromox.rendering.viser_renderer import (
     LiveModeController,
     ViserRenderer,

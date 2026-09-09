@@ -6,7 +6,7 @@ from contextlib import contextmanager
 import jax
 
 from soromox.rendering import GroundPlaneConfig, SceneConfig
-from soromox.rendering.renderer_config import GeometryConfig, RendererConfig
+from soromox.rendering.config import GeometryConfig, RendererConfig
 
 jax.config.update("jax_enable_x64", True)
 
@@ -16,7 +16,7 @@ import pytest
 from numpy.testing import assert_allclose
 
 from soromox.rendering import ISupportViserRenderer, ISupportVisualConfig
-from soromox.rendering.color_config import validate_rgb
+from soromox.rendering.config.colors import validate_rgb
 from soromox.rendering.isupport.viser_renderer import ISupportLiveModeController
 from soromox.rendering.viser_renderer import SceneHandles
 from soromox.systems import (

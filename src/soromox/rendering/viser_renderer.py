@@ -46,21 +46,22 @@ except ImportError:
 
 from soromox.rendering.actuators import resolve_actuator_rgba
 from soromox.rendering.base import BaseSoftRobotRenderer
-from soromox.rendering.camera_config import CameraConfig
-from soromox.rendering.color_config import RendererColorConfig, ensure_rgba
+from soromox.rendering.config import DirectionalLightConfig, RendererConfig
+from soromox.rendering.config.camera import CameraConfig
+from soromox.rendering.config.colors import RendererColorConfig, ensure_rgba
+from soromox.rendering.config.output import VideoEncodingConfig
 from soromox.rendering.cross_sections import (
     cross_section_sweep_layout,
     evaluate_cross_sections,
     loft_cross_section_contours,
 )
-from soromox.rendering.renderer_config import DirectionalLightConfig, RendererConfig
 from soromox.rendering.scenery import (
     backdrop_mesh,
     ground_grid,
     plane_basis,
     srgb_to_linear,
 )
-from soromox.rendering.video_encoding import FFmpegVideoWriter, VideoEncodingConfig
+from soromox.rendering.video_encoding import FFmpegVideoWriter
 from soromox.systems.soft_robot import SoftRobot
 
 # =============================================================================

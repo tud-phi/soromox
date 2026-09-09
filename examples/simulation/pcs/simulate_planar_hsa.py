@@ -4,7 +4,7 @@ from pathlib import Path
 import cv2  # importing cv2
 import jax
 
-from soromox.rendering.renderer_config import RendererConfig, RenderOutputConfig
+from soromox.rendering.config import RendererConfig, RenderOutputConfig
 
 jax.config.update("jax_enable_x64", True)  # double precision
 

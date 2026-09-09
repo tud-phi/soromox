@@ -11,10 +11,10 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array, jit, vmap
 
-from soromox.rendering.camera_config import CameraConfig
-from soromox.rendering.color_config import RendererColorConfig
+from soromox.rendering.config import RendererConfig
+from soromox.rendering.config.camera import CameraConfig
+from soromox.rendering.config.colors import RendererColorConfig
 from soromox.rendering.opencv_base import BaseOpenCVRenderer
-from soromox.rendering.renderer_config import RendererConfig
 from soromox.systems import PlanarHSA
 
 

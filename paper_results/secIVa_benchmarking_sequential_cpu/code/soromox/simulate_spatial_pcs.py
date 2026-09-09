@@ -8,7 +8,7 @@ import numpy as np
 from diffrax import Tsit5
 
 from soromox.rendering import MatplotlibRenderer
-from soromox.rendering.renderer_config import GeometryConfig, RendererConfig
+from soromox.rendering.config import GeometryConfig, RendererConfig
 from soromox.systems import PCS, LinkSpec, SystemState
 
 jax.config.update("jax_enable_x64", True)  # double precision

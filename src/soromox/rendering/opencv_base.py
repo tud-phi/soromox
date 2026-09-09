@@ -9,9 +9,10 @@ import numpy as np
 from jax import Array
 
 from soromox.rendering.base import BaseSoftRobotRenderer
-from soromox.rendering.camera_config import CameraConfig
-from soromox.rendering.color_config import RendererColorConfig
-from soromox.rendering.video_encoding import FFmpegVideoWriter, VideoEncodingConfig
+from soromox.rendering.config.camera import CameraConfig
+from soromox.rendering.config.colors import RendererColorConfig
+from soromox.rendering.config.output import VideoEncodingConfig
+from soromox.rendering.video_encoding import FFmpegVideoWriter
 
 
 class BaseOpenCVRenderer(BaseSoftRobotRenderer):

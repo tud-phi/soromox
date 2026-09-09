@@ -12,7 +12,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from soromox.rendering.renderer_config import (
+from soromox.rendering.config import (
     GeometryConfig,
     GroundPlaneConfig,
     RendererConfig,
@@ -28,9 +28,10 @@ import numpy as np
 import open3d as o3d
 
 from soromox.actuation import ThreadlikeActuator, ThreadlikeRouting
-from soromox.rendering.camera_config import CameraConfig
+from soromox.rendering.config.camera import CameraConfig
+from soromox.rendering.config.output import VideoEncodingConfig
 from soromox.rendering.open3d_renderer import Open3DRenderer
-from soromox.rendering.video_encoding import FFmpegVideoWriter, VideoEncodingConfig
+from soromox.rendering.video_encoding import FFmpegVideoWriter
 from soromox.systems import PCS, LinkSpec
 
 if __package__:

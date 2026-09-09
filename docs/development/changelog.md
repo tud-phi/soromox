@@ -16,43 +16,20 @@ and include benchmark baseline and measurement context for performance claims.
 - Added a UMArm operational-space example using
   `OperationalSpaceImpedanceControlTracker` and balanced antagonistic pressure
   inputs to track a base-parallel circle.
-- Added shared renderer configuration with technical, neutral studio, bright
-  studio, dark studio, flat and clay presets, physical light units, world floors,
-  and an Open3D/Viser comparison gallery of upright tapered GVS tentacles.
-  The preset example supports native image/video export and browser PNG capture.
+- Added shared scene settings for lighting, materials, shadows, ground planes and
+  curved backdrops, with technical, neutral/bright/dark studio, flat and clay
+  presets and an Open3D/Viser tentacle gallery.
+- Added reproducible Open3D development builds for macOS and Linux x86-64,
+  including Metal image capture and surfaceless EGL exports alongside GLX
+  interactive viewing. Ubuntu native-rendering tests and an upstream-revision
+  check cover the source-build workflow.
 
-
-- Added opt-in Ubuntu rendering integration tests that exercise the actual
-  native graphics paths: surfaceless EGL renders non-empty frames and H.264
-  video without an X server, while Xvfb verifies that modern `show()` windows
-  open and close and that legacy interactive playback advances the sequence.
-  The tests are guarded on non-Ubuntu hosts; source builds and both rendering
-  paths were validated with CPython 3.11–3.14.
-
-- Added a daily `Check Open3D upstream revision` workflow. It compares the
-  immutable commit in `OPEN3D_REVISION` with upstream `main` and fails when a
-  newer commit is available; updating the pin remains a deliberate operation
-  followed by lockfile refresh and native regression testing. This allows the
-  project to track pre-release Open3D development closely without making two
-  installations from the same lock resolve different source code.
 
 ### Changed
 
-- Changed the Open3D development dependency to a reproducible snapshot of
-  upstream `main`. On macOS and Linux x86-64, a cross-platform PEP 517 adapter
-  exposes static, platform-neutral metadata during dependency resolution and
-  builds an ABI-specific wheel only during installation; other platforms keep
-  using compatible wheels from Open3D's development channel. Static `show()`
-  views use the modern GUI, while animated previews use efficient legacy mesh
-  updates and warn about visual differences from modern rendering.
-
-- Extended that source build for each platform's native renderer. macOS compiles
-  Metal shaders and applies the pending RGB-readback correction. Linux builds
-  both Filament backends so exports can select surfaceless EGL without an X
-  server and interactive viewers can continue to select display-backed GLX. The
-  Linux adaptation also covers EGL API binding on worker threads, pbuffer
-  selection, safe desktop-GL extension initialization, current static-curl
-  linking, and integration of the Filament patch into Open3D's build.
+- Open3D static `show()` and image exports use the modern renderer. Animated
+  previews retain efficient legacy geometry updates and warn about appearance
+  differences; other backends apply or approximate shared scene settings.
 
 ### Performance
 
@@ -60,18 +37,17 @@ and include benchmark baseline and measurement context for performance claims.
 
 ### Breaking changes
 
-- All renderers accept appearance, camera, colors, geometry and output defaults
-  through `config=RendererConfig(...)`. Removed the superseded constructor
-  appearance and geometry arguments. Defaults are 800 × 600,
-  80 backbone samples and 48 cross-section samples. The default ground is a
-  world floor (+Z spatial, +Y planar); base alignment is explicit. Per-call
-  camera, color and video overrides replace complete sections. OpenCV sequence
-  options are keyword-only, with the required recording path first.
-
-- Open3D sequences with `record_path` now export through the modern renderer and
-  return without opening interactive playback. Frame selection is deterministic;
-  `record_every_n` reduces both the frame count and FPS. Playback controls and
-  `close_when_recording_done` no longer affect exports.
+- Renderer constructors accept shared defaults through `config=RendererConfig(...)`;
+  appearance, geometry and output constructor arguments move into its sections.
+  Public settings live in `soromox.rendering.config` and are also exported from
+  `soromox.rendering`; direct camera, color and video configuration imports must
+  use the new modules. Per-call camera, color and video overrides replace sections.
+- Default output is 800 × 600 with 80 backbone and 48 cross-section samples. Ground
+  planes use world alignment (+Z spatial, +Y planar); base alignment is optional.
+  OpenCV sequence options are keyword-only, with a required recording path.
+- Open3D sequences with `record_path` synchronously export through the modern
+  renderer and return without interactive playback. `record_every_n` reduces both
+  frame count and FPS; playback controls do not affect exported frames.
 
 ### Fixed
 

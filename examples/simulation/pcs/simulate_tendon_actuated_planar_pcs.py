@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 from diffrax import Tsit5
 from jax import numpy as jnp
 
-from soromox.rendering.renderer_config import GeometryConfig, RendererConfig
+from soromox.rendering.config import GeometryConfig, RendererConfig
 
 jax.config.update("jax_enable_x64", True)  # double precision
 from soromox.actuation import ThreadlikeActuator, ThreadlikeRouting

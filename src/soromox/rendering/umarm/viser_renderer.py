@@ -13,7 +13,7 @@ import numpy as np
 from jax import Array
 
 from soromox.actuation.mckibben import ArticulatedMcKibbenActuator
-from soromox.rendering.camera_config import CameraConfig
+from soromox.rendering.config.camera import CameraConfig
 from soromox.rendering.viser_renderer import (
     LiveModeController,
     ViserRenderer,

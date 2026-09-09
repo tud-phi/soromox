@@ -7,7 +7,7 @@ import optimistix as optx
 
 from soromox.actuation import ThreadlikeActuator, ThreadlikeRouting
 from soromox.rendering import Open3DRenderer
-from soromox.rendering.renderer_config import GeometryConfig, RendererConfig
+from soromox.rendering.config import GeometryConfig, RendererConfig
 from soromox.systems import (
     GVS,
     GVSSegment,

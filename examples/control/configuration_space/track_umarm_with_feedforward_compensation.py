@@ -23,7 +23,7 @@ from pathlib import Path
 import equinox as eqx
 import jax
 
-from soromox.rendering.renderer_config import (
+from soromox.rendering.config import (
     GeometryConfig,
     RendererConfig,
     RenderOutputConfig,

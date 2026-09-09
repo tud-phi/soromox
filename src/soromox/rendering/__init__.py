@@ -18,28 +18,7 @@ from soromox.rendering.actuators import (
     TrajectoryActuatorVisualLayer,
 )
 from soromox.rendering.base import BaseSoftRobotRenderer
-from soromox.rendering.camera_config import CameraConfig
-from soromox.rendering.color_config import (
-    ActuatorStyleConfig,
-    BackboneColorConfig,
-    ColorLegend,
-    RendererColorConfig,
-    get_color_theme,
-    list_builtin_palettes,
-    list_builtin_themes,
-)
-from soromox.rendering.cross_sections import (
-    CrossSection,
-    CrossSectionSweepLayout,
-    DiscreteCrossSectionMarker,
-    cross_section_sweep_layout,
-    evaluate_cross_sections,
-    loft_cross_section_contours,
-    loft_cross_sections,
-    register_cross_section_contour,
-)
-from soromox.rendering.matplotlib_renderer import MatplotlibRenderer
-from soromox.rendering.renderer_config import (
+from soromox.rendering.config import (
     AmbientLightConfig,
     BackdropConfig,
     DirectionalLightConfig,
@@ -51,7 +30,28 @@ from soromox.rendering.renderer_config import (
     RenderOutputConfig,
     SceneConfig,
 )
-from soromox.rendering.video_encoding import VideoEncodingConfig
+from soromox.rendering.config.camera import CameraConfig
+from soromox.rendering.config.colors import (
+    ActuatorStyleConfig,
+    BackboneColorConfig,
+    ColorLegend,
+    RendererColorConfig,
+    get_color_theme,
+    list_builtin_palettes,
+    list_builtin_themes,
+)
+from soromox.rendering.config.output import VideoEncodingConfig
+from soromox.rendering.cross_sections import (
+    CrossSection,
+    CrossSectionSweepLayout,
+    DiscreteCrossSectionMarker,
+    cross_section_sweep_layout,
+    evaluate_cross_sections,
+    loft_cross_section_contours,
+    loft_cross_sections,
+    register_cross_section_contour,
+)
+from soromox.rendering.matplotlib_renderer import MatplotlibRenderer
 
 # Open3D renderer is optional (requires open3d package)
 try:

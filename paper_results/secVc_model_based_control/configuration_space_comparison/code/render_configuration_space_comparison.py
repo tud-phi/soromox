@@ -18,7 +18,7 @@ from configuration_space_comparison_simulation import (
 )
 
 from soromox.rendering import BackboneColorConfig, RendererColorConfig, ViserRenderer
-from soromox.rendering.renderer_config import GeometryConfig, RendererConfig
+from soromox.rendering.config import GeometryConfig, RendererConfig
 
 ACTUAL_RENDER_COLORS = np.array(
     [

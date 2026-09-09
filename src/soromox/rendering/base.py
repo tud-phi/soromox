@@ -24,7 +24,8 @@ from soromox.rendering.actuators import (
     normalize_batched_actuator_layers,
     normalize_trajectory_actuator_layers,
 )
-from soromox.rendering.color_config import (
+from soromox.rendering.config import RendererConfig
+from soromox.rendering.config.colors import (
     DEFAULT_ROBOT_PALETTE,
     DEFAULT_SEGMENT_PALETTE,
     ColorLegend,
@@ -33,7 +34,7 @@ from soromox.rendering.color_config import (
     normalize_color_array,
     normalize_palette,
 )
-from soromox.rendering.renderer_config import RendererConfig, validate_config
+from soromox.rendering.config.renderer import validate_config
 from soromox.systems.soft_robot import SoftRobot
 
 

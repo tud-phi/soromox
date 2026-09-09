@@ -5,7 +5,7 @@ import pytest
 from jax import numpy as jnp
 from numpy.testing import assert_allclose, assert_array_equal
 
-from soromox.rendering.renderer_config import (
+from soromox.rendering.config import (
     GeometryConfig,
     GroundPlaneConfig,
     RendererConfig,
@@ -16,7 +16,7 @@ from soromox.rendering.renderer_config import (
 pytest.importorskip("open3d")
 
 from soromox.rendering import open3d_renderer as open3d_renderer_module  # noqa: E402
-from soromox.rendering.camera_config import CameraConfig  # noqa: E402
+from soromox.rendering.config.camera import CameraConfig  # noqa: E402
 from soromox.rendering.cross_sections import (  # noqa: E402
     CrossSection,
     loft_cross_sections,

@@ -14,7 +14,8 @@ from matplotlib.collections import LineCollection
 from matplotlib.widgets import Slider
 from mpl_toolkits.mplot3d.art3d import Line3DCollection
 
-from soromox.rendering.video_encoding import FFmpegVideoWriter, VideoEncodingConfig
+from soromox.rendering.config.output import VideoEncodingConfig
+from soromox.rendering.video_encoding import FFmpegVideoWriter
 
 if TYPE_CHECKING:
     from IPython.display import HTML
@@ -28,9 +29,9 @@ from soromox.rendering.actuators import (
     resolve_actuator_rgba,
 )
 from soromox.rendering.base import BaseSoftRobotRenderer
-from soromox.rendering.camera_config import CameraConfig
-from soromox.rendering.color_config import RendererColorConfig
-from soromox.rendering.renderer_config import RendererConfig
+from soromox.rendering.config import RendererConfig
+from soromox.rendering.config.camera import CameraConfig
+from soromox.rendering.config.colors import RendererColorConfig
 from soromox.rendering.scenery import ground_grid, plane_basis
 from soromox.systems.soft_robot import SoftRobot
 
