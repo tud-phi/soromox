@@ -48,7 +48,7 @@ from operational_space_impedance_common import (  # noqa: E402
     operational_tracking_data,
 )
 
-FIGURE_SIZE_CM = (18.1, 15.1)
+FIGURE_SIZE_CM = (18.1, 17.0)
 CM_TO_INCH = 1.0 / 2.54
 
 FONT_SIZE = 8.0
@@ -512,7 +512,7 @@ def build_composite_figure(
             right=0.975,
             bottom=0.019,
             top=0.985,
-            height_ratios=(6.15, 1.05, 7.35),
+            height_ratios=(6.15, 1.05, 9.15),
             hspace=0.0,
         )
 
@@ -525,7 +525,7 @@ def build_composite_figure(
         operational_grid = outer[2, 0].subgridspec(
             7,
             2,
-            height_ratios=(0.42, 1.0, 0.12, 1.0, 0.82, 1.90, 0.18),
+            height_ratios=(0.42, 1.0, 0.12, 1.0, 0.82, 3.70, 0.18),
             hspace=0.05,
             wspace=0.24,
         )
@@ -569,7 +569,7 @@ def build_composite_figure(
             for column in range(4)
         )
         for snapshot_axis in snapshot_axes:
-            snapshot_axis.set_anchor("C")
+            snapshot_axis.set_anchor("S")
         _plot_snapshots(snapshot_axes, snapshots)
 
         _panel_label(fig, "A", outer[0, 0])

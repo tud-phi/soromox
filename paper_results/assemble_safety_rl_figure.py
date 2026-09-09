@@ -100,19 +100,21 @@ def add_snapshots(fig, videos, times, row_bottoms, titles):
     rows = [[extract_frame(video, time) for time in times] for video in videos]
     left, top, right, bottom = shared_crop([frame for row in rows for frame in row])
     for row, y, title in zip(rows, row_bottoms, titles, strict=True):
-        fig.text(0.235, y + 0.187, title, ha="center", fontsize=8)
+        fig.text(0.2415, y + 0.176, title, ha="center", fontsize=8)
         for index, (frame, time) in enumerate(zip(row, times, strict=True)):
-            ax = fig.add_axes([0.02 + index * 0.108, y, 0.103, 0.177])
+            ax = fig.add_axes([0.02 + index * 0.112, y, 0.107, 0.16])
             ax.imshow(frame[top:bottom, left:right])
             ax.set_anchor("N")
             ax.set_axis_off()
-            ax.text(
-                0.5,
-                -0.06,
+            ax.annotate(
                 f"{time:g} s",
-                transform=ax.transAxes,
+                xy=(0.5, 0),
+                xycoords="axes fraction",
+                xytext=(0, -6),
+                textcoords="offset points",
                 ha="center",
-                fontsize=6,
+                va="top",
+                fontsize=8,
                 color="0.4",
             )
 
@@ -132,19 +134,19 @@ def build_figure(safety_dir: Path, rl_dir: Path, safety_times, rl_times):
         fig,
         safety_videos,
         safety_times,
-        (0.765, 0.545),
+        (0.775, 0.550),
         ("HOCLF controller", "HOCLF+HOCBF controller"),
     )
     add_snapshots(
         fig,
         rl_videos,
         rl_times,
-        (0.285, 0.065),
+        (0.300, 0.075),
         ("Initialized RL controller", "Trained RL controller"),
     )
-    force_ax = fig.add_axes([0.565, 0.635, 0.365, 0.315])
+    force_ax = fig.add_axes([0.54, 0.615, 0.39, 0.335])
     safety_plot.build_figure(load_results("both", safety_dir / "data"), ax=force_ax)
-    reward_ax = fig.add_axes([0.565, 0.085, 0.365, 0.415])
+    reward_ax = fig.add_axes([0.54, 0.065, 0.39, 0.475])
     groups = rl_plot.discover_csv_groups(rl_dir / "data" / "reward_logs")
     rl_plot.build_figure(
         groups, argparse.Namespace(points=500, smooth_scale=0.5), ax=reward_ax
@@ -165,9 +167,9 @@ def build_figure(safety_dir: Path, rl_dir: Path, safety_times, rl_times):
                     handle.set_markersize(4)
     for label, x, y in (
         ("A", 0.015, 0.983),
-        ("B", 0.49, 0.983),
+        ("B", 0.475, 0.983),
         ("C", 0.015, 0.503),
-        ("D", 0.49, 0.533),
+        ("D", 0.475, 0.573),
     ):
         fig.text(x, y, label, fontsize=13, fontweight="bold", va="top")
     return fig, safety_videos + rl_videos

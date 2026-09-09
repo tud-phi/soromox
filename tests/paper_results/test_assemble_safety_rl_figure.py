@@ -33,3 +33,25 @@ def test_existing_outputs_are_preserved_without_force(tmp_path):
     with pytest.raises(SystemExit):
         assembly.main(["--output-base", str(output)])
     assert output.with_suffix(".pdf").read_bytes() == b"existing figure"
+
+
+def test_snapshot_timestamps_match_axis_labels_and_clear_row_titles():
+    with assembly.plt.rc_context({"axes.labelsize": 8}):
+        fig, _ = assembly.build_figure(
+            assembly.SAFETY, assembly.RL, (0, 0.75, 2, 7.9), (0, 5, 10, 15)
+        )
+        try:
+            fig.canvas.draw()
+            renderer = fig.canvas.get_renderer()
+            snapshot_axes = [ax for ax in fig.axes if ax.images]
+            for ax in snapshot_axes:
+                label = ax.texts[0]
+                assert label.get_fontsize() == assembly.plt.rcParams["axes.labelsize"]
+                box = label.get_window_extent(renderer)
+                assert ax.get_window_extent(renderer).y0 - box.y1 >= 5 * fig.dpi / 72
+                assert all(
+                    not box.overlaps(title.get_window_extent(renderer))
+                    for title in fig.texts
+                )
+        finally:
+            assembly.plt.close(fig)
