@@ -161,15 +161,6 @@ paper_results/secVd_control_gain_optimization/outputs/*_diagnostics/
 examples/**/figures/*
 examples/**/videos/*
 
-# Preset images used by the user-facing comparison gallery.
-!examples/rendering/figures/presets/
-examples/rendering/figures/presets/*
-!examples/rendering/figures/presets/open3d_*.png
-!examples/rendering/figures/presets/viser_*.png
-
-# Local renderer review reports and diagnostics.
-examples/rendering/.local/
-
 # Documentation build
 site/
 

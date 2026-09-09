@@ -1,7 +1,8 @@
 # Shared Renderer Configuration
 
 This page documents camera, base, ground-plane, and color settings shared by
-multiple SoRoMoX renderers.
+multiple SoRoMoX renderers. For existing applications, see the
+[renderer migration guide](migration.md).
 
 ## Camera Configuration
 

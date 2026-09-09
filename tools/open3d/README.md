@@ -167,15 +167,17 @@ GLX and EGL-headless Filament platforms. The Filament changes also re-bind the
 EGL API on worker threads, use a pbuffer-compatible configuration, and avoid a
 desktop-GL extension query that can return null.
 
-The cross-version matrix is green, so these changes should now be proposed
-upstream. The dual GLX/EGL selection, worker-thread API binding, pbuffer choice,
-and desktop-GL extension guard belong in a focused Filament issue and PR. The
+The local cross-version validation above passed; upstream submissions are
+still outstanding. The dual GLX/EGL selection, worker-thread API binding,
+pbuffer choice, and desktop-GL extension guard belong in a focused Filament
+issue and PR. The
 surfaceless Gaussian-splat-context guard and Filament patch hook belong in a
 focused Open3D issue and PR. Distribution naming, static-curl linking, and
 toolchain compatibility should be proposed separately so each change has a
 small regression test and can be reviewed independently. The mixed modern/legacy
 GUI finalization abort should also be reported as its own Open3D issue. No
-upstream issue or PR has been opened from this checkout.
+upstream issue or PR has been opened from this work, and no validation comment
+has been posted on PR #7550.
 
 ## Build configuration and overrides
 
