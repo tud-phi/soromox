@@ -67,18 +67,17 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def main() -> None:
-    configure_matplotlib()
-
-    args = parse_args()
-    results = load_results(args.controller, args.data_dir)
-    args.output_dir.mkdir(parents=True, exist_ok=True)
-
+def build_figure(results, *, ax=None):
+    """Draw the saved force/distance comparison on new or supplied axes."""
     force_limit = 5.0
     force_axis_max = 1.08 * max(
         force_limit, *(float(result["force"].max()) for result in results)
     )
-    fig, ax1 = plt.subplots(figsize=(7, 4))
+    if ax is None:
+        fig, ax1 = plt.subplots(figsize=(7, 4))
+    else:
+        ax1 = ax
+        fig = ax.figure
 
     force_lines = []
     goal_distance_lines = []
@@ -168,6 +167,15 @@ def main() -> None:
     ax2.grid(False)
 
     ax1.set_xlim(min(result["ts"]), round(max(result["ts"])))
+    return fig
+
+
+def main() -> None:
+    configure_matplotlib()
+    args = parse_args()
+    results = load_results(args.controller, args.data_dir)
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    fig = build_figure(results)
     fig.tight_layout()
     png_path = args.output_dir / "force_goal_distance_plot.png"
     pdf_path = args.output_dir / "force_goal_distance_plot.pdf"

@@ -226,9 +226,14 @@ def aggregate_curves(
     return grid / 60.0, mean, std
 
 
-def build_figure(groups: dict[str, list[Path]], args: argparse.Namespace) -> plt.Figure:
+def build_figure(
+    groups: dict[str, list[Path]], args: argparse.Namespace, *, ax=None
+) -> plt.Figure:
     """Construct the figure and axes, applying all data plots."""
-    fig, ax = plt.subplots(figsize=cm2inch(FIGURE_SIZE_CM), constrained_layout=True)
+    if ax is None:
+        fig, ax = plt.subplots(figsize=cm2inch(FIGURE_SIZE_CM), constrained_layout=True)
+    else:
+        fig = ax.figure
 
     global_max_x = 0.0
 
