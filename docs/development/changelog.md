@@ -72,7 +72,8 @@ and include benchmark baseline and measurement context for performance claims.
   transparent canvas and plot backgrounds.
 
 - Preset lights now follow the ground normal, and the −z backdrop keeps its wall
-  behind the scene. Explicit world lights retain their coordinates. Gallery
+  behind the scene. Tilted normals no longer flip the backdrop and lights when
+  crossing the XY plane. Explicit world lights retain their coordinates. Gallery
   mounting-height selection preserves each preset's ground color and visibility.
 
 - Modern Open3D swept surfaces share smooth normals at matching link ends,

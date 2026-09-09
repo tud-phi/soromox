@@ -46,18 +46,23 @@ def plane_basis(normal):
         normal: Nonzero three-vector normal to the plane.
 
     Returns:
-        Matrix whose columns are the two plane axes and normalized normal.
+        Matrix whose columns are width, depth and normalized normal. Depth is
+        projected world +Y, with a +X-width fallback at normals parallel to Y.
+        The fallback is a coordinate singularity, not a continuous frame choice.
     """
     n = np.asarray(normal, dtype=float)
     n = n / np.linalg.norm(n)
-    # Keep the backdrop depth toward +Y for both +Z and -Z mounting.
-    # Reversing the normal rotates around Y, matching named spatial mounts.
-    u = np.array([-1.0 if n[2] < 0 else 1.0, 0.0, 0.0])
-    if abs(u @ n) > 0.95:
-        u = np.array([0.0, 1.0, 0.0])
-    u -= (u @ n) * n
+    # Project world +Y into the plane to preserve backdrop depth continuously
+    # across the XZ plane, including upright and hanging mounts.
+    u = np.cross([0.0, 1.0, 0.0], n)
+    if np.linalg.norm(u) < 1e-12:
+        # Depth is undefined at +/-Y. Retain the canonical planar convention
+        # with width along +X; no normal-only frame can be continuous everywhere.
+        u = np.array([1.0, 0.0, 0.0])
+        u -= (u @ n) * n
     u /= np.linalg.norm(u)
-    return np.column_stack((u, np.cross(n, u), n))
+    v = np.cross(n, u)
+    return np.column_stack((u, v, n))
 
 
 def _eased_backdrop_profile(config) -> np.ndarray:

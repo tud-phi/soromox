@@ -432,7 +432,12 @@ FFmpeg writer.
 
 Preset directional and point lights use `reference="ground"`, resolving their
 vectors through the same basis as the backdrop. `GroundPlaneConfig(normal=(0, 0, -1))`
-rotates that basis by 180 degrees about world Y. Custom lights default to
+rotates that basis by 180 degrees about world Y. For tilted normals, backdrop
+depth follows world +Y projected into the ground plane, avoiding a sign flip
+when the normal crosses the XY plane. At normals parallel to world Y, depth
+is undefined and the basis uses world +X for width; this reference-axis
+singularity cannot provide a continuous orientation for every approach direction.
+Custom lights default to
 `reference="world"`, preserving explicit world positions and directions. Ground-relative
 point positions are measured from the world origin; ground height does not translate
 them. Preset intensity and range retain the existing `scene_extent` scaling.

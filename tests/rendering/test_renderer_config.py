@@ -768,3 +768,37 @@ def test_explicit_world_lights_do_not_rotate_with_ground():
 def test_light_reference_validation(light_type):
     with pytest.raises(ValueError, match="reference"):
         light_type(reference="invalid")
+
+
+@pytest.mark.parametrize("x", [0.01, 0.4, 0.96, 1.0])
+def test_ground_basis_does_not_flip_across_horizontal_normals(x):
+    from soromox.rendering.scenery import resolved_lights
+
+    # Avoid the unavoidable reference-axis singularity at exactly +/-Y.
+    y = np.sqrt(1 - x**2)
+    normals = ([x, y, 1e-7], [x, y, -1e-7])
+    bases = [plane_basis(n) for n in normals]
+    assert_allclose(bases[0], bases[1], atol=3e-5)
+    scene = SceneConfig.studio()
+    lights = [list(resolved_lights(scene, n)) for n in normals]
+    for left, right in zip(*lights):
+        field = "position" if isinstance(left, PointLightConfig) else "direction"
+        assert_allclose(getattr(left, field), getattr(right, field), atol=3e-5)
+    meshes = [backdrop_mesh(scene, np.zeros(3), 1.0, n)[0] for n in normals]
+    assert_allclose(meshes[0], meshes[1], atol=1e-4)
+
+
+@pytest.mark.parametrize(
+    "normal", [[0, 0, 1], [0, 0, -1], [0, 1, 0], [0, -1, 0], [1, 0, 0], [1, 2, -3]]
+)
+def test_ground_basis_is_right_handed_with_canonical_mounts(normal):
+    basis = plane_basis(normal)
+    assert_allclose(basis.T @ basis, np.eye(3), atol=1e-12)
+    assert np.linalg.det(basis) == pytest.approx(1)
+    assert_allclose(basis[:, 2], np.asarray(normal) / np.linalg.norm(normal))
+    if normal == [0, 0, 1]:
+        assert_allclose(basis, np.eye(3))
+    elif normal == [0, 0, -1]:
+        assert_allclose(basis, np.diag([-1, 1, -1]))
+    elif normal[0] == normal[2] == 0:
+        assert_allclose(basis[:, 0], [1, 0, 0])
