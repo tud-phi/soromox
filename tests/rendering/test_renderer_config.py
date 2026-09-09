@@ -144,7 +144,7 @@ def test_warning_is_once_per_render_mode():
         renderer._warn_simple_appearance("static")
         renderer._warn_simple_appearance("animated")
     assert len(seen) == 2
-    assert "shadows" in str(seen[0].message)
+    assert "white background" in str(seen[0].message)
 
 
 def test_viser_lights_exposure_orientation_and_reinitialization():
@@ -537,3 +537,102 @@ def test_studio_variants_share_backdrop_and_retain_distinct_lighting(
     assert_allclose(scene.lights[0].direction, direction)
     assert scene.lights[1].intensity_candela == pytest.approx(front / (4 * np.pi))
     assert scene.lights[2].intensity_candela == pytest.approx(rear / (4 * np.pi))
+
+
+@pytest.mark.parametrize(
+    "preset", ["technical", "neutral", "bright", "dark", "flat", "clay"]
+)
+def test_opencv_presets_use_identical_white_canvas_without_scenery(preset):
+    """Scene settings cannot recolor OpenCV backgrounds or add ground lines."""
+    scene = (
+        RendererConfig.clay().scene
+        if preset == "clay"
+        else SceneConfig.technical()
+        if preset == "technical"
+        else SceneConfig.flat()
+        if preset == "flat"
+        else SceneConfig.studio(preset)
+    )
+
+    def capture(scene):
+        renderer = OpenCVPlanarRenderer(
+            robot(),
+            config=RendererConfig(
+                scene=scene,
+                output=RenderOutputConfig(width=160, height=120),
+                geometry=GeometryConfig(num_points=10),
+            ),
+        )
+        with pytest.warns(UserWarning, match="white background"):
+            return renderer.render_frame(jnp.zeros(1), render_actuators=False)
+
+    pixels = capture(scene)
+    np.testing.assert_array_equal(pixels, capture(SceneConfig.flat()))
+    np.testing.assert_array_equal(pixels[0, 0], [255, 255, 255])
+    assert np.any(pixels != 255)
+
+
+def test_opencv_video_frames_ignore_studio_background(monkeypatch, tmp_path):
+    """Video uses the same white canvas and emits one warning for the operation."""
+    import soromox.rendering.opencv_base as module
+
+    frames = []
+
+    class Writer:
+        stderr_log = ""
+
+        def __init__(self, *args, **kwargs):
+            assert kwargs["input_pix_fmt"] == "bgr24"
+
+        def write(self, image):
+            frames.append(image.copy())
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(module, "FFmpegVideoWriter", Writer)
+    renderer = OpenCVPlanarRenderer(
+        robot(),
+        config=RendererConfig(scene=SceneConfig.studio("dark")),
+    )
+    with pytest.warns(UserWarning, match="white background") as caught:
+        renderer.render_sequence(
+            np.array([0.0, 0.1]),
+            np.zeros((2, 1)),
+            record_path=str(tmp_path / "white.mp4"),
+        )
+    assert len(caught) == 1
+    assert len(frames) == 2
+    for frame in frames:
+        np.testing.assert_array_equal(frame[0, 0], [255, 255, 255])
+
+
+def test_hsa_opencv_ignores_studio_scenery():
+    """The specialized HSA renderer also preserves a plain white canvas."""
+    from pathlib import Path
+
+    from soromox.rendering.planar_hsa.opencv_renderer import OpenCVPlanarHSARenderer
+    from soromox.systems import PlanarHSA, PlanarHSAParams, PlanarHSAStructure
+
+    params_path = (
+        Path(__file__).resolve().parents[2]
+        / "assets/robot_parameters/planar_hsa/fpu_control.npz"
+    )
+    hsa = PlanarHSA(
+        params=PlanarHSAParams.from_npz(params_path),
+        structure=PlanarHSAStructure(),
+        base_pose=jnp.zeros(3),
+    )
+    images = []
+    for scene in (SceneConfig.studio("dark"), SceneConfig.flat()):
+        renderer = OpenCVPlanarHSARenderer(
+            hsa,
+            config=RendererConfig(
+                scene=scene, output=RenderOutputConfig(width=240, height=180)
+            ),
+        )
+        with pytest.warns(UserWarning, match="white background"):
+            images.append(renderer.render_frame(jnp.zeros(hsa.num_coordinates)))
+    np.testing.assert_array_equal(images[0], images[1])
+    np.testing.assert_array_equal(images[0][0, 0], [255, 255, 255])
+    assert np.any(images[0] != 255)

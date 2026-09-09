@@ -26,7 +26,7 @@ BaseSoftRobotRenderer (abstract base)
 | `BaseSoftRobotRenderer` | Backbone sampling, cached forward kinematics, batched layouts, color resolution, and the common rendering interface | All renderers |
 | Robot base | `fixed_base_pose` mounts fixed robots; floating renderers follow the base coordinates in each runtime configuration | All renderers |
 | Base plate | `config.geometry.base_plate_style`, `base_plate_radius_scale` and `base_plate_thickness` configure the mount | Open3D and Viser; Matplotlib draws a filled disk in 3D or a transverse marker in 2D |
-| Ground plane | `config.scene.ground` configures a world floor or base-aligned planes, including colors, size, grid and opacity | All renderers, with backend approximations |
+| Ground plane | `config.scene.ground` configures a world floor or base-aligned planes, including colors, size, grid and opacity | Open3D and Viser, with backend approximations |
 
 ### Cross-Section Geometry
 
@@ -216,7 +216,9 @@ Visualization in Python. *arXiv preprint arXiv:2507.22885*.
 ## OpenCV Planar Renderer
 
 `OpenCVPlanarRenderer` provides lightweight single-frame rendering and fast
-video export for planar robots.
+video export for planar robots. Both OpenCV backends use a white canvas and
+ignore scene backgrounds, ground planes, backdrops, lighting and effects. Robot
+colors, geometry, output settings and the planar pixel projection apply.
 
 ::: soromox.rendering.opencv_planar_renderer.OpenCVPlanarRenderer
     options:

@@ -21,50 +21,31 @@ class BaseOpenCVRenderer(BaseSoftRobotRenderer):
     def _writer_label(self) -> str:
         return f"[{self.__class__.__name__}]"
 
-    def _draw_ground(self, image, curve, origin_uv, ppm):
-        """Draw the configured planar ground reference onto a BGR image.
+    def _warn_simple_appearance(self, mode: str) -> None:
+        """Explain the planar drawing style once per rendering mode.
 
         Args:
-            image: BGR uint8 image with shape (height, width, 3).
-            curve: Backbone positions with shape (points, 2), in metres.
-            origin_uv: Pixel coordinates of the world origin.
-            ppm: Projection scale in pixels per metre.
+            mode: Rendering operation used to deduplicate warnings.
 
         Returns:
-            BGR uint8 image with the ground reference and configured opacity.
+            None. Reports that scene appearance and camera settings are ignored.
         """
-        self._fit_scene_bounds(curve)
-        ground = self.config.scene.ground
-        if not ground.visible or not (ground.surface or ground.grid):
-            return image
-        for center, normal, size in self._resolve_ground_planes(
-            np.asarray(curve)[None]
-        ):
-            tangent = np.array([-normal[1], normal[0]])
-            length = np.linalg.norm(tangent)
-            if length < 1e-9:
-                continue
-            points = center[:2] + np.array([[-0.5], [0.5]]) * size * tangent / length
-            pixels = (points * ppm).astype(np.int32)
-            pixels[:, 1] *= -1
-            pixels += np.asarray(origin_uv, dtype=np.int32)
-            overlay = image.copy()
-            cv2.line(
-                overlay,
-                tuple(pixels[0]),
-                tuple(pixels[1]),
-                tuple(
-                    int(c * 255)
-                    for c in (
-                        ground.color if ground.surface else ground.grid_major_color
-                    )[::-1]
-                ),
-                2,
-            )
-            image = cv2.addWeighted(
-                overlay, ground.opacity, image, 1 - ground.opacity, 0
-            )
-        return image
+        self._warn_appearance(
+            mode,
+            [
+                "scene appearance and camera settings; using a white background "
+                "and the planar pixel projection"
+            ],
+        )
+
+    def _blank_frame(self) -> np.ndarray:
+        """Create the white canvas used by every OpenCV rendering path.
+
+        Returns:
+            BGR uint8 image of shape (height, width, 3), filled with white.
+            Scene backgrounds, ground planes and lighting are ignored.
+        """
+        return np.full((self.height, self.width, 3), 255, dtype=np.uint8)
 
     def render_sequence(
         self,

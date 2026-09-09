@@ -43,7 +43,8 @@ class OpenCVPlanarRenderer(BaseOpenCVRenderer):
         """Initialize OpenCV renderer for planar robots.
 
         Args:
-            config: Shared scene, camera, color, geometry and output defaults.
+            config: Shared robot color, geometry and output defaults. Scene
+                appearance is ignored; the canvas is white.
             robot: Planar robot instance
             length_scale: Scale factor for robot in image (robot occupies height/length_scale)
             origin_uv: Pixel coordinates of world origin (None = center of image)
@@ -171,10 +172,7 @@ class OpenCVPlanarRenderer(BaseOpenCVRenderer):
             origin_uv = np.array(self.origin_uv, dtype=np.int32)
 
         # Initialize background
-        bg_uint8 = tuple(
-            int(c * 255) for c in self.background_color[::-1]
-        )  # RGB to BGR
-        img = np.full((h, w, 3), bg_uint8, dtype=np.uint8)
+        img = self._blank_frame()
 
         # Compute backbone curve in pixel coordinates (N, 2)
         curve = np.asarray(self.compute_backbone_curve(q), dtype=float)
@@ -194,7 +192,6 @@ class OpenCVPlanarRenderer(BaseOpenCVRenderer):
         lengths = self.robot.segment_length
         thicknesses, uniform_thickness = self._auto_backbone_thickness(ppm, lengths, q)
 
-        img = self._draw_ground(img, curve, origin_uv, ppm)
         starts, ends = self._segment_bounds(self.num_points)
         for i in range(len(curve_uv) - 1):
             width = uniform_thickness

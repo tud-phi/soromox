@@ -11,8 +11,8 @@ tentacle with `SceneConfig.studio()` (the neutral studio variant), a pastel
 purple backbone and a dark base. OpenCV shows a two-link planar PCS counterpart
 with the same lengths and prescribed bending coordinates. Matplotlib uses a
 white background and its standard axes, ignoring scene appearance presets.
-OpenCV applies background, ground and color settings while approximating studio
-lighting and backdrop geometry.
+OpenCV also uses a white background, with colored robot geometry and no scene
+lighting or ground scenery.
 
 The [preset gallery](presets.md) compares all six scene presets in Open3D and
 Viser. These examples select neutral studio explicitly; the renderer-wide default

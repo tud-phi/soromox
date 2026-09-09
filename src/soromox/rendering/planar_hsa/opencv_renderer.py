@@ -41,7 +41,8 @@ class OpenCVPlanarHSARenderer(BaseOpenCVRenderer):
         """Initialize OpenCV renderer for Planar HSA.
 
         Args:
-            config: Shared scene, camera, color, geometry and output defaults.
+            config: Shared robot color, geometry and output defaults. Scene
+                appearance is ignored; the canvas is white.
             robot: PlanarHSA robot instance
             rod_thickness: Line thickness for rods
         """
@@ -171,10 +172,7 @@ class OpenCVPlanarHSARenderer(BaseOpenCVRenderer):
             chip_ps = chip_ps.at[:, 1:3].add(offset_jax[None, :])
 
         # Initialize white background
-        bg_uint8 = tuple(
-            int(c * 255) for c in self.background_color[::-1]
-        )  # RGB to BGR
-        img = np.full((h, w, 3), bg_uint8, dtype=np.uint8)
+        img = self._blank_frame()
 
         # World origin in pixel coordinates
         uv_robot_origin = np.array([w // 2, int(h * 0.9)], dtype=np.int32)
@@ -194,9 +192,6 @@ class OpenCVPlanarHSARenderer(BaseOpenCVRenderer):
             base_xy = base_xy + np.asarray(offset)
         base_uv = np.asarray(chi2u(jnp.array([0.0, base_xy[0], base_xy[1]])))
 
-        img = self._draw_ground(
-            img, np.asarray(chiv_ps[1:3]).T, uv_robot_origin, float(ppm)
-        )
         cv2.circle(img, tuple(base_uv), 5, base_color, -1)
 
         # Add proximal and distal cap points to backbone

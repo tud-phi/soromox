@@ -32,9 +32,9 @@ and include benchmark baseline and measurement context for performance claims.
 
 - Open3D static `show()` and image exports use the modern renderer. Animated
   previews use the same camera projection, retain efficient legacy geometry
-  updates and warn about appearance differences. Viser and OpenCV apply or
-  approximate shared scene settings;
-  Matplotlib uses a white background and standard axes, ignoring scene appearance.
+  updates and warn about appearance differences. Viser applies or approximates
+  shared scene settings. Matplotlib and OpenCV ignore scene appearance and use
+  white backgrounds; Matplotlib also uses standard plotting axes.
 - Open3D simulation and control examples export trajectory videos by default,
   avoiding modern-to-legacy graphics-context transitions on macOS.
 

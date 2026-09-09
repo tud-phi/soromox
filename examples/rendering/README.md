@@ -80,5 +80,5 @@ python examples/rendering/backend_gallery.py --backend opencv
 The default output is `docs/assets/rendering/`. OpenCV uses a planar PCS
 counterpart with matching link lengths and prescribed bending coordinates.
 Matplotlib displays colored lines on a white background with standard axes and
-ignores scene appearance presets. OpenCV approximates the studio as colored
-lines and a ground reference.
+ignores scene appearance presets. OpenCV draws colored robot geometry on a
+white canvas and also ignores scene appearance.
