@@ -2,8 +2,10 @@ import jax.numpy as jnp
 import pytest
 from numpy.testing import assert_allclose
 
-from examples.control.configuration_space import track_mckibben_umarm as example
-from examples.control.configuration_space.track_mckibben_umarm import (
+from examples.control.configuration_space import (
+    track_umarm_with_feedforward_compensation as example,
+)
+from examples.control.configuration_space.track_umarm_with_feedforward_compensation import (
     DEFAULT_DURATION,
     DEFAULT_MAX_DELTA_PRESSURE,
     DEFAULT_NOMINAL_PRESSURE,

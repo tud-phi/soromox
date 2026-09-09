@@ -45,7 +45,9 @@ DEFAULT_DAMPING_RATIO = 1.0
 DEFAULT_RECORDING_FPS = 30.0
 DEFAULT_FIGURES_DIR = Path(__file__).resolve().parent / "figures"
 DEFAULT_VIDEO_PATH = (
-    Path(__file__).resolve().parent / "videos" / "track_mckibben_umarm.mp4"
+    Path(__file__).resolve().parent
+    / "videos"
+    / "track_umarm_with_feedforward_compensation.mp4"
 )
 
 UMARM_Z_DOWN_BASE_POSE = poses.spatial_mounting_pose(
@@ -496,7 +498,7 @@ def plot_results(
     axes[3].set_title("Reference motion intensity")
 
     tracking_figure.tight_layout(rect=(0.0, 0.0, 1.0, 0.95))
-    tracking_path = figures_dir / "track_mckibben_umarm_joint_tracking.pdf"
+    tracking_path = figures_dir / "track_umarm_with_feedforward_compensation.pdf"
     tracking_figure.savefig(tracking_path, dpi=200, bbox_inches="tight")
 
     pressure_figure, pressure_axes = plt.subplots(
@@ -534,7 +536,9 @@ def plot_results(
         axis.legend(loc="upper right")
 
     pressure_figure.tight_layout()
-    pressure_path = figures_dir / "track_mckibben_umarm_pressures.pdf"
+    pressure_path = (
+        figures_dir / "track_umarm_with_feedforward_compensation_pressures.pdf"
+    )
     pressure_figure.savefig(pressure_path, dpi=200, bbox_inches="tight")
 
     if show:
