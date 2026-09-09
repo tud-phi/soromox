@@ -5,6 +5,11 @@ import numpy as np
 import pytest
 from numpy.testing import assert_allclose
 
+from soromox.rendering import (
+    ActuatorStyleConfig,
+    BackboneColorConfig,
+    RendererColorConfig,
+)
 from soromox.rendering.actuators import (
     ActuatorVisualLayer,
     BatchedActuatorVisualLayer,
@@ -12,8 +17,14 @@ from soromox.rendering.actuators import (
 )
 from soromox.rendering.base import BaseSoftRobotRenderer
 from soromox.rendering.camera_config import CameraConfig
-from soromox.rendering.color_config import ActuatorStyleConfig
 from soromox.rendering.opencv_planar_renderer import OpenCVPlanarRenderer
+from soromox.rendering.renderer_config import (
+    GeometryConfig,
+    GroundPlaneConfig,
+    RendererConfig,
+    RenderOutputConfig,
+    SceneConfig,
+)
 from soromox.systems.components import CrossSectionGeometry
 from soromox.utils.geometry import poses
 
@@ -238,8 +249,9 @@ def test_renderer_centralizes_ground_plane_configuration():
     robot = DummySpatialRobot(jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]))
     renderer = DummyRenderer(
         robot,
-        show_ground_plane=True,
-        ground_plane_size=0.4,
+        config=RendererConfig(
+            scene=SceneConfig(ground=GroundPlaneConfig(visible=True, size=0.4))
+        ),
     )
 
     assert renderer.show_ground_plane is True
@@ -259,21 +271,23 @@ def test_renderer_resolves_robot_scaled_ground_plane_size():
 def test_renderer_rejects_nonpositive_ground_plane_size(ground_plane_size):
     robot = DummySpatialRobot(jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]))
 
-    with pytest.raises(ValueError, match="ground_plane_size must be positive"):
-        DummyRenderer(robot, ground_plane_size=ground_plane_size)
+    with pytest.raises(ValueError, match="size must be finite and positive"):
+        DummyRenderer(
+            robot,
+            config=RendererConfig(
+                scene=SceneConfig(ground=GroundPlaneConfig(size=ground_plane_size))
+            ),
+        )
 
 
-def test_open3d_and_viser_ground_plane_arguments_follow_base_plate_arguments():
-    from soromox.rendering.open3d_renderer import Open3DRenderer
-    from soromox.rendering.viser_renderer import ViserRenderer
+def test_open3d_and_viser_use_composed_configuration():
+    from soromox.rendering import Open3DRenderer, ViserRenderer
 
     for renderer_type in (Open3DRenderer, ViserRenderer):
-        parameter_names = list(signature(renderer_type).parameters)
-        base_plate_index = parameter_names.index("base_plate_thickness")
-        assert parameter_names[base_plate_index + 1 : base_plate_index + 3] == [
-            "show_ground_plane",
-            "ground_plane_size",
-        ]
+        parameters = list(signature(renderer_type).parameters)
+        assert parameters[:2] == ["robot", "config"]
+        assert "show_ground_plane" not in parameters
+        assert "base_plate_thickness" not in parameters
 
 
 def test_backbone_geometry_sampling_preserves_fk_material_frames():
@@ -373,7 +387,9 @@ def test_renderer_rejects_extra_explicit_base_offsets_by_default():
 
 def test_renderer_computes_actuator_visual_layers_single_and_batched():
     robot = DummyActuatedSpatialRobot(jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]))
-    renderer = DummyRenderer(robot, num_points=5)
+    renderer = DummyRenderer(
+        robot, config=RendererConfig(geometry=GeometryConfig(num_points=5))
+    )
 
     single = renderer.compute_actuator_visual_layers(jnp.array([]))
 
@@ -401,7 +417,9 @@ def test_renderer_uses_batched_actuator_visual_fast_path():
     robot = DummyBatchedActuatedSpatialRobot(
         jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0])
     )
-    renderer = DummyRenderer(robot, num_points=5)
+    renderer = DummyRenderer(
+        robot, config=RendererConfig(geometry=GeometryConfig(num_points=5))
+    )
 
     layers = renderer.compute_actuator_visual_layers_batched(
         jnp.zeros((3, 0)),
@@ -425,7 +443,9 @@ def test_renderer_uses_batched_actuator_visual_fast_path():
 
 def test_renderer_computes_trajectory_actuator_visual_layers():
     robot = DummyActuatedSpatialRobot(jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]))
-    renderer = DummyRenderer(robot, num_points=4)
+    renderer = DummyRenderer(
+        robot, config=RendererConfig(geometry=GeometryConfig(num_points=4))
+    )
 
     layers = renderer.compute_actuator_visual_layers_trajectory(
         jnp.zeros((2, 3, 0)),
@@ -445,7 +465,9 @@ def test_renderer_uses_trajectory_actuator_visual_fast_path():
     robot = DummyTrajectoryActuatedSpatialRobot(
         jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0])
     )
-    renderer = DummyRenderer(robot, num_points=4)
+    renderer = DummyRenderer(
+        robot, config=RendererConfig(geometry=GeometryConfig(num_points=4))
+    )
 
     layers = renderer.compute_actuator_visual_layers_trajectory(
         jnp.zeros((2, 3, 0)),
@@ -466,13 +488,15 @@ def test_opencv_planar_actuator_overlay_draws_configured_color():
     robot = DummyActuatedPlanarRobot(jnp.array([0.0, 0.0, 0.0]))
     renderer = OpenCVPlanarRenderer(
         robot,
-        width=100,
-        height=100,
-        num_points=5,
-        actuator_color=(0, 0, 255),
-        actuator_thickness=2,
         length_scale=2.0,
         origin_uv=(20, 50),
+        config=RendererConfig(
+            output=RenderOutputConfig(width=100, height=100),
+            geometry=GeometryConfig(num_points=5, actuator_line_width=2),
+            colors=RendererColorConfig(
+                actuators=ActuatorStyleConfig(default_color=(1, 0, 0))
+            ),
+        ),
     )
 
     img = renderer.render_frame(jnp.array([]), render_actuators=True)
@@ -484,13 +508,16 @@ def test_opencv_planar_base_marker_uses_base_pose_and_offset():
     robot = DummyPlanarRobot(jnp.array([0.0, 0.2, 0.1]))
     renderer = OpenCVPlanarRenderer(
         robot,
-        width=100,
-        height=100,
-        num_points=5,
-        base_color=(0, 255, 0),
-        backbone_color=(0, 0, 0),
         length_scale=2.0,
         origin_uv=(50, 50),
+        config=RendererConfig(
+            output=RenderOutputConfig(width=100, height=100),
+            geometry=GeometryConfig(num_points=5),
+            colors=RendererColorConfig(
+                base_plate_color=(0, 1, 0),
+                backbone=BackboneColorConfig(segment_palette=[(0, 0, 0)]),
+            ),
+        ),
     )
 
     img = renderer.render_frame(jnp.array([]), base_offsets=jnp.array([0.1, -0.1]))

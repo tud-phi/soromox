@@ -53,6 +53,13 @@ from soromox.rendering.cross_sections import (
     evaluate_cross_sections,
     loft_cross_section_contours,
 )
+from soromox.rendering.renderer_config import DirectionalLightConfig, RendererConfig
+from soromox.rendering.scenery import (
+    backdrop_mesh,
+    ground_grid,
+    plane_basis,
+    srgb_to_linear,
+)
 from soromox.rendering.video_encoding import FFmpegVideoWriter, VideoEncodingConfig
 from soromox.systems.soft_robot import SoftRobot
 
@@ -264,83 +271,23 @@ class ViserRenderer(BaseSoftRobotRenderer):
     def __init__(
         self,
         robot: SoftRobot,
-        width: int = 1920,
-        height: int = 1200,
-        num_points: int = 80,
-        background_color: tuple[float, float, float] = (1.0, 1.0, 1.0),
-        color_config: RendererColorConfig | None = None,
+        config: RendererConfig | None = None,
         host: str = "0.0.0.0",
         port: int = 8080,
-        backbone_style: Literal["discrete", "swept"] = "swept",
         sphere_resolution: int = 3,
-        cross_section_resolution: int = 48,
-        grid_spacing: tuple[float, float] = (0.5, 0.5),
         base_offsets: Array | None = None,
-        base_plate_radius_scale: float = 2.0,
-        base_plate_thickness: float = 0.06,
-        show_ground_plane: bool = True,
-        ground_plane_size: float | None = None,
-        actuator_line_width: float = 3.0,
-        camera_fov: float = 75.0,
-        # Lighting parameters
-        enable_default_lights: bool = True,
-        add_directional_light: bool = True,
-        directional_light_intensity: float = 0.8,
-        directional_light_direction: tuple[float, float, float] = (-0.5, -1.0, -0.5),
-        directional_light_color: tuple[int, int, int] = (255, 255, 255),
-        add_ambient_light: bool = True,
-        ambient_light_intensity: float = 0.4,
-        ambient_light_color: tuple[int, int, int] = (255, 255, 255),
-        cast_shadows: bool = True,
-        # Material & shading parameters
-        material: Literal["standard", "toon3", "toon5"] = "standard",
-        flat_shading: bool = False,
-        wireframe: bool = False,
-        # Shadow configuration (per-geometry type)
-        backbone_cast_shadow: bool = True,
-        sphere_cast_shadow: bool = True,
         auto_start: bool = True,
         open_browser: bool = True,
     ):
         """Initialize Viser renderer.
 
         Args:
+            config: Shared scene, camera, color, geometry and output defaults.
             robot: SoftRobot system with forward_kinematics method
-            width: Default render width in pixels
-            height: Default render height in pixels
-            num_points: Number of points for backbone curve discretization
-            background_color: RGB background color (0-1 range)
-            color_config: Shared renderer color configuration
             host: Server bind address (0.0.0.0 for all interfaces)
             port: Server port number
-            backbone_style: "swept" (material-frame surface) or "discrete" (spheres)
             sphere_resolution: Icosphere subdivision level (1=low, 2=medium, 3=good, 4=high)
-            cross_section_resolution: Number of contour points used to construct
-                swept cross-sections. Higher values produce smoother curved sections;
-                ignored when ``backbone_style="discrete"``.
-            grid_spacing: (x, y) spacing for multi-robot grid layout
             base_offsets: Explicit base position offsets (N, 3)
-            base_plate_radius_scale: Base plate radius relative to the
-                base-contour transverse extent
-            base_plate_thickness: Base plate thickness in meters
-            show_ground_plane: Whether to add Viser's native ground grid
-            ground_plane_size: Optional side length of the ground grid in meters
-            actuator_line_width: Line width for actuator visualization
-            camera_fov: Camera field of view in degrees
-            enable_default_lights: Enable Viser's default lighting
-            add_directional_light: Add custom directional light
-            directional_light_intensity: Directional light intensity (0-1+)
-            directional_light_direction: Directional light direction vector (x, y, z)
-            directional_light_color: Directional light RGB color (0-255)
-            add_ambient_light: Add custom ambient light
-            ambient_light_intensity: Ambient light intensity (0-1+)
-            ambient_light_color: Ambient light RGB color (0-255)
-            cast_shadows: Enable shadow casting for default lights
-            material: Material type ("standard", "toon3", "toon5")
-            flat_shading: Use flat shading instead of smooth
-            wireframe: Render geometry as wireframe
-            backbone_cast_shadow: Enable shadow casting for backbone geometry
-            sphere_cast_shadow: Enable shadow casting for sphere geometry
             auto_start: Start server immediately
             open_browser: Open browser automatically when show() is called
         """
@@ -350,17 +297,31 @@ class ViserRenderer(BaseSoftRobotRenderer):
                 "Install it with: pip install viser"
             )
 
-        super().__init__(
-            robot,
-            width,
-            height,
-            num_points,
-            background_color,
-            color_config=color_config,
-            show_ground_plane=show_ground_plane,
-            ground_plane_size=ground_plane_size,
+        super().__init__(robot, config=config)
+        backbone_style = self.config.geometry.backbone_style
+        cross_section_resolution = self.config.geometry.cross_section_resolution
+        grid_spacing = self.config.geometry.grid_spacing
+        base_plate_radius_scale = self.config.geometry.base_plate_radius_scale
+        base_plate_thickness = self.config.geometry.base_plate_thickness
+        actuator_line_width = self.config.geometry.actuator_line_width
+        camera_fov = self.config.camera.fov
+        material = (
+            self.config.scene.material.shading
+            if self.config.scene.material.shading != "unlit"
+            else "standard"
+        )
+        flat_shading = self.config.scene.material.flat_shading
+        wireframe = self.config.scene.material.wireframe
+        backbone_cast_shadow = (
+            self.config.scene.shadows and self.config.scene.backbone_cast_shadow
+        )
+        sphere_cast_shadow = (
+            self.config.scene.shadows and self.config.scene.sphere_cast_shadow
         )
 
+        self._static_scene = False
+        self._active_color_config = self.color_config
+        self._active_camera = self.config.camera
         self._host = host
         self._port = port
         self._backbone_style = backbone_style
@@ -386,17 +347,6 @@ class ViserRenderer(BaseSoftRobotRenderer):
         self._actuator_line_width = actuator_line_width
         self._camera_fov = camera_fov
         self._open_browser = open_browser
-
-        # Lighting parameters
-        self._enable_default_lights = enable_default_lights
-        self._add_directional_light = add_directional_light
-        self._directional_light_intensity = directional_light_intensity
-        self._directional_light_direction = directional_light_direction
-        self._directional_light_color = directional_light_color
-        self._add_ambient_light = add_ambient_light
-        self._ambient_light_intensity = ambient_light_intensity
-        self._ambient_light_color = ambient_light_color
-        self._cast_shadows = cast_shadows
 
         # Material & shading parameters
         self._material = material
@@ -506,62 +456,78 @@ class ViserRenderer(BaseSoftRobotRenderer):
         print(f"[ViserRenderer] Server started at {self.url}")
 
     def _add_ground_plane(self, base_positions: np.ndarray | None = None) -> None:
-        """Add a native grid centered on the rendered robot bases."""
-        if (
-            not self.show_ground_plane
-            or self._server is None
-            or self._scene_handles is None
-        ):
+        """Build a shared world floor or base reference planes and studio backdrop.
+
+        Args:
+            base_positions: Current robot base positions, shape (N, 3).
+
+        Returns:
+            None. Replaces existing ground handles without affecting camera bounds.
+        """
+        if self._server is None or self._scene_handles is None:
             return
-        base_axis = self._base_tangent_axis(dim=3)
-        if base_positions is None:
-            bases = self._base_position(dim=3)[None, :]
-        else:
-            bases = np.asarray(base_positions, dtype=np.float64)
-            if bases.ndim != 2 or bases.shape[1] != 3 or bases.shape[0] == 0:
-                raise ValueError(
-                    "base_positions must have shape (N, 3) with at least one row"
-                )
-
-        center = np.mean(bases, axis=0)
-        if self.ground_plane_size is None:
-            deltas = bases - center
-            in_plane = deltas - np.outer(deltas @ base_axis, base_axis)
-            layout_radius = float(np.max(np.linalg.norm(in_plane, axis=1)))
-            size = self._resolve_ground_plane_size() + 2.0 * layout_radius
-        else:
-            size = self._resolve_ground_plane_size()
-        position = center - self._base_plate_thickness * base_axis
-
-        for old_handle in self._scene_handles.ground_planes:
-            if hasattr(old_handle, "remove"):
-                old_handle.remove()
-        self._scene_handles.ground_planes = []
-        cfg = self.color_config
-        handle = self._server.scene.add_grid(
-            name="/ground",
-            width=float(size),
-            height=float(size),
-            plane="xy",
-            cell_color=_rgb_to_viser_color(
-                np.asarray(cfg.ground_plane_grid_color, dtype=np.float64)
-            ),
-            cell_thickness=0.8,
-            cell_size=float(size / 10.0),
-            section_color=_rgb_to_viser_color(
-                np.asarray(cfg.ground_plane_grid_color, dtype=np.float64) * 0.8
-            ),
-            section_thickness=1.2,
-            section_size=float(size / 2.0),
-            shadow_opacity=0.22,
-            plane_color=_rgb_to_viser_color(
-                np.asarray(cfg.ground_plane_color, dtype=np.float64)
-            ),
-            plane_opacity=0.72,
-            wxyz=_direction_to_quaternion(base_axis),
-            position=tuple(position),
+        for handle in self._scene_handles.ground_planes:
+            handle.remove()
+        self._scene_handles.ground_planes.clear()
+        cfg = self.config.scene
+        if not cfg.ground.visible:
+            return
+        bases = (
+            self._base_position(dim=3)[None, :]
+            if base_positions is None
+            else np.asarray(base_positions)
         )
-        self._scene_handles.ground_planes.append(handle)
+        if bases.ndim != 2 or bases.shape[1] != 3 or not len(bases):
+            raise ValueError("base_positions must have shape (N, 3)")
+        if cfg.backdrop.enabled:
+            vertices, faces = backdrop_mesh(
+                cfg, self._appearance_center, self._appearance_extent, self._world_up()
+            )
+            mesh = trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
+            handle = self._add_trimesh(
+                "/ground/backdrop",
+                mesh,
+                surface_color=cfg.ground.color,
+                cast_shadow=False,
+                receive_shadow=cfg.ground.receive_shadow,
+                ground=True,
+            )
+            self._scene_handles.ground_planes.append(handle)
+            return
+        for i, (center, normal, size) in enumerate(
+            self._resolve_ground_planes(
+                bases[:, None], getattr(self, "_ground_base_axes", None)
+            )
+        ):
+            basis = plane_basis(normal)
+            vertices = (
+                np.array([[-1, -1, 0], [1, -1, 0], [1, 1, 0], [-1, 1, 0]]) * size / 2
+            )
+            vertices = vertices @ basis.T + center
+            mesh = trimesh.Trimesh(
+                vertices=vertices, faces=[[0, 1, 2], [0, 2, 3]], process=False
+            )
+            if cfg.ground.surface:
+                handle = self._add_trimesh(
+                    f"/ground/plane_{i}",
+                    mesh,
+                    surface_color=cfg.ground.color,
+                    cast_shadow=False,
+                    receive_shadow=cfg.ground.receive_shadow,
+                    ground=True,
+                )
+                self._scene_handles.ground_planes.append(handle)
+            if cfg.ground.grid:
+                points, colors = ground_grid(cfg.ground, center, normal, size)
+                handle = self._server.scene.add_line_segments(
+                    name=f"/ground/grid_{i}",
+                    points=points,
+                    colors=np.rint(colors * 255)
+                    .astype(np.uint8)[:, None, :]
+                    .repeat(2, axis=1),
+                    line_width=1,
+                )
+                self._scene_handles.ground_planes.append(handle)
 
     def stop(self) -> None:
         """Stop the Viser server."""
@@ -590,7 +556,108 @@ class ViserRenderer(BaseSoftRobotRenderer):
         # Remove all scene children
         # Viser doesn't have a clear method, so we remove by setting visibility
         # or rely on garbage collection when we recreate handles
+        for name in (
+            "/robots",
+            "/ground",
+            "/lights",
+            "/spheres",
+            "/static_spheres",
+            "/dynamic_spheres",
+            "/actuators",
+        ):
+            self._server.scene.add_frame(name, show_axes=False).remove()
         self._scene_handles = SceneHandles()
+
+    def _add_trimesh(self, name, mesh, *, surface_color=None, ground=False, **kwargs):
+        """Send a mesh with the configured PBR or unlit material.
+
+        Args:
+            name: Unique scene path.
+            mesh: Trimesh geometry; its first vertex color supplies the default color.
+            surface_color: Optional sRGB surface override.
+            ground: Use ground opacity and a fully rough surface.
+            **kwargs: Viser transform, visibility and shadow arguments.
+
+        Returns:
+            Viser GLB handle for the configured mesh.
+        """
+        cfg = self.config.scene
+        material = cfg.material
+        if surface_color is None:
+            rgba = np.asarray(mesh.visual.vertex_colors[0], dtype=float) / 255
+        else:
+            rgba = ensure_rgba(np.asarray(surface_color))[0]
+        rgba = rgba.copy()
+        rgba[:3] = srgb_to_linear(rgba[:3])
+        rgba[3] *= cfg.ground.opacity if ground else material.opacity
+        mesh = mesh.copy()
+        mesh.visual = trimesh.visual.TextureVisuals(
+            material=trimesh.visual.material.PBRMaterial(
+                baseColorFactor=np.rint(np.clip(rgba, 0, 1) * 255).astype(np.uint8),
+                metallicFactor=0 if ground else material.metallic,
+                roughnessFactor=1 if ground else material.roughness,
+                alphaMode="BLEND" if rgba[3] < 0.999 else "OPAQUE",
+                doubleSided=True,
+            )
+        )
+        if material.shading == "unlit":
+
+            def unlit_tree(tree):
+                """Mark exported materials as unlit.
+
+                Args:
+                    tree: glTF JSON tree supplied by Trimesh.
+
+                Returns:
+                    None. Updates material extensions in place.
+                """
+                tree.setdefault("extensionsUsed", []).append("KHR_materials_unlit")
+                for item in tree.get("materials", []):
+                    item.setdefault("extensions", {})["KHR_materials_unlit"] = {}
+
+            data = trimesh.exchange.gltf.export_glb(mesh, tree_postprocessor=unlit_tree)
+            return self._server.scene.add_glb(name, data, **kwargs)
+        return self._server.scene.add_mesh_trimesh(name=name, mesh=mesh, **kwargs)
+
+    def _add_mesh(self, name, vertices, faces, color, opacity=None, **kwargs):
+        """Build a static PBR mesh or an efficiently deformable browser mesh.
+
+        Args:
+            name: Unique scene path.
+            vertices: Mesh vertices, shape (N, 3).
+            faces: Triangle indices, shape (M, 3).
+            color: sRGB integer color.
+            opacity: Optional per-object opacity.
+            **kwargs: Viser material, shading, transform and shadow options.
+
+        Returns:
+            GLB handle in static mode or editable mesh handle in animated mode.
+        """
+        if (
+            name.startswith("/robots/")
+            and self._active_color_config.robot_override is not None
+        ):
+            color = _rgb_to_viser_color(
+                np.asarray(self._active_color_config.robot_override)
+            )
+        alpha = 1.0 if opacity is None else opacity
+        if not self._static_scene:
+            return self._server.scene.add_mesh_simple(
+                name=name,
+                vertices=vertices,
+                faces=faces,
+                color=color,
+                opacity=alpha * self.config.scene.material.opacity,
+                **kwargs,
+            )
+        for key in ("material", "flat_shading", "wireframe"):
+            kwargs.pop(key, None)
+        mesh = trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
+        # Merge coincident loft vertices so normals are continuous between stations.
+        mesh.merge_vertices()
+        return self._add_trimesh(
+            name, mesh, surface_color=(*(np.asarray(color) / 255), alpha), **kwargs
+        )
 
     def _build_robot_geometry(
         self,
@@ -609,9 +676,12 @@ class ViserRenderer(BaseSoftRobotRenderer):
         if self._server is None or self._scene_handles is None:
             return
 
+        if not hasattr(self, "_appearance_extent"):
+            self._fit_scene_bounds(curves)
         num_robots = curves.shape[0]
         num_points = curves.shape[1]
         edge_caps = self._swept_edge_caps_for_num_points(num_points)
+        self._ground_base_axes = material_frames[:, 0, :, 0]
         self._add_ground_plane(curves[:, 0])
 
         # Clear existing robot geometry
@@ -726,7 +796,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
                     color, opacity = _rgba_to_viser_color_and_opacity(
                         np.asarray(color_key)
                     )
-                    handle = self._server.scene.add_mesh_simple(
+                    handle = self._add_mesh(
                         name=(
                             f"/robots/robot_{robot_idx}/backbone/"
                             f"color_group_{group_idx}"
@@ -796,7 +866,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
     ):
         """Add a base plate using the standard renderer base transform convention."""
         base_pos, base_wxyz = self._base_plate_pose(base_point)
-        return self._server.scene.add_mesh_trimesh(
+        return self._add_trimesh(
             name=f"/robots/robot_{robot_idx}/base_plate",
             mesh=self._make_cylinder_trimesh(
                 length=self._base_plate_thickness,
@@ -841,6 +911,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
             actuator_inputs=actuator_inputs,
         )
         cfg = color_config or self.color_config
+        self._active_color_config = cfg
         line_specs = []
         mesh_specs = []
 
@@ -857,6 +928,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
             layer_points = np.asarray(layer.points)
             layer_colors = resolve_actuator_rgba(
                 layer,
+                override_color=cfg.robot_override,
                 default_color=cfg.actuators.color_for_kind(layer.kind),
                 scalar_colormap=cfg.actuators.scalar_colormap,
             )
@@ -930,8 +1002,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
             if hasattr(handle, "remove"):
                 handle.remove()
         self._scene_handles.actuator_meshes = [
-            self._server.scene.add_mesh_trimesh(name=name, mesh=mesh)
-            for name, mesh in mesh_specs
+            self._add_trimesh(name=name, mesh=mesh) for name, mesh in mesh_specs
         ]
 
         if len(self._scene_handles.actuator_lines) > len(line_specs):
@@ -1048,6 +1119,9 @@ class ViserRenderer(BaseSoftRobotRenderer):
 
         update_context = self._server.atomic() if atomic else nullcontext()
         with update_context:
+            if self.config.scene.ground.alignment == "base":
+                self._ground_base_axes = material_frames[:, 0, :, 0]
+                self._add_ground_plane(curves[:, 0])
             num_robots = min(len(curves), len(self._scene_handles.backbone_points))
             num_points = curves.shape[1]
             edge_caps = self._swept_edge_caps_for_num_points(num_points)
@@ -1216,18 +1290,19 @@ class ViserRenderer(BaseSoftRobotRenderer):
         if self._server is None:
             return
 
-        # Use a Viser-specific auto-distance. CameraConfig's default distance
-        # factor is tuned for backends with an additional zoom control, while
-        # Viser uses the camera position as a true perspective eye point.
-        config = camera_config or CameraConfig(
-            fov=self._camera_fov, distance_factor=1.0
-        )
+        config = camera_config or self.config.camera
+        self._active_camera = config
+        self._setup_lighting()
 
         # Compute bounding box of all curves
         all_points = curves.reshape(-1, 3)
         center = np.mean(all_points, axis=0)
         extent = np.max(all_points, axis=0) - np.min(all_points, axis=0)
         max_extent = float(np.max(extent))
+
+        if hasattr(self, "_appearance_extent"):
+            center = self._appearance_center
+            max_extent = self._appearance_extent
 
         # Compute camera position and look_at from config
         camera_pos, look_at = config.compute_auto_position(
@@ -1236,6 +1311,20 @@ class ViserRenderer(BaseSoftRobotRenderer):
             reference_transform=np.asarray(self.base_transform),
         )
         up = config.compute_up()
+        forward = np.asarray(look_at) - np.asarray(camera_pos)
+        forward /= np.linalg.norm(forward)
+        right = np.cross(forward, up)
+        if np.linalg.norm(right) < 1e-8:
+            right = plane_basis(forward)[:, 0]
+        right /= np.linalg.norm(right)
+        down = np.cross(forward, right)
+        self._capture_camera = {
+            "position": np.asarray(camera_pos),
+            "wxyz": viser.transforms.SO3.from_matrix(
+                np.column_stack((right, down, forward))
+            ).wxyz,
+            "fov": float(np.deg2rad(config.fov)),
+        }
 
         # Helper function to configure a client's camera
         def configure_camera(client: viser.ClientHandle) -> None:
@@ -1254,50 +1343,94 @@ class ViserRenderer(BaseSoftRobotRenderer):
             configure_camera(client)
 
     def _setup_lighting(self) -> None:
-        """Configure scene lighting for enhanced visual quality."""
+        """Apply explicit lighting and background without accumulating handles.
+
+        Returns:
+            None. Updates the connected scene. Photometric illumination and
+            exposure are approximated through a documented linear gain.
+        """
         if self._server is None or self._scene_handles is None:
             return
-
-        # Clear existing lights
-        for light in self._scene_handles.lights:
-            light.remove()
-        self._scene_handles.lights = []
-
-        # Configure default lights
-        self._server.scene.configure_default_lights(
-            enabled=self._enable_default_lights,
-            cast_shadow=self._cast_shadows,
+        cfg = self.config.scene
+        features = []
+        if cfg.material.shading != "unlit":
+            features.append(
+                "photometric illumination/exposure calibrated to the browser"
+            )
+        if cfg.ambient_occlusion:
+            features.append("ambient occlusion unavailable")
+        if cfg.tone_mapping != "backend-default":
+            features.append(
+                "tone mapping uses the browser default; unlit sRGB colors can shift"
+            )
+        if not self._static_scene:
+            features.append("animated materials use the efficient mesh shader")
+        if self._static_scene and (
+            cfg.material.shading.startswith("toon") or cfg.material.flat_shading
+        ):
+            features.append("static toon/face-normal shading uses smooth PBR")
+        if cfg.material.reflectance != 0.5:
+            features.append("dielectric reflectance uses the browser default")
+        if cfg.material.wireframe and self._static_scene:
+            features.append("static PBR wireframe unavailable")
+        self._warn_appearance("static" if self._static_scene else "animated", features)
+        for handle in self._scene_handles.lights:
+            handle.remove()
+        self._scene_handles.lights.clear()
+        scene = self._server.scene
+        scene.configure_default_lights(enabled=False, cast_shadow=False)
+        scene.configure_environment_map(None)
+        scene.set_background_image(
+            np.broadcast_to(
+                np.rint(np.array(cfg.background) * 255).astype(np.uint8),
+                (self.height, self.width, 3),
+            ).copy(),
+            format="png",
         )
-
-        # Add directional light (key light)
-        if self._add_directional_light:
-            direction = np.array(self._directional_light_direction)
-            direction = direction / np.linalg.norm(direction)  # Normalize
-
-            directional_light = self._server.scene.add_light_directional(
-                name="/lights/directional",
-                color=self._directional_light_color,
-                intensity=self._directional_light_intensity,
-                wxyz=(1.0, 0.0, 0.0, 0.0),  # Identity quaternion
-                position=(0.0, 0.0, 0.0),
-                cast_shadow=self._cast_shadows,
+        scene.world_axes.visible = False
+        gain = 2.0 ** (15.0 - self._active_camera.exposure_ev100)
+        # Viser derives directional-light rays from world position toward the
+        # origin; rotating a light at the origin leaves its direction undefined.
+        # Filament's reference EV15 maps a 60000 lux key to a browser intensity of 1.2.
+        for i, light in enumerate(cfg.lights):
+            params = {
+                "name": f"/lights/configured_{i}",
+                "color": _rgb_to_viser_color(np.array(light.color)),
+                "cast_shadow": cfg.shadows and light.cast_shadow,
+            }
+            if isinstance(light, DirectionalLightConfig):
+                handle = scene.add_light_directional(
+                    **params,
+                    intensity=light.illuminance_lux / 50000 * gain,
+                    position=tuple(
+                        -np.asarray(light.direction) / np.linalg.norm(light.direction)
+                    ),
+                )
+            else:
+                handle = scene.add_light_point(
+                    **params,
+                    position=light.position,
+                    intensity=light.intensity_candela / 10000 * gain,
+                    distance=light.range_m,
+                    decay=2.0,
+                )
+            self._scene_handles.lights.append(handle)
+        if cfg.ambient.strength:
+            self._scene_handles.lights.append(
+                scene.add_light_hemisphere(
+                    "/lights/ambient",
+                    intensity=2.0 * cfg.ambient.strength * gain,
+                    sky_color=_rgb_to_viser_color(np.asarray(cfg.ambient.color)),
+                    ground_color=(0, 0, 0),
+                    position=tuple(self._world_up()),
+                )
             )
-            self._scene_handles.lights.append(directional_light)
-
-            # Orient the light (Viser uses wxyz quaternion, position defines light origin)
-            # For directional lights, we set a far position in the opposite direction
-            light_distance = 10.0
-            light_pos = tuple(-direction * light_distance)
-            directional_light.position = light_pos
-
-        # Add ambient light (fill light)
-        if self._add_ambient_light:
-            ambient_light = self._server.scene.add_light_ambient(
-                name="/lights/ambient",
-                color=self._ambient_light_color,
-                intensity=self._ambient_light_intensity,
+        if cfg.material.shading == "unlit" and not self._static_scene:
+            self._scene_handles.lights.append(
+                scene.add_light_ambient(
+                    "/lights/unlit_approximation", intensity=3.14159
+                )
             )
-            self._scene_handles.lights.append(ambient_light)
 
     def render_frame(
         self,
@@ -1332,6 +1465,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
         Returns:
             RGB image as numpy array (height, width, 3), dtype uint8
         """
+        self._static_scene = True
         if self._server is None:
             self.start()
 
@@ -1363,9 +1497,14 @@ class ViserRenderer(BaseSoftRobotRenderer):
             q, base_offsets
         )
         curves = np.asarray(curves)
+        self._fit_scene_bounds(curves)
+        self._expand_scene_bounds_for_spheres(
+            static_spheres_positions, static_spheres_radii
+        )
         material_frames = np.asarray(material_frames)
 
         cfg = color_config or self.color_config
+        self._active_color_config = cfg
         resolved_colors = self.resolve_backbone_colors(num_robots, color_config=cfg)
 
         # Build scene
@@ -1411,8 +1550,47 @@ class ViserRenderer(BaseSoftRobotRenderer):
         if len(clients) > capture_client_idx:
             client = clients[capture_client_idx]
             try:
-                render = client.camera.get_render(height=self.height, width=self.width)
-                return np.array(render)
+                render = client.get_render(
+                    height=self.height,
+                    width=self.width,
+                    transport_format="png",
+                    **self._capture_camera,
+                )
+                # GLB parsing is asynchronous; require two stable captures so
+                # newly loaded meshes are included in the first exported image.
+                for _attempt in range(5):
+                    time.sleep(0.2)
+                    following = client.get_render(
+                        height=self.height,
+                        width=self.width,
+                        transport_format="png",
+                        **self._capture_camera,
+                    )
+                    stable = (
+                        np.shape(render) == np.shape(following)
+                        and np.mean(
+                            np.abs(
+                                np.asarray(render, dtype=float)
+                                - np.asarray(following, dtype=float)
+                            )
+                        )
+                        < 0.1
+                    )
+                    render = following
+                    if stable:
+                        break
+                else:
+                    raise RuntimeError(
+                        "Viser scene did not settle before static capture"
+                    )
+                pixels = np.asarray(render)
+                if pixels.shape[-1] == 4:
+                    alpha = pixels[:, :, 3:4].astype(float) / 255
+                    background = np.asarray(self.config.scene.background) * 255
+                    return np.rint(
+                        pixels[:, :, :3] * alpha + background * (1 - alpha)
+                    ).astype(np.uint8)
+                return pixels.copy()
             except Exception as e:
                 print(f"[ViserRenderer] Failed to capture frame: {e}")
 
@@ -1449,6 +1627,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
             static_spheres_colors: Static sphere colors (M, 3)
             blocking: If True, block until user closes browser
         """
+        self._static_scene = True
         if self._server is None:
             self.start()
 
@@ -1480,9 +1659,14 @@ class ViserRenderer(BaseSoftRobotRenderer):
             q, base_offsets
         )
         curves = np.asarray(curves)
+        self._fit_scene_bounds(curves)
+        self._expand_scene_bounds_for_spheres(
+            static_spheres_positions, static_spheres_radii
+        )
         material_frames = np.asarray(material_frames)
 
         cfg = color_config or self.color_config
+        self._active_color_config = cfg
         resolved_colors = self.resolve_backbone_colors(num_robots, color_config=cfg)
 
         # Build scene
@@ -1613,6 +1797,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
                          for custom plotly figures to add to the GUI
             robot_name: Name for plot titles
         """
+        self._static_scene = False
         ts = np.asarray(ts)
         q_ts = jnp.asarray(q_ts)
         record_every_n = max(1, int(record_every_n))
@@ -1688,6 +1873,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
         )
 
         cfg = color_config or self.color_config
+        self._active_color_config = cfg
         resolved_colors = self.resolve_backbone_colors(num_robots, color_config=cfg)
 
         # Precompute backbone curves for the first frame used to build geometry.
@@ -1709,6 +1895,13 @@ class ViserRenderer(BaseSoftRobotRenderer):
             )(q_ts_time_first)
         ).transpose(1, 0, 2, 3)
 
+        self._fit_scene_bounds(camera_curves)
+        self._expand_scene_bounds_for_spheres(
+            static_spheres_positions, static_spheres_radii
+        )
+        self._expand_scene_bounds_for_spheres(
+            dynamic_spheres_positions, dynamic_spheres_radii
+        )
         # Build initial scene
         self._clear_scene()
         self._build_robot_geometry(
@@ -1851,7 +2044,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
                 self.height,
                 fps=fps,
                 input_pix_fmt="rgb24",
-                video_config=video_config,
+                video_config=video_config or self.config.output.video,
             )
             print(f"[ViserRenderer] Recording to {record_path}")
 
@@ -2316,6 +2509,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
         Returns:
             LiveModeController for managing the live session
         """
+        self._static_scene = False
         if self._server is None:
             self.start()
 
@@ -2479,7 +2673,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
             ts,
             q_ts,
             record_path=output_path,
-            video_config=video_config,
+            video_config=video_config or self.config.output.video,
             blocking=True,
             **render_kwargs,
         )
@@ -2632,6 +2826,8 @@ class LiveModeController:
             self._renderer.compute_backbone_curves_and_frames_batched(q, base_offsets)
         )
         curves = np.asarray(curves)
+        if not hasattr(self._renderer, "_appearance_extent"):
+            self._renderer._fit_scene_bounds(curves)
         material_frames = np.asarray(material_frames)
 
         if (

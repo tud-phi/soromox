@@ -3,6 +3,8 @@ from functools import partial
 import jax
 import jax.numpy as jnp
 
+from soromox.rendering.renderer_config import GeometryConfig, RendererConfig
+
 jax.config.update("jax_enable_x64", True)
 
 import matplotlib.pyplot as plt
@@ -109,7 +111,9 @@ if __name__ == "__main__":
         raise ImportError("Open3DRenderer is unavailable. Install open3d to run this.")
 
     # Visualize the initial configuration using Open3DRenderer
-    renderer = Open3DRenderer(robot, num_points=50)
+    renderer = Open3DRenderer(
+        robot, config=RendererConfig(geometry=GeometryConfig(num_points=50))
+    )
     renderer.show(q0)
 
     # Actuation parameters
@@ -193,7 +197,9 @@ if __name__ == "__main__":
             ]
         )
     )
-    viser_renderer = ViserRenderer(robot, num_points=50)
+    viser_renderer = ViserRenderer(
+        robot, config=RendererConfig(geometry=GeometryConfig(num_points=50))
+    )
     viser_renderer.render_sequence(
         ts=ts,
         q_ts=q_ts_overlay,

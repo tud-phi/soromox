@@ -3,6 +3,8 @@
 # ruff: noqa: E402
 import jax
 
+from soromox.rendering.renderer_config import GeometryConfig, RendererConfig
+
 jax.config.update("jax_enable_x64", True)
 
 import equinox as eqx
@@ -369,9 +371,9 @@ def test_isupport_uses_threadlike_pressure_chambers_and_resolves_area():
         == ()
     )
     assert (
-        MatplotlibRenderer(robot, num_points=5).compute_actuator_visual_layers(
-            jnp.zeros((robot.num_internal_dofs,))
-        )
+        MatplotlibRenderer(
+            robot, config=RendererConfig(geometry=GeometryConfig(num_points=5))
+        ).compute_actuator_visual_layers(jnp.zeros((robot.num_internal_dofs,)))
         == ()
     )
 

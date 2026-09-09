@@ -13,6 +13,8 @@ from typing import Any
 
 import numpy as np
 
+from soromox.rendering import GeometryConfig, RendererConfig, RenderOutputConfig
+
 os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
 
 CODE_DIR = Path(__file__).resolve().parent
@@ -429,24 +431,15 @@ def render_method(
     renderer = renderer_factory(
         robot,
         desired_q_ts=desired_q_ts,
-        width=1920,
-        height=1080,
-        num_points=80,
         port=port,
         open_browser=open_browser,
-        color_config=_color_config(
-            80,
-            opacity=SYNERGISTIC_ROBOT_OPACITY if name == "synergistic" else 1.0,
+        config=RendererConfig(
+            output=RenderOutputConfig(width=1920, height=1080),
+            geometry=GeometryConfig(num_points=80, cross_section_resolution=64),
+            colors=_color_config(
+                80, opacity=SYNERGISTIC_ROBOT_OPACITY if name == "synergistic" else 1.0
+            ),
         ),
-        backbone_style="swept",
-        cross_section_resolution=64,
-        background_color=(1.0, 1.0, 1.0),
-        material="standard",
-        flat_shading=False,
-        wireframe=False,
-        cast_shadows=False,
-        backbone_cast_shadow=False,
-        sphere_cast_shadow=False,
     )
     renderer.render_sequence(
         ts=t,

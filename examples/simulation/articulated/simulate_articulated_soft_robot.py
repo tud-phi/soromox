@@ -7,6 +7,8 @@ from pathlib import Path
 
 import jax
 
+from soromox.rendering.renderer_config import GeometryConfig, RendererConfig
+
 jax.config.update("jax_enable_x64", True)  # double precision
 
 import jax.numpy as jnp
@@ -189,9 +191,10 @@ def render_robot(
     if backend in {"matplotlib", "all"}:
         renderer = MatplotlibRenderer(
             robot,
-            num_points=80,
-            color_config=get_color_theme("soromox:paper"),
-            line_width=5.0,
+            config=RendererConfig(
+                geometry=GeometryConfig(num_points=80, line_width=5.0),
+                colors=get_color_theme("soromox:paper"),
+            ),
         )
         if record_path is None:
             renderer.animate(
@@ -215,7 +218,9 @@ def render_robot(
         if Open3DRenderer is None:
             print("Open3DRenderer is unavailable. Install the optional Open3D extras.")
         else:
-            renderer = Open3DRenderer(robot, num_points=80)
+            renderer = Open3DRenderer(
+                robot, config=RendererConfig(geometry=GeometryConfig(num_points=80))
+            )
             renderer.render_sequence(
                 ts,
                 q_ts,
@@ -231,8 +236,7 @@ def render_robot(
             print("ViserRenderer is unavailable. Install the optional Viser extras.")
         else:
             renderer = ViserRenderer(
-                robot,
-                num_points=80,
+                robot, config=RendererConfig(geometry=GeometryConfig(num_points=80))
             )
             renderer.render_sequence(
                 ts,

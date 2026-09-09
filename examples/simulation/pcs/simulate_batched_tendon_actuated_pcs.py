@@ -10,6 +10,8 @@ from pathlib import Path
 
 import jax
 
+from soromox.rendering.renderer_config import GeometryConfig, RendererConfig
+
 jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 
@@ -139,13 +141,17 @@ def main(*, open3d_video_output: Path, viser_video_output: Path):
     # animate using the MatplotlibRenderer
     matplotlib_renderer = MatplotlibRenderer(
         robot,
-        num_points=60,
-        line_width=2.5,
-        grid_spacing=grid_spacing,
-        actuator_line_width=2.0,
-        color_config=RendererColorConfig(
-            backbone=BackboneColorConfig(robot_palette="plasma"),
-            actuators=ActuatorStyleConfig(default_color=(0.9, 0.1, 0.1)),
+        config=RendererConfig(
+            geometry=GeometryConfig(
+                num_points=60,
+                line_width=2.5,
+                grid_spacing=grid_spacing,
+                actuator_line_width=2.0,
+            ),
+            colors=RendererColorConfig(
+                backbone=BackboneColorConfig(robot_palette="plasma"),
+                actuators=ActuatorStyleConfig(default_color=(0.9, 0.1, 0.1)),
+            ),
         ),
     )
     # q_ts_batched is (N, T, DOF); animate in slider mode for quick inspection
@@ -154,9 +160,11 @@ def main(*, open3d_video_output: Path, viser_video_output: Path):
     # render using the Open3DRenderer
     renderer = Open3DRenderer(
         robot,
-        grid_spacing=grid_spacing,
-        color_config=RendererColorConfig(
-            backbone=BackboneColorConfig(robot_palette="viridis")
+        config=RendererConfig(
+            geometry=GeometryConfig(grid_spacing=grid_spacing),
+            colors=RendererColorConfig(
+                backbone=BackboneColorConfig(robot_palette="viridis")
+            ),
         ),
     )
     renderer.render_sequence(
@@ -172,9 +180,11 @@ def main(*, open3d_video_output: Path, viser_video_output: Path):
 
     viser_renderer = ViserRenderer(
         robot,
-        grid_spacing=grid_spacing,
-        color_config=RendererColorConfig(
-            backbone=BackboneColorConfig(robot_palette="magma")
+        config=RendererConfig(
+            geometry=GeometryConfig(grid_spacing=grid_spacing),
+            colors=RendererColorConfig(
+                backbone=BackboneColorConfig(robot_palette="magma")
+            ),
         ),
     )
     viser_renderer.render_sequence(

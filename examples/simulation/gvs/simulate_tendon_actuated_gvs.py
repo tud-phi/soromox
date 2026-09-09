@@ -7,6 +7,7 @@ import optimistix as optx
 
 from soromox.actuation import ThreadlikeActuator, ThreadlikeRouting
 from soromox.rendering import Open3DRenderer
+from soromox.rendering.renderer_config import GeometryConfig, RendererConfig
 from soromox.systems import (
     GVS,
     GVSSegment,
@@ -205,7 +206,9 @@ if Open3DRenderer is None:
     raise ImportError("Open3DRenderer is unavailable. Install open3d to run this.")
 
 # Create renderer for visualization
-renderer = Open3DRenderer(robot, num_points=50)
+renderer = Open3DRenderer(
+    robot, config=RendererConfig(geometry=GeometryConfig(num_points=50))
+)
 
 # =====================================================
 # Static equilibrium (solve statics) and plot its shape

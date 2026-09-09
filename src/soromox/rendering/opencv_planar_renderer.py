@@ -10,7 +10,11 @@ import cv2
 import numpy as np
 from jax import Array
 
+from soromox.rendering.actuators import resolve_actuator_rgba
+from soromox.rendering.camera_config import CameraConfig
+from soromox.rendering.color_config import RendererColorConfig
 from soromox.rendering.opencv_base import BaseOpenCVRenderer
+from soromox.rendering.renderer_config import RendererConfig
 from soromox.systems.components import CrossSectionGeometry
 from soromox.systems.soft_robot import SoftRobot
 
@@ -32,37 +36,29 @@ class OpenCVPlanarRenderer(BaseOpenCVRenderer):
     def __init__(
         self,
         robot: SoftRobot,
-        width: int = 700,
-        height: int = 700,
-        num_points: int = 50,
-        background_color: tuple[float, float, float] = (1.0, 1.0, 1.0),
-        base_color: tuple[int, int, int] = (0, 255, 0),
-        backbone_color: tuple[int, int, int] = (0, 0, 0),
-        backbone_thickness: int | None = None,
-        actuator_color: tuple[int, int, int] = (40, 40, 230),
-        actuator_thickness: int = 2,
-        base_radius_scale: float = 2.0,
+        config: RendererConfig | None = None,
         length_scale: float = 2.0,
         origin_uv: tuple[int, int] | None = None,
     ):
         """Initialize OpenCV renderer for planar robots.
 
         Args:
+            config: Shared scene, camera, color, geometry and output defaults.
             robot: Planar robot instance
-            width: Image width in pixels
-            height: Image height in pixels
-            num_points: Number of points for curve discretization
-            background_color: RGB background color (0-1 range)
-            base_color: BGR color for base marker
-            backbone_color: BGR color for backbone
-            backbone_thickness: Line thickness for backbone (None = auto)
-            actuator_color: BGR color for actuator visual layers
-            actuator_thickness: Line thickness for actuator visual layers
-            base_radius_scale: Multiplier applied to the cross-section span for the base marker
             length_scale: Scale factor for robot in image (robot occupies height/length_scale)
             origin_uv: Pixel coordinates of world origin (None = center of image)
         """
-        super().__init__(robot, width, height, num_points, background_color)
+        super().__init__(robot, config=config)
+        base_color = tuple(
+            int(x * 255) for x in self.config.colors.base_plate_color[::-1]
+        )
+        backbone_color = (0, 0, 0)
+        backbone_thickness = self.config.geometry.line_width
+        actuator_color = tuple(
+            int(x * 255) for x in self.config.colors.actuators.default_color[::-1]
+        )
+        actuator_thickness = self.config.geometry.actuator_line_width
+        base_radius_scale = self.config.geometry.base_plate_radius_scale
 
         self.base_color = base_color
         self.backbone_color = backbone_color
@@ -143,6 +139,8 @@ class OpenCVPlanarRenderer(BaseOpenCVRenderer):
         q: Array,
         *,
         base_offsets: Array | None = None,
+        color_config: RendererColorConfig | None = None,
+        camera_config: CameraConfig | None = None,
         render_actuators: bool = True,
         actuator_inputs: Array | None = None,
     ) -> np.ndarray:
@@ -152,12 +150,15 @@ class OpenCVPlanarRenderer(BaseOpenCVRenderer):
             q: Robot configuration array of shape (DOF,) for a single robot.
             base_offsets: Optional positional offset with shape ``(2,)`` or
                 ``(3,)``. The z component is ignored for this planar renderer.
+            color_config: Complete robot-color override.
+            camera_config: Camera override; the planar pixel projection is unchanged.
             render_actuators: Whether to render actuator visual layers if available.
             actuator_inputs: Optional actuator inputs for scalar-colored layers.
 
         Returns:
             img (np.ndarray): BGR image of shape (height, width, 3), dtype uint8.
         """
+        self._warn_simple_appearance(getattr(self, "_rendering_mode", "static"))
         h, w = self.height, self.width
 
         # Pixel per meter
@@ -186,39 +187,29 @@ class OpenCVPlanarRenderer(BaseOpenCVRenderer):
             curve = curve + np.asarray(offset)
         curve_uv = self._world_to_pixel(curve, origin_uv=origin_uv, ppm=ppm)
 
+        cfg = color_config or self.color_config
+        colors = self.resolve_backbone_colors(1, color_config=cfg).per_robot_point_rgba[
+            0
+        ]
         lengths = self.robot.segment_length
         thicknesses, uniform_thickness = self._auto_backbone_thickness(ppm, lengths, q)
 
-        if thicknesses is not None and lengths is not None:
-            s_ps = np.linspace(0.0, self.L_max, self.num_points)
-            L_cum = np.concatenate(([0.0], np.cumsum(lengths)))
-            for segment_idx in range(len(lengths)):
-                if segment_idx == len(lengths) - 1:
-                    selector = (s_ps >= L_cum[segment_idx]) & (
-                        s_ps <= L_cum[segment_idx + 1]
-                    )
-                else:
-                    selector = (s_ps >= L_cum[segment_idx]) & (
-                        s_ps < L_cum[segment_idx + 1]
-                    )
-                segment_curve = curve_uv[selector]
-                if segment_curve.shape[0] > 1:
-                    cv2.polylines(
-                        img,
-                        [segment_curve],
-                        isClosed=False,
-                        color=self.backbone_color,
-                        thickness=int(thicknesses[segment_idx]),
-                    )
-        else:
-            if curve_uv.shape[0] > 1:
-                cv2.polylines(
-                    img,
-                    [curve_uv],
-                    isClosed=False,
-                    color=self.backbone_color,
-                    thickness=int(uniform_thickness),
+        img = self._draw_ground(img, curve, origin_uv, ppm)
+        starts, ends = self._segment_bounds(self.num_points)
+        for i in range(len(curve_uv) - 1):
+            width = uniform_thickness
+            if thicknesses is not None:
+                segment = min(
+                    int(np.searchsorted(ends, i, side="right")), len(thicknesses) - 1
                 )
+                width = thicknesses[segment]
+            cv2.line(
+                img,
+                tuple(curve_uv[i]),
+                tuple(curve_uv[i + 1]),
+                tuple(int(c * 255) for c in colors[i, :3][::-1]),
+                max(1, int(width)),
+            )
 
         if render_actuators and self._has_actuator_visuals:
             actuator_offset = (
@@ -232,6 +223,12 @@ class OpenCVPlanarRenderer(BaseOpenCVRenderer):
                 actuator_inputs=actuator_inputs,
             )
             for layer in actuator_layers:
+                actuator_colors = resolve_actuator_rgba(
+                    layer,
+                    default_color=cfg.actuators.color_for_kind(layer.kind),
+                    scalar_colormap=cfg.actuators.scalar_colormap,
+                    override_color=cfg.robot_override,
+                )
                 points = np.asarray(layer.points, dtype=float)
                 for actuator_idx in range(points.shape[1]):
                     path_uv = self._world_to_pixel(
@@ -244,14 +241,23 @@ class OpenCVPlanarRenderer(BaseOpenCVRenderer):
                             img,
                             [path_uv],
                             isClosed=False,
-                            color=self.actuator_color,
+                            color=tuple(
+                                int(c * 255)
+                                for c in actuator_colors[0, actuator_idx, :3][::-1]
+                            ),
                             thickness=max(1, self.actuator_thickness),
                         )
 
         # Draw base marker at the transformed base position after the backbone
         # so it remains visible.
         base_radius = self._base_radius_px(ppm, q)
-        cv2.circle(img, tuple(curve_uv[0]), base_radius, self.base_color, -1)
+        cv2.circle(
+            img,
+            tuple(curve_uv[0]),
+            base_radius,
+            tuple(int(c * 255) for c in cfg.base_plate_color[::-1]),
+            -1,
+        )
 
         return img
 
@@ -260,6 +266,8 @@ class OpenCVPlanarRenderer(BaseOpenCVRenderer):
         q: Array,
         *,
         base_offsets: Array | None = None,
+        color_config: RendererColorConfig | None = None,
+        camera_config: CameraConfig | None = None,
         render_actuators: bool = True,
         actuator_inputs: Array | None = None,
     ) -> None:
@@ -269,12 +277,17 @@ class OpenCVPlanarRenderer(BaseOpenCVRenderer):
             q: Robot configuration array of shape (DOF,).
             base_offsets: Optional positional offset with shape ``(2,)`` or
                 ``(3,)``.
+            color_config: Complete robot-color override.
+            camera_config: Camera override; the planar pixel projection is unchanged.
             render_actuators: Whether to render actuator visual layers if available.
             actuator_inputs: Optional actuator inputs for scalar-colored layers.
         """
+        self._warn_simple_appearance(getattr(self, "_rendering_mode", "static"))
         img = self.render_frame(
             q,
             base_offsets=base_offsets,
+            color_config=color_config,
+            camera_config=camera_config,
             render_actuators=render_actuators,
             actuator_inputs=actuator_inputs,
         )

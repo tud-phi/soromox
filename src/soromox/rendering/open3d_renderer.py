@@ -54,7 +54,13 @@ from soromox.rendering.cross_sections import (
     loft_cross_section_contours,
     loft_cross_sections,
 )
-from soromox.rendering.open3d_render_config import Open3DRenderConfig
+from soromox.rendering.renderer_config import DirectionalLightConfig, RendererConfig
+from soromox.rendering.scenery import (
+    backdrop_mesh,
+    ground_grid,
+    linear_to_srgb,
+    srgb_to_linear,
+)
 from soromox.rendering.video_encoding import FFmpegVideoWriter, VideoEncodingConfig
 from soromox.systems.soft_robot import SoftRobot
 
@@ -186,6 +192,7 @@ def _make_ground_plane(
     plane_color: tuple[float, float, float],
     grid_color: tuple[float, float, float],
     grid_divisions: int = 10,
+    ground_config=None,
 ) -> tuple[o3d.geometry.TriangleMesh, o3d.geometry.LineSet]:
     """Create a finite, base-aligned ground plane and grid."""
     normal = np.asarray(normal_xyz, dtype=np.float64)
@@ -248,6 +255,13 @@ def _make_ground_plane(
             (grid_lines.shape[0], 1),
         )
     )
+    if ground_config is not None:
+        points, colors = ground_grid(ground_config, center, normal, size)
+        grid.points = o3d.utility.Vector3dVector(points.reshape(-1, 3))
+        grid.lines = o3d.utility.Vector2iVector(
+            np.arange(points.size // 3).reshape(-1, 2)
+        )
+        grid.colors = o3d.utility.Vector3dVector(colors)
     return plane, grid
 
 
@@ -315,6 +329,9 @@ def _make_spheres_mesh(
         np.repeat(colors, num_vertices, axis=0)
     )
     return mesh
+
+
+_MODERN_GUI_CREATED = False
 
 
 @dataclass(frozen=True)
@@ -762,74 +779,40 @@ class Open3DRenderer(BaseSoftRobotRenderer):
     def __init__(
         self,
         robot: SoftRobot,
-        width: int = 1920,
-        height: int = 1200,
-        num_points: int = 80,
-        background_color: tuple[float, float, float] = (1.0, 1.0, 1.0),
-        color_config: RendererColorConfig | None = None,
-        backbone_style: str = "swept",
+        config: RendererConfig | None = None,
         recompute_normals: bool = True,
-        cross_section_resolution: int = 20,
         sphere_resolution: int = 32,
-        base_plate_radius_scale: float = 2.0,
-        base_plate_thickness: float = 0.06,
-        show_ground_plane: bool = True,
-        ground_plane_size: float | None = None,
-        grid_spacing: tuple[float, float] = (0.5, 0.5),
         base_offsets: Array | None = None,
-        actuator_line_width: float = 2.0,
         camera_margin_ratio: float = 0.05,
         merge_backbone_meshes: bool | None = None,
-        render_config: Open3DRenderConfig | None = None,
     ):
         """Initialize Open3D renderer.
 
         Args:
+            config: Shared scene, camera, color, geometry and output defaults.
             robot: Robot system with forward_kinematics method
-            width: Window width in pixels
-            height: Window height in pixels
-            num_points: Number of points for backbone discretization
-            background_color: RGB background color (0-1 range)
-            color_config: Shared renderer color configuration
-            backbone_style: "swept" (material-frame surface) or "discrete" (markers)
             recompute_normals: Whether to recompute vertex normals per segment update
-            cross_section_resolution: Number of contour points used to construct
-                swept cross-sections. Higher values produce smoother curved sections;
-                ignored when ``backbone_style="discrete"``.
             sphere_resolution: Resolution for backbone spheres
-            base_plate_radius_scale: Multiplier applied to the base-contour
-                transverse extent to size the circular base plate
-            base_plate_thickness: Absolute thickness of the base plate geometry
-            show_ground_plane: Whether to render a base-aligned ground plane
-            ground_plane_size: Optional side length of the ground plane in meters
-            grid_spacing: (x, y) spacing between robot bases for batched rendering
             base_offsets: Explicit base offsets of shape (N, 2) or (N, 3) for batched rendering
-            actuator_line_width: Width of actuator lines
             camera_margin_ratio: Margin ratio for camera bounding box
             merge_backbone_meshes: Whether to merge each robot's backbone
                 primitives into one dynamic mesh. ``None`` selects merging
                 automatically for multi-robot scenes while retaining the
-                lower per-frame update cost of unmerged single-robot scenes.
-            render_config: Modern material, light, shadow and backdrop settings.
-                Animated previews approximate the scene with legacy shading.
-        """
+                lower per-frame update cost of unmerged single-robot scenes."""
         if not OPEN3D_AVAILABLE:
             raise ImportError(
                 "Open3D is not installed. Install the rendering dependencies; see tools/open3d/README.md"
             )
 
-        super().__init__(
-            robot,
-            width,
-            height,
-            num_points,
-            background_color,
-            color_config=color_config,
-            show_ground_plane=show_ground_plane,
-            ground_plane_size=ground_plane_size,
-        )
+        super().__init__(robot, config=config)
+        backbone_style = self.config.geometry.backbone_style
+        cross_section_resolution = self.config.geometry.cross_section_resolution
+        base_plate_radius_scale = self.config.geometry.base_plate_radius_scale
+        base_plate_thickness = self.config.geometry.base_plate_thickness
+        grid_spacing = self.config.geometry.grid_spacing
+        actuator_line_width = self.config.geometry.actuator_line_width
 
-        self.render_config = render_config or Open3DRenderConfig()
+        self.scene_config = self.config.scene
         self.backbone_style = backbone_style
         self._backbone_mode = self._resolve_backbone_mode(backbone_style)
         self._sweep_layout = None
@@ -917,21 +900,50 @@ class Open3DRenderer(BaseSoftRobotRenderer):
     # -------------------------------------------------------------------------
 
     def _make_mesh_material(
-        self, color_rgba: tuple[float, float, float] | tuple[float, float, float, float]
+        self,
+        color_rgba: tuple[float, float, float] | tuple[float, float, float, float],
+        *,
+        ground: bool = False,
     ) -> o3d.visualization.rendering.MaterialRecord:
-        """Create an Open3D material honoring per-color alpha."""
+        """Create an Open3D material with sRGB adaptation and independent opacity.
+
+        Args:
+            color_rgba: Normalized public sRGB color with optional alpha.
+            ground: Use ground opacity and a fully rough nonmetallic surface.
+
+        Returns:
+            MaterialRecord for the selected lit or unlit rendering path.
+        """
         rgba = ensure_rgba(np.asarray(color_rgba, dtype=np.float64))[0]
         mat = o3d.visualization.rendering.MaterialRecord()
-        mat.shader = "defaultLitTransparency" if rgba[3] < 0.999 else "defaultLit"
+        rgba = rgba.copy()
+        rgba[3] *= (
+            self.scene_config.ground.opacity
+            if ground
+            else self.scene_config.material.opacity
+        )
+        lit = self.scene_config.material.shading != "unlit"
+        if lit:
+            rgba[:3] = srgb_to_linear(rgba[:3])
+        else:
+            # Unlit output bypasses grading. Compensate Open3D's automatic
+            # sRGB-to-linear conversion and Filament's 0.5 unlit scaling
+            # to preserve framebuffer colors with post-processing disabled.
+            rgba[:3] = linear_to_srgb(2.0 * rgba[:3])
+        mat.shader = (
+            ("defaultLitTransparency" if lit else "defaultUnlitTransparency")
+            if rgba[3] < 0.999
+            else ("defaultLit" if lit else "defaultUnlit")
+        )
         mat.base_color = (
             float(rgba[0]),
             float(rgba[1]),
             float(rgba[2]),
             float(rgba[3]),
         )
-        mat.base_roughness = self.render_config.roughness
-        mat.base_metallic = self.render_config.metallic
-        mat.base_reflectance = self.render_config.reflectance
+        mat.base_roughness = 1.0 if ground else self.scene_config.material.roughness
+        mat.base_metallic = 0.0 if ground else self.scene_config.material.metallic
+        mat.base_reflectance = self.scene_config.material.reflectance
         return mat
 
     def _blend_with_background(
@@ -1287,9 +1299,65 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                 material_cache[key] = self._make_mesh_material(key)
             return material_cache[key]
 
+        geometry_names = []
+
+        def add_geometry(name, geometry, material):
+            """Register geometry and track its name for shadow configuration.
+
+            Args:
+                name: Unique geometry name.
+                geometry: Open3D mesh or line set.
+                material: Rendering material.
+
+            Returns:
+                None.
+            """
+            scene.add_geometry(name, geometry, material)
+            geometry_names.append(name)
+
         scene.clear_geometry()
         layout = scene_data.layout
         s_ps = np.asarray(self._backbone_abscissae, dtype=np.float64)
+
+        self._appearance_center, self._appearance_extent = self._scene_bounds(
+            scene_data
+        )
+        if self.show_ground_plane and not self.scene_config.backdrop.enabled:
+            ground_cfg = self.scene_config.ground
+            for i, (center, normal, size) in enumerate(
+                self._resolve_ground_planes(
+                    scene_data.curves[:, frame_idx],
+                    scene_data.material_frames[:, frame_idx, 0, :, 0],
+                )
+            ):
+                plane, grid = _make_ground_plane(
+                    center,
+                    normal,
+                    size,
+                    ground_cfg.color,
+                    ground_cfg.grid_color,
+                    grid_divisions=max(1, round(size / ground_cfg.grid_spacing))
+                    if ground_cfg.grid_spacing
+                    else 10,
+                    ground_config=ground_cfg,
+                )
+                if ground_cfg.surface:
+                    name = f"ground_plane_{i}"
+                    plane.paint_uniform_color((1.0, 1.0, 1.0))
+                    add_geometry(
+                        name,
+                        plane,
+                        self._make_mesh_material(ground_cfg.color, ground=True),
+                    )
+                    scene.scene.geometry_shadows(name, False, ground_cfg.receive_shadow)
+                if ground_cfg.grid:
+                    material = o3d.visualization.rendering.MaterialRecord()
+                    material.shader = "unlitLine"
+                    material.line_width = 1.0
+                    grid.colors = o3d.utility.Vector3dVector(
+                        srgb_to_linear(np.asarray(grid.colors))
+                    )
+                    add_geometry(f"ground_grid_{i}", grid, material)
 
         for robot_idx in range(scene_data.num_robots):
             curve = scene_data.curves[robot_idx, frame_idx]
@@ -1298,26 +1366,6 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             sections = self._cross_sections_for_points(q_frame, s_ps)
             base_color_rgba = ensure_rgba(np.asarray(cfg.base_plate_color))[0]
             base_axis = material_frames[0, :, 0]
-            if self.show_ground_plane and not self.render_config.studio_backdrop:
-                ground_size = self._resolve_ground_plane_size()
-                ground_plane, ground_grid = _make_ground_plane(
-                    curve[0] - self.base_plate_thickness * base_axis,
-                    base_axis,
-                    ground_size,
-                    cfg.ground_plane_color,
-                    cfg.ground_plane_grid_color,
-                )
-                scene.add_geometry(
-                    f"ground_plane_{robot_idx}",
-                    ground_plane,
-                    mat_for((*cfg.ground_plane_color, 0.78)),
-                )
-                grid_material = o3d.visualization.rendering.MaterialRecord()
-                grid_material.shader = "unlitLine"
-                grid_material.line_width = 1.0
-                scene.add_geometry(
-                    f"ground_grid_{robot_idx}", ground_grid, grid_material
-                )
             base_mesh = _make_base_plate(
                 curve[0] - 0.5 * self.base_plate_thickness * base_axis,
                 radius=self._base_plate_radius_for_section(sections[0]),
@@ -1327,7 +1375,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                 apply_translation=True,
                 normal_xyz=base_axis,
             )
-            scene.add_geometry(f"base_{robot_idx}", base_mesh, mat_for(base_color_rgba))
+            add_geometry(f"base_{robot_idx}", base_mesh, mat_for(base_color_rgba))
 
             for s in range(layout.segments):
                 c0, c1 = int(layout.starts[s]), int(layout.ends[s])
@@ -1348,7 +1396,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                             cap_start=self._swept_edge_caps[p][0],
                             cap_end=self._swept_edge_caps[p][1],
                         )
-                        scene.add_geometry(
+                        add_geometry(
                             f"body_{robot_idx}_{s}_{p}",
                             body,
                             mat_for(raw_color_rgba),
@@ -1366,7 +1414,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                                 apply_color=False,
                                 apply_translation=True,
                             )
-                            scene.add_geometry(
+                            add_geometry(
                                 f"sphere_{robot_idx}_{s}_{p}",
                                 sp,
                                 mat_for(raw_color_rgba),
@@ -1388,7 +1436,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                                 ),
                                 center=curve[p],
                             )
-                            scene.add_geometry(
+                            add_geometry(
                                 f"box_{robot_idx}_{s}_{p}",
                                 box,
                                 mat_for(raw_color_rgba),
@@ -1408,7 +1456,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                                 ),
                                 center=curve[p],
                             )
-                            scene.add_geometry(
+                            add_geometry(
                                 f"ell_{robot_idx}_{s}_{p}",
                                 ell,
                                 mat_for(raw_color_rgba),
@@ -1417,6 +1465,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             for layer_idx, layer in enumerate(scene_data.actuator_layers):
                 colors = resolve_actuator_rgba(
                     layer,
+                    override_color=cfg.robot_override,
                     default_color=cfg.actuators.color_for_kind(layer.kind),
                     scalar_colormap=cfg.actuators.scalar_colormap,
                 )
@@ -1429,7 +1478,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                     mat_line = o3d.visualization.MaterialRecord()
                     mat_line.shader = "unlitLine"
                     mat_line.line_width = layer.line_width or self.actuator_line_width
-                    scene.add_geometry(
+                    add_geometry(
                         f"actuator_{robot_idx}_{layer_idx}_{actuator_idx}",
                         ls,
                         mat_line,
@@ -1449,7 +1498,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                     apply_color=False,
                     apply_translation=True,
                 )
-                scene.add_geometry(f"static_{idx}", mesh, mat_for(rgb))
+                add_geometry(f"static_{idx}", mesh, mat_for(rgb))
 
         if scene_data.dynamic_spheres is not None:
             dyn_set = scene_data.dynamic_spheres
@@ -1466,7 +1515,19 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                     apply_color=False,
                     apply_translation=True,
                 )
-                scene.add_geometry(f"dynamic_{dyn_idx}", mesh, mat_for(rgb))
+                add_geometry(f"dynamic_{dyn_idx}", mesh, mat_for(rgb))
+
+        for name in geometry_names:
+            if name.startswith("ground"):
+                continue
+            cast = (
+                self.scene_config.sphere_cast_shadow
+                if name.startswith(("static_", "dynamic_"))
+                else self.scene_config.backbone_cast_shadow
+            )
+            scene.scene.geometry_shadows(
+                name, self.scene_config.shadows and cast, self.scene_config.shadows
+            )
 
     # -------------------------------------------------------------------------
     def _scene_bounds(self, scene_data: SceneData) -> tuple[np.ndarray, float]:
@@ -1509,86 +1570,96 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         return (lower + upper) / 2, max(float(np.max(upper - lower)), 1e-3)
 
     def _studio_backdrop(self, scene_data: SceneData):
-        """Construct the shared studio floor and curved background wall.
-
-        The backdrop is centered on the scene in world X/Y, uses world Z as up,
-        and starts at ``render_config.floor_z``. Its dimensions scale with the
-        complete trajectory bounds, so its geometry is fixed during export.
+        """Build the configured curved studio floor and wall.
 
         Args:
-            scene_data: Prepared trajectories used to size and place the backdrop.
+            scene_data: Complete trajectory and helper geometry used for sizing.
 
         Returns:
-            Open3D triangle mesh with vertex normals and the configured backdrop
-            color. The mesh has not been added to a rendering scene.
+            Open3D triangle mesh with smooth normals and the ground color.
         """
         center, extent = self._scene_bounds(scene_data)
-        scale = extent / 1.2
-        angles = np.linspace(0, np.pi / 2, 80)
-        profile = [(-3.0, 0.0), (0.5, 0.0)]
-        profile.extend(
-            zip(0.5 + 0.6 * np.sin(angles[1:]), 0.6 * (1 - np.cos(angles[1:])))
+        vertices, faces = backdrop_mesh(
+            self.scene_config, center, extent, self._world_up()
         )
-        profile.append((1.1, 3.0))
-        vertices = np.array([[x, y, z] for y, z in profile for x in (-3.0, 3.0)])
-        vertices *= scale
-        vertices += [center[0], center[1], self.render_config.floor_z]
-        faces = [
-            face
-            for i in range(len(profile) - 1)
-            for face in ([2 * i, 2 * i + 1, 2 * i + 3], [2 * i, 2 * i + 3, 2 * i + 2])
-        ]
         mesh = o3d.geometry.TriangleMesh(
             o3d.utility.Vector3dVector(vertices), o3d.utility.Vector3iVector(faces)
         )
         mesh.compute_vertex_normals()
-        mesh.paint_uniform_color(self.render_config.backdrop_color)
+        mesh.paint_uniform_color(self.scene_config.ground.color)
         return mesh
 
-    def _configure_modern_scene(self, scene, scene_data: SceneData) -> None:
-        """Apply background, illumination and post-processing to a modern scene.
-
-        The optional fill light is positioned and scaled from the trajectory
-        bounds. This method configures appearance without adding robot geometry
-        or changing the camera.
+    def _configure_modern_scene(
+        self, scene, scene_data: SceneData, camera_config=None
+    ) -> None:
+        """Configure physical illumination and output processing for a modern scene.
 
         Args:
-            scene: Open3D ``Open3DScene`` owned by a GUI widget or offscreen renderer.
-            scene_data: Prepared trajectories used to size and place the fill light.
+            scene: Open3DScene owned by a GUI widget or offscreen renderer.
+            scene_data: Complete trajectories and helpers used to fit scenery.
+            camera_config: Per-call camera and exposure override.
 
         Returns:
-            None. The supplied scene is modified in place.
+            None. Modifies scene appearance without moving its camera.
         """
-        cfg = self.render_config
-        background = (
-            cfg.backdrop_color if cfg.studio_backdrop else self.background_color
+        cfg = self.scene_config
+        camera = camera_config or self.config.camera
+        gain = 2.0 ** (15.0 - camera.exposure_ev100)
+        features = []
+        if sum(isinstance(light, DirectionalLightConfig) for light in cfg.lights) > 1:
+            features.append(
+                "Filament uses only the dominant directional light; use point lights for fill"
+            )
+        if cfg.tone_mapping != "backend-default" and cfg.material.shading != "unlit":
+            features.append("development Open3D may ignore the requested tone mapper")
+        if camera.exposure_ev100 != 15:
+            features.append("exposure through illumination scaling")
+        if cfg.ambient.color != (1.0, 1.0, 1.0):
+            features.append("environment tint")
+        if cfg.material.shading.startswith("toon"):
+            features.append("toon material as standard shading")
+        if cfg.material.wireframe or cfg.material.flat_shading:
+            features.append("wireframe/face-normal material settings")
+        self._warn_appearance("modern", features)
+        self._appearance_center, self._appearance_extent = self._scene_bounds(
+            scene_data
         )
-        scene.set_background(np.array([*background, 1.0]))
+        scene.set_background(np.array([*cfg.background, 1.0]))
         scene.show_skybox(False)
-        scene.set_lighting(scene.SOFT_SHADOWS, cfg.sun_direction)
-        scene.scene.set_sun_light(cfg.sun_direction, cfg.sun_color, cfg.sun_intensity)
-        scene.scene.enable_sun_light(cfg.sun_intensity > 0)
-        scene.scene.set_indirect_light_intensity(cfg.indirect_light_intensity)
-        scene.view.set_post_processing(True)
+        scene.set_lighting(scene.SOFT_SHADOWS, (0, 0, -1))
+        scene.scene.enable_sun_light(False)
+        scene.scene.set_indirect_light_intensity(cfg.ambient.strength * 60000 * gain)
+        scene.view.set_post_processing(cfg.material.shading != "unlit")
         scene.view.set_antialiasing(True)
         scene.view.set_ambient_occlusion(cfg.ambient_occlusion)
         scene.view.set_shadowing(
             cfg.shadows, o3d.visualization.rendering.View.ShadowType.VSM
         )
-        if cfg.fill_intensity:
-            center, extent = self._scene_bounds(scene_data)
-            scale = extent / 1.2
-            position = np.array([center[0], center[1], cfg.floor_z]) + scale * np.array(
-                [-0.3, -0.4, 1.1]
+        if cfg.tone_mapping != "backend-default":
+            grading = o3d.visualization.rendering.ColorGrading
+            algorithm = (
+                grading.ToneMapping.LINEAR
+                if cfg.tone_mapping == "linear"
+                else grading.ToneMapping.ACES
             )
-            scene.scene.add_point_light(
-                "studio_fill",
-                [1.0, 0.98, 0.96],
-                position,
-                cfg.fill_intensity * scale**2,
-                4.0 * scale,
-                False,
-            )
+            scene.view.set_color_grading(grading(grading.Quality.ULTRA, algorithm))
+        for index, light in enumerate(cfg.lights):
+            name = f"configured_light_{index}"
+            color = srgb_to_linear(light.color)
+            cast = cfg.shadows and light.cast_shadow
+            if isinstance(light, DirectionalLightConfig):
+                scene.scene.add_directional_light(
+                    name, color, light.direction, light.illuminance_lux * gain, cast
+                )
+            else:
+                scene.scene.add_point_light(
+                    name,
+                    color,
+                    light.position,
+                    light.intensity_candela * 4 * np.pi * gain,
+                    light.range_m,
+                    cast,
+                )
 
     @staticmethod
     def _require_modern_capture_support() -> None:
@@ -1634,9 +1705,9 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         self._require_modern_capture_support()
         render = o3d.visualization.rendering.OffscreenRenderer(self.width, self.height)
         try:
-            self._configure_modern_scene(render.scene, scene_data)
+            self._configure_modern_scene(render.scene, scene_data, camera_config)
             center, extent = self._scene_bounds(scene_data)
-            config = camera_config or CameraConfig()
+            config = camera_config or self.config.camera
             position, target = config.compute_auto_position(
                 center, extent, reference_transform=np.asarray(self.base_transform)
             )
@@ -1669,11 +1740,18 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         self._populate_rendering_scene(
             scene, scene_data, frame_idx, color_config=color_config
         )
-        if self.render_config.studio_backdrop:
-            material = self._make_mesh_material(self.render_config.backdrop_color)
+        if self.scene_config.backdrop.enabled and self.scene_config.ground.visible:
+            material = self._make_mesh_material(
+                self.scene_config.ground.color, ground=True
+            )
             material.base_roughness = 1.0
             scene.add_geometry(
-                "studio_backdrop", self._studio_backdrop(scene_data), material
+                "studio_backdrop",
+                self._studio_backdrop(scene_data).paint_uniform_color((1.0, 1.0, 1.0)),
+                material,
+            )
+            scene.scene.geometry_shadows(
+                "studio_backdrop", False, self.scene_config.ground.receive_shadow
             )
 
     def _render_modern_frame(self, render, scene_data, frame_idx, color_config=None):
@@ -1692,6 +1770,10 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             RuntimeError: Open3D returns an unexpected image shape.
         """
         self._populate_modern_scene(render.scene, scene_data, frame_idx, color_config)
+        if self.scene_config.backdrop.enabled and self.scene_config.ground.visible:
+            render.scene.scene.geometry_shadows(
+                "studio_backdrop", False, self.scene_config.ground.receive_shadow
+            )
         # Copy before the native image/context is released.
         frame = np.asarray(render.render_to_image())
         if (
@@ -1933,10 +2015,10 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         widget.scene = o3d.visualization.rendering.Open3DScene(window.renderer)
         widget.frame = window.content_rect
         window.add_child(widget)
-        self._configure_modern_scene(widget.scene, scene_data)
+        self._configure_modern_scene(widget.scene, scene_data, camera_config)
         self._populate_modern_scene(widget.scene, scene_data, 0, color_config)
         center, extent = self._scene_bounds(scene_data)
-        config = camera_config or CameraConfig()
+        config = camera_config or self.config.camera
         eye, target = config.compute_auto_position(
             center, extent, reference_transform=np.asarray(self.base_transform)
         )
@@ -2070,9 +2152,11 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         Returns:
             None. Blocks until closure; Open3D releases the window and its scene.
         """
+        global _MODERN_GUI_CREATED
         app, window, widget = self._create_modern_window(
             scene_data, camera_config, color_config
         )
+        _MODERN_GUI_CREATED = True
         closed = [False]
 
         def on_close():
@@ -2187,7 +2271,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             path=record_path,
             prefix=record_prefix,
             every_n=record_every_n,
-            video_config=video_config,
+            video_config=video_config or self.config.output.video,
             close_when_done=close_when_recording_done,
         )
         if record_path is not None:
@@ -2195,12 +2279,11 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                 scene_data, record_cfg, playback_speed, camera_config, color_config
             )
             return
-        warnings.warn(
-            "Open3D interactive preview uses legacy shading for efficient mesh updates. "
-            "Materials, lighting, transparency, shadows, and ambient occlusion may differ "
-            "from modern image/video exports; interactive snapshots capture this preview.",
-            UserWarning,
-            stacklevel=2,
+        self._warn_appearance(
+            "animated",
+            [
+                "legacy shading for efficient mesh updates: materials, lighting, transparency, shadows and ambient occlusion differ from modern image/video exports; snapshots capture this preview"
+            ],
         )
         self._run_viewer(
             scene_data,
@@ -2215,6 +2298,12 @@ class Open3DRenderer(BaseSoftRobotRenderer):
 
     def _create_visualizer(self, window_name: str):
         """Create a visualizer with common options set."""
+        if sys.platform == "darwin" and _MODERN_GUI_CREATED:
+            raise RuntimeError(
+                "This Open3D build cannot open a legacy OpenGL preview after a modern "
+                "GUI window in the same macOS process. Start the animated preview in "
+                "a fresh Python process; modern image/video exports remain available."
+            )
         vis = o3d.visualization.VisualizerWithKeyCallback()
         window_created = vis.create_window(
             window_name=window_name,
@@ -2230,8 +2319,8 @@ class Open3DRenderer(BaseSoftRobotRenderer):
 
         opt = vis.get_render_option()
         opt.background_color = np.array(
-            self.render_config.backdrop_color
-            if self.render_config.studio_backdrop
+            self.scene_config.ground.color
+            if self.scene_config.backdrop.enabled
             else self.background_color,
             dtype=np.float64,
         )
@@ -2266,7 +2355,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         max_extent = float(np.max(extent))
 
         # Use provided config or defaults
-        config = camera_config or CameraConfig()
+        config = camera_config or self.config.camera
         camera_pos, look_at = config.compute_auto_position(
             center,
             max_extent,
@@ -2293,7 +2382,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         desired_distance = float(np.linalg.norm(camera_pos - look_at))
         zoom = 0.1 * (desired_distance / max_extent) if max_extent > 1e-9 else 0.7
         ctrl.set_zoom(zoom)
-        if self.render_config.studio_backdrop:
+        if self.scene_config.backdrop.enabled and self.scene_config.ground.visible:
             # An explicit pinhole camera avoids fitting the large studio wall.
             # ViewControl still owns interactive orbit/pan/zoom and snapshots.
             forward = (look_at - camera_pos) / desired_distance
@@ -2546,7 +2635,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         s_ps = np.asarray(self._backbone_abscissae, dtype=np.float64)
         ground_meshes: list = []
         ground_lines: list = []
-        if self.render_config.studio_backdrop:
+        if self.scene_config.backdrop.enabled and self.scene_config.ground.visible:
             backdrop = self._studio_backdrop(scene_data)
             vis.add_geometry(backdrop)
             ground_meshes.append(backdrop)
@@ -2566,25 +2655,38 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             )
             self._warned_dynamic_geometry = True
 
+        self._appearance_center, self._appearance_extent = self._scene_bounds(
+            scene_data
+        )
+        if self.show_ground_plane and not self.scene_config.backdrop.enabled:
+            ground_cfg = self.scene_config.ground
+            for center, normal, size in self._resolve_ground_planes(
+                scene_data.curves[:, frame_idx],
+                scene_data.material_frames[:, frame_idx, 0, :, 0],
+            ):
+                plane, grid = _make_ground_plane(
+                    center,
+                    normal,
+                    size,
+                    ground_cfg.color,
+                    ground_cfg.grid_color,
+                    grid_divisions=max(1, round(size / ground_cfg.grid_spacing))
+                    if ground_cfg.grid_spacing
+                    else 10,
+                    ground_config=ground_cfg,
+                )
+                if ground_cfg.surface:
+                    vis.add_geometry(plane)
+                    ground_meshes.append(plane)
+                if ground_cfg.grid:
+                    vis.add_geometry(grid)
+                    ground_lines.append(grid)
+
         for robot_idx in range(scene_data.num_robots):
             curve0 = scene_data.curves[robot_idx, frame_idx]
             material_frames0 = scene_data.material_frames[robot_idx, frame_idx]
             q0 = scene_data.q_ts[robot_idx, frame_idx]
             sections = self._cross_sections_for_points(q0, s_ps)
-            if self.show_ground_plane and not self.render_config.studio_backdrop:
-                base_axis = material_frames0[0, :, 0]
-                ground_size = self._resolve_ground_plane_size()
-                ground_plane, ground_grid = _make_ground_plane(
-                    curve0[0] - self.base_plate_thickness * base_axis,
-                    base_axis,
-                    ground_size,
-                    cfg.ground_plane_color,
-                    cfg.ground_plane_grid_color,
-                )
-                vis.add_geometry(ground_plane)
-                vis.add_geometry(ground_grid)
-                ground_meshes.append(ground_plane)
-                ground_lines.append(ground_grid)
             base_mesh, groups = self._build_robot_geometry(
                 vis,
                 curve0,
@@ -2610,6 +2712,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         for layer in scene_data.actuator_layers:
             colors = resolve_actuator_rgba(
                 layer,
+                override_color=cfg.robot_override,
                 default_color=cfg.actuators.color_for_kind(layer.kind),
                 scalar_colormap=cfg.actuators.scalar_colormap,
             )
@@ -2682,6 +2785,38 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         """Update geometry positions for a given frame."""
         cfg = color_config or self.color_config
         layout = scene_data.layout
+        ground = self.scene_config.ground
+        if (
+            ground.visible
+            and ground.alignment == "base"
+            and not self.scene_config.backdrop.enabled
+        ):
+            for i, (center, normal, size) in enumerate(
+                self._resolve_ground_planes(
+                    scene_data.curves[:, frame_idx],
+                    scene_data.material_frames[:, frame_idx, 0, :, 0],
+                )
+            ):
+                plane, grid = _make_ground_plane(
+                    center,
+                    normal,
+                    size,
+                    ground.color,
+                    ground.grid_color,
+                    grid_divisions=max(1, round(size / ground.grid_spacing))
+                    if ground.grid_spacing
+                    else 10,
+                    ground_config=ground,
+                )
+                if ground.surface:
+                    handles.ground_meshes[i].vertices = plane.vertices
+                    handles.ground_meshes[i].vertex_normals = plane.vertex_normals
+                    vis.update_geometry(handles.ground_meshes[i])
+                if ground.grid:
+                    handles.ground_lines[i].points = grid.points
+                    handles.ground_lines[i].lines = grid.lines
+                    handles.ground_lines[i].colors = grid.colors
+                    vis.update_geometry(handles.ground_lines[i])
 
         for robot_idx in range(scene_data.num_robots):
             curve = scene_data.curves[robot_idx, frame_idx]
@@ -2710,6 +2845,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         for layer_idx, layer in enumerate(scene_data.actuator_layers):
             colors = resolve_actuator_rgba(
                 layer,
+                override_color=cfg.robot_override,
                 default_color=cfg.actuators.color_for_kind(layer.kind),
                 scalar_colormap=cfg.actuators.scalar_colormap,
             )

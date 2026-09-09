@@ -12,6 +12,14 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from soromox.rendering.renderer_config import (
+    GeometryConfig,
+    GroundPlaneConfig,
+    RendererConfig,
+    RenderOutputConfig,
+    SceneConfig,
+)
+
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/soromox_matplotlib")
 
 import jax
@@ -552,19 +560,26 @@ def render_rollout_to_mp4(
 
     renderer = HeadlessRLVideoRenderer(
         robot,
-        width=args.width,
-        height=args.height,
-        num_points=args.num_points,
-        color_config=make_rl_color_config(color_label),
-        backbone_style="discrete",
         recompute_normals=False,
-        background_color=BACKGROUND_COLOR,
         sphere_resolution=args.sphere_resolution,
-        actuator_line_width=args.tendon_line_width,
-        grid_spacing=(args.grid_spacing, args.grid_spacing),
         base_offsets=offsets,
-        ground_plane_size=(args.grid_spacing if rollout.num_envs > 1 else None),
         visible=args.visible,
+        config=RendererConfig(
+            output=RenderOutputConfig(width=args.width, height=args.height),
+            geometry=GeometryConfig(
+                num_points=args.num_points,
+                backbone_style="discrete",
+                actuator_line_width=args.tendon_line_width,
+                grid_spacing=(args.grid_spacing, args.grid_spacing),
+            ),
+            colors=make_rl_color_config(color_label),
+            scene=SceneConfig(
+                background=BACKGROUND_COLOR,
+                ground=GroundPlaneConfig(
+                    size=args.grid_spacing if rollout.num_envs > 1 else None
+                ),
+            ),
+        ),
     )
     print("Precomputing vectorized scene geometry...")
     try:

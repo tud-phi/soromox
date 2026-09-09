@@ -23,6 +23,12 @@ from pathlib import Path
 import equinox as eqx
 import jax
 
+from soromox.rendering.renderer_config import (
+    GeometryConfig,
+    RendererConfig,
+    RenderOutputConfig,
+)
+
 jax.config.update("jax_enable_x64", True)
 
 import jax.numpy as jnp
@@ -581,11 +587,11 @@ def render_motion(
 
     renderer = UMArmViserRenderer(
         robot,
-        width=1280,
-        height=720,
-        num_points=80,
-        backbone_style="discrete",
         actuator_color_mode="pressure",
+        config=RendererConfig(
+            output=RenderOutputConfig(width=1280, height=720),
+            geometry=GeometryConfig(num_points=80, backbone_style="discrete"),
+        ),
     )
     renderer.render_sequence(
         ts=render_t,

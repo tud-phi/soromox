@@ -39,7 +39,18 @@ from soromox.rendering.cross_sections import (
     register_cross_section_contour,
 )
 from soromox.rendering.matplotlib_renderer import MatplotlibRenderer
-from soromox.rendering.open3d_render_config import Open3DRenderConfig
+from soromox.rendering.renderer_config import (
+    AmbientLightConfig,
+    BackdropConfig,
+    DirectionalLightConfig,
+    GeometryConfig,
+    GroundPlaneConfig,
+    MaterialConfig,
+    PointLightConfig,
+    RendererConfig,
+    RenderOutputConfig,
+    SceneConfig,
+)
 from soromox.rendering.video_encoding import VideoEncodingConfig
 
 # Open3D renderer is optional (requires open3d package)
@@ -84,7 +95,16 @@ __all__ = [
     "BaseSoftRobotRenderer",
     # Configuration
     "CameraConfig",
-    "Open3DRenderConfig",
+    "RendererConfig",
+    "SceneConfig",
+    "GroundPlaneConfig",
+    "BackdropConfig",
+    "MaterialConfig",
+    "AmbientLightConfig",
+    "DirectionalLightConfig",
+    "PointLightConfig",
+    "GeometryConfig",
+    "RenderOutputConfig",
     "ActuatorStyleConfig",
     "BackboneColorConfig",
     "RendererColorConfig",

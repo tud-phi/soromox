@@ -25,8 +25,8 @@ BaseSoftRobotRenderer (abstract base)
 | --- | --- | --- |
 | `BaseSoftRobotRenderer` | Backbone sampling, cached forward kinematics, batched layouts, color resolution, and the common rendering interface | All renderers |
 | Robot base | `fixed_base_pose` mounts fixed robots; floating renderers follow the base coordinates in each runtime configuration | All renderers |
-| Base plate | `base_plate_radius_scale` and `base_plate_thickness` configure the base geometry | Open3D and Viser; Matplotlib draws a lightweight base marker |
-| Ground plane | `show_ground_plane` and `ground_plane_size` configure a base-aligned reference plane; its colors come from `RendererColorConfig` | Matplotlib, Open3D, and Viser |
+| Base plate | `config.geometry.base_plate_radius_scale` and `base_plate_thickness` configure the base geometry | Open3D and Viser; Matplotlib draws a lightweight base marker |
+| Ground plane | `config.scene.ground` configures a world floor or base-aligned planes, including colors, size, grid and opacity | All renderers, with backend approximations |
 
 ### Cross-Section Geometry
 
@@ -122,7 +122,7 @@ updates. A warning explains that materials, lighting, transparency, shadows and
 ambient occlusion can differ from modern rendering. Its keyboard snapshots
 capture the animated preview appearance.
 
-Set `backbone_style="discrete"` for per-point markers or `"swept"` for a
+Set `config.geometry.backbone_style="discrete"` for per-point markers or `"swept"` for a
 material-frame surface lofted from the robot's cross-section contours.
 Multi-robot animated previews automatically merge each robot's backbone
 primitives to reduce Open3D registrations; `merge_backbone_meshes` can force or
@@ -181,14 +181,12 @@ callback that supplies states or by pushing states to the returned controller.
 
 ### Visual Quality
 
-Viser exposes backend-specific controls for:
-
-- lighting through `enable_default_lights`, directional-light, and
-  ambient-light parameters;
-- materials through `material`, `flat_shading`, and `wireframe`;
-- mesh quality through `sphere_resolution` and `cross_section_resolution`;
-- shadows through `cast_shadows`, `backbone_cast_shadow`, and
-  `sphere_cast_shadow`.
+Viser consumes the shared `config.scene` lighting, materials, shadows and
+scenery settings. Static output uses PBR GLB meshes; playback and live views
+use efficiently updated meshes with approximate materials. Geometry sampling
+is configured through `config.geometry`. `sphere_resolution` is a Viser-specific
+mesh tessellation control. See [backend support](configuration.md#backend-support)
+for exposure, tone-mapping and material limitations.
 
 ::: soromox.rendering.viser_renderer.ViserRenderer
     options:

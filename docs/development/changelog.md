@@ -16,12 +16,11 @@ and include benchmark baseline and measurement context for performance claims.
 - Added a UMArm operational-space example using
   `OperationalSpaceImpedanceControlTracker` and balanced antagonistic pressure
   inputs to track a base-parallel circle.
-- Added reusable `Open3DRenderConfig` material, lighting, shadow, ambient occlusion,
-  and curved studio backdrop settings for static views, image and video exports.
+- Added shared renderer configuration with technical, neutral studio, bright
+  studio, dark studio, flat and clay presets, physical light units, world floors,
+  and an Open3D/Viser comparison gallery of upright tapered GVS tentacles.
+  The preset example supports native image/video export and browser PNG capture.
 
-- Added Open3D and Viser studio rendering examples with upright tapered GVS
-  tentacles, pastel materials, a curved grey backdrop, lighting, and shadows,
-  including native macOS image export for Open3D and browser PNG capture for Viser.
 
 - Added opt-in Ubuntu rendering integration tests that exercise the actual
   native graphics paths: surfaceless EGL renders non-empty frames and H.264
@@ -60,6 +59,14 @@ and include benchmark baseline and measurement context for performance claims.
 ### Deprecated
 
 ### Breaking changes
+
+- All renderers accept appearance, camera, colors, geometry and output defaults
+  through `config=RendererConfig(...)`. Removed the superseded constructor
+  appearance and geometry arguments. Defaults are 800 × 600,
+  80 backbone samples and 48 cross-section samples. The default ground is a
+  world floor (+Z spatial, +Y planar); base alignment is explicit. Per-call
+  camera, color and video overrides replace complete sections. OpenCV sequence
+  options are keyword-only, with the required recording path first.
 
 - Open3D sequences with `record_path` now export through the modern renderer and
   return without opening interactive playback. Frame selection is deterministic;

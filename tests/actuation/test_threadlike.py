@@ -3,6 +3,8 @@ import equinox as eqx
 import jax
 import pytest
 
+from soromox.rendering.renderer_config import GeometryConfig, RendererConfig
+
 jax.config.update("jax_enable_x64", True)
 
 import jax.numpy as jnp
@@ -762,7 +764,7 @@ def test_visual_layers_are_semantic_unstyled_and_carry_inputs():
         actuator_inputs=actuator_inputs,
     )
     renderer_layers = MatplotlibRenderer(
-        robot, num_points=8
+        robot, config=RendererConfig(geometry=GeometryConfig(num_points=8))
     ).compute_actuator_visual_layers(q, actuator_inputs=actuator_inputs)
     assert not hasattr(robot, "actuator_visual_layers")
     assert_allclose(renderer_layers[0].points, layers[0].points)

@@ -81,7 +81,7 @@ def test_render_entrypoint_uses_geometry_neutral_resolution_option(tmp_path):
     )
 
     assert captured["robot"] is robot
-    assert captured["init"]["cross_section_resolution"] == 64
+    assert captured["init"]["config"].geometry.cross_section_resolution == 64
     assert "cylinder_sections" not in captured["init"]
     assert captured["stopped"]
 

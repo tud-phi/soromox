@@ -14,6 +14,8 @@ from matplotlib.collections import LineCollection
 from matplotlib.widgets import Slider
 from mpl_toolkits.mplot3d.art3d import Line3DCollection
 
+from soromox.rendering.video_encoding import FFmpegVideoWriter, VideoEncodingConfig
+
 if TYPE_CHECKING:
     from IPython.display import HTML
 
@@ -28,6 +30,8 @@ from soromox.rendering.actuators import (
 from soromox.rendering.base import BaseSoftRobotRenderer
 from soromox.rendering.camera_config import CameraConfig
 from soromox.rendering.color_config import RendererColorConfig
+from soromox.rendering.renderer_config import RendererConfig
+from soromox.rendering.scenery import ground_grid, plane_basis
 from soromox.systems.soft_robot import SoftRobot
 
 
@@ -48,45 +52,20 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
     def __init__(
         self,
         robot: SoftRobot,
-        width: int = 800,
-        height: int = 600,
-        num_points: int = 50,
-        background_color: tuple[float, float, float] = (1.0, 1.0, 1.0),
-        color_config: RendererColorConfig | None = None,
-        show_ground_plane: bool = True,
-        ground_plane_size: float | None = None,
-        line_width: float = 4.0,
-        grid_spacing: tuple[float, float] = (0.3, 0.3),
+        config: RendererConfig | None = None,
         base_offsets: Array | None = None,
-        actuator_line_width: float = 2.0,
     ):
         """Initialize Matplotlib renderer.
 
         Args:
+            config: Shared scene, camera, color, geometry and output defaults.
             robot: Robot system with forward_kinematics method
-            width: Figure width in pixels
-            height: Figure height in pixels
-            num_points: Number of points for backbone discretization
-            background_color: RGB background color (0-1 range)
-            color_config: Shared renderer color configuration
-            show_ground_plane: Whether to draw a reference plane through the base
-            ground_plane_size: Optional side length of the reference plane in meters
-            line_width: Width of backbone line
-            grid_spacing: (x, y) spacing for batched layouts
-            base_offsets: Optional explicit base offsets for batched layouts
-            actuator_line_width: Line width for actuator polylines
-        """
-        super().__init__(
-            robot,
-            width,
-            height,
-            num_points,
-            background_color,
-            color_config=color_config,
-            show_ground_plane=show_ground_plane,
-            ground_plane_size=ground_plane_size,
-        )
-        self.line_width = line_width
+            base_offsets: Optional explicit base offsets for batched layouts"""
+        super().__init__(robot, config=config)
+        line_width = self.config.geometry.line_width
+        grid_spacing = self.config.geometry.grid_spacing
+        actuator_line_width = self.config.geometry.actuator_line_width
+        self.line_width = line_width or 4.0
         self.grid_spacing = grid_spacing
         self._base_offsets = base_offsets
         self.actuator_line_width = actuator_line_width
@@ -118,6 +97,7 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
         Returns:
             img (np.ndarray): RGB image of shape (height, width, 3), dtype uint8.
         """
+        self._warn_simple_appearance("static")
         q_arr = jnp.asarray(q)
         batched = q_arr.ndim == 2
         cfg = color_config or self.color_config
@@ -169,6 +149,7 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
             width_m = self.L_max * 3
 
         curves_np = np.array(curves)
+        self._fit_scene_bounds(curves_np)
         actuator_layers = ()
         if render_actuators and self._has_actuator_visuals:
             if batched:
@@ -263,6 +244,7 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
         Returns:
             None
         """
+        self._warn_simple_appearance("static")
         img = self.render_frame(
             q,
             base_offsets=base_offsets,
@@ -286,6 +268,7 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
         show: bool = True,
         playback_speed: float = 1.0,
         record_path: str | None = None,
+        video_config: VideoEncodingConfig | None = None,
         base_offsets: Array | None = None,
         color_config: RendererColorConfig | None = None,
         camera_config: CameraConfig | None = None,
@@ -301,6 +284,7 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
             mode: "slider" for manual scrubbing, "animation" for auto-play
             show: Whether to call plt.show()
             playback_speed: Multiplier for playback speed (>1 = faster)
+            video_config: Complete video encoding override; None uses output defaults.
             record_path: Optional path to save animation (mp4/gif depending on writer)
             base_offsets: Optional explicit base offsets for batched layouts
             color_config: Shared renderer color configuration.
@@ -334,6 +318,7 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
                 render_actuators=render_actuators,
                 actuator_inputs=actuator_inputs,
                 record_path=record_path,
+                video_config=video_config,
                 playback_speed=playback_speed,
                 camera_config=camera_config,
             )
@@ -349,6 +334,7 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
                 render_actuators=render_actuators,
                 actuator_inputs=actuator_inputs,
                 record_path=record_path,
+                video_config=video_config,
                 playback_speed=playback_speed,
                 camera_config=camera_config,
             )
@@ -369,6 +355,7 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
         render_actuators: bool,
         actuator_inputs: Array | None,
         record_path: str | None,
+        video_config: VideoEncodingConfig | None,
         playback_speed: float,
         camera_config: CameraConfig | None,
     ):
@@ -384,6 +371,7 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
             color_config: Shared renderer color configuration.
             render_actuators: Whether to render actuator visual layers if available.
             actuator_inputs: Optional actuator inputs for scalar-colored layers.
+            video_config: Complete video encoding override; None uses output defaults.
             record_path: Optional path to save animation (mp4/gif depending on writer).
             playback_speed: Playback speed multiplier (>0).
 
@@ -430,8 +418,9 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
             center_origin=False,
             actuator_layers=actuator_layers,
             record_path=record_path,
+            video_config=video_config,
             base_plate_color=cfg.base_plate_color,
-            ground_plane_color_config=cfg,
+            color_config=cfg,
             playback_speed=playback_speed,
             camera_config=camera_config,
         )
@@ -448,6 +437,7 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
         render_actuators: bool,
         actuator_inputs: Array | None,
         record_path: str | None,
+        video_config: VideoEncodingConfig | None,
         playback_speed: float,
         camera_config: CameraConfig | None,
     ):
@@ -463,6 +453,7 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
             color_config: Shared renderer color configuration.
             render_actuators: Whether to render actuator visual layers if available.
             actuator_inputs: Optional actuator inputs for scalar-colored layers.
+            video_config: Complete video encoding override; None uses output defaults.
             record_path: Optional path to save animation (mp4/gif depending on writer).
             playback_speed: Playback speed multiplier (>0).
 
@@ -534,8 +525,9 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
             center_origin=True,
             actuator_layers=actuator_layers,
             record_path=record_path,
+            video_config=video_config,
             base_plate_color=cfg.base_plate_color,
-            ground_plane_color_config=cfg,
+            color_config=cfg,
             playback_speed=playback_speed,
             camera_config=camera_config,
         )
@@ -551,12 +543,15 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
         center_origin: bool,
         actuator_layers: tuple[TrajectoryActuatorVisualLayer, ...] = (),
         record_path: str | None = None,
+        video_config: VideoEncodingConfig | None = None,
         base_plate_color: tuple[float, float, float] | None = None,
-        ground_plane_color_config: RendererColorConfig | None = None,
+        color_config: RendererColorConfig | None = None,
         playback_speed: float = 1.0,
         camera_config: CameraConfig | None = None,
     ):
         """Shared Matplotlib animation for one or more robots."""
+        cfg = color_config or self.color_config
+        self._fit_scene_bounds(all_curves)
         num_robots, num_steps, _, _ = all_curves.shape
         base_plate_color = base_plate_color or self.color_config.base_plate_color
 
@@ -614,7 +609,7 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
         self._plot_ground_plane(
             ax,
             all_curves[:, 0],
-            ground_plane_color_config or self.color_config,
+            color_config or self.color_config,
         )
         base_artists = self._plot_base_markers(ax, all_curves[:, 0], base_plate_color)
 
@@ -622,8 +617,9 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
         actuator_colors = [
             resolve_actuator_rgba(
                 layer,
-                default_color=self.color_config.actuators.color_for_kind(layer.kind),
-                scalar_colormap=self.color_config.actuators.scalar_colormap,
+                override_color=cfg.robot_override,
+                default_color=cfg.actuators.color_for_kind(layer.kind),
+                scalar_colormap=cfg.actuators.scalar_colormap,
             )
             for layer in actuator_layers
         ]
@@ -691,14 +687,25 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
 
             if record_path is not None:
                 fps_eff = 1000.0 / max(1.0, float(actual_interval))
+                writer = FFmpegVideoWriter(
+                    str(record_path),
+                    self.width,
+                    self.height,
+                    fps_eff,
+                    video_config=video_config or self.config.output.video,
+                )
                 try:
-                    ani.save(record_path, writer="ffmpeg", fps=fps_eff)
-                    print(
-                        f"[Matplotlib] Animation saved to {record_path} (fps={fps_eff})"
-                    )
-                except Exception as exc:
-                    print(
-                        f"[Matplotlib] Failed to save animation to {record_path}: {exc}"
+                    for index in range(num_steps):
+                        update(index)
+                        fig.canvas.draw()
+                        writer.write(
+                            np.asarray(fig.canvas.buffer_rgba())[:, :, :3].copy()
+                        )
+                finally:
+                    writer.close()
+                if writer.proc.returncode != 0:
+                    raise RuntimeError(
+                        f"FFmpeg failed to export {record_path}: {writer.stderr_log}"
                     )
 
             if show:
@@ -746,6 +753,7 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
         *,
         interval: int = 50,
         record_path: str | None = None,
+        video_config: VideoEncodingConfig | None = None,
         playback_speed: float = 1.0,
         camera_config: CameraConfig | None = None,
         color_config: RendererColorConfig | None = None,
@@ -761,6 +769,7 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
             ts: Time stamps array of shape (T,)
             q_ts: Configurations array of shape (T, DOF) or (N, T, DOF)
             interval: Frame interval in ms
+            video_config: Complete video encoding override; None uses output defaults.
             record_path: Optional path to save animation
             playback_speed: Multiplier for playback speed
             camera_config: Camera configuration. Matplotlib uses its field of view
@@ -770,6 +779,7 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
             actuator_inputs: Optional actuator inputs for scalar-colored layers.
             show: Whether to display the animation
         """
+        self._warn_simple_appearance("animated")
         self.animate(
             ts=ts,
             q_ts=q_ts,
@@ -777,6 +787,7 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
             mode="animation",
             show=show,
             record_path=record_path,
+            video_config=video_config,
             playback_speed=playback_speed,
             camera_config=camera_config,
             color_config=color_config,
@@ -840,6 +851,7 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
             points = np.asarray(layer.points, dtype=np.float64)
             colors = resolve_actuator_rgba(
                 layer,
+                override_color=color_config.robot_override,
                 default_color=color_config.actuators.color_for_kind(layer.kind),
                 scalar_colormap=color_config.actuators.scalar_colormap,
             )
@@ -899,65 +911,67 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
         return artists
 
     def _plot_ground_plane(
-        self,
-        ax,
-        curves: np.ndarray,
-        color_config: RendererColorConfig,
+        self, ax, curves: np.ndarray, color_config: RendererColorConfig
     ) -> list:
-        """Draw a base-aligned ground reference without affecting robot geometry."""
+        """Draw a shared world floor or per-robot base reference planes.
+
+        Args:
+            ax: Matplotlib axes receiving the scenery.
+            curves: Robot curves with final coordinate dimension two or three.
+            color_config: Per-call robot colors; floor colors come from SceneConfig.
+
+        Returns:
+            List of artists used for the ground surfaces and optional grids.
+        """
         if not self.show_ground_plane or curves.size == 0:
             return []
-
-        dim = int(curves.shape[-1])
-        bases = np.asarray(curves[:, 0], dtype=np.float64)
-        center = np.mean(bases, axis=0)
-        normal = self._base_tangent_axis(dim=dim)
-        size = self._resolve_ground_plane_size()
-        center = center - 0.0125 * max(self.L_max, 1e-3) * normal
-
-        if dim == 2:
-            tangent = np.array([-normal[1], normal[0]], dtype=np.float64)
-            endpoints = (
-                center[None, :] + 0.5 * size * np.array([-1.0, 1.0])[:, None] * tangent
-            )
-            return ax.plot(
-                endpoints[:, 0],
-                endpoints[:, 1],
-                color=color_config.ground_plane_grid_color,
-                linewidth=1.25,
-                alpha=0.75,
-                zorder=0,
-            )
-
-        reference = np.array([0.0, 0.0, 1.0], dtype=np.float64)
-        if abs(float(np.dot(normal, reference))) > 0.95:
-            reference = np.array([0.0, 1.0, 0.0], dtype=np.float64)
-        u = np.cross(normal, reference)
-        u = u / np.linalg.norm(u)
-        v = np.cross(normal, u)
-        coords = np.linspace(-0.5 * size, 0.5 * size, 9)
-        uu, vv = np.meshgrid(coords, coords)
-        points = center + uu[..., None] * u + vv[..., None] * v
-        surface = ax.plot_surface(
-            points[..., 0],
-            points[..., 1],
-            points[..., 2],
-            color=color_config.ground_plane_color,
-            alpha=0.42,
-            linewidth=0.0,
-            shade=False,
-            zorder=0,
-        )
-        wireframe = ax.plot_wireframe(
-            points[..., 0],
-            points[..., 1],
-            points[..., 2],
-            color=color_config.ground_plane_grid_color,
-            alpha=0.38,
-            linewidth=0.45,
-            zorder=0,
-        )
-        return [surface, wireframe]
+        cfg = self.config.scene.ground
+        if not (cfg.surface or cfg.grid):
+            return []
+        dim = curves.shape[-1]
+        artists = []
+        for center, normal, size in self._resolve_ground_planes(curves):
+            if dim == 2:
+                normal = normal[:2]
+                if np.linalg.norm(normal) < 1e-9:
+                    continue
+                tangent = np.array([-normal[1], normal[0]]) / np.linalg.norm(normal)
+                points = center[:2] + np.array([[-0.5], [0.5]]) * size * tangent
+                artists.extend(
+                    ax.plot(
+                        points[:, 0],
+                        points[:, 1],
+                        color=cfg.color if cfg.surface else cfg.grid_major_color,
+                        alpha=cfg.opacity if cfg.surface else 1.0,
+                        linewidth=1.25,
+                        zorder=0,
+                    )
+                )
+                continue
+            basis = plane_basis(normal)
+            if cfg.surface:
+                u, v = np.meshgrid([-size / 2, size / 2], [-size / 2, size / 2])
+                points = (
+                    center + u[..., None] * basis[:, 0] + v[..., None] * basis[:, 1]
+                )
+                artists.append(
+                    ax.plot_surface(
+                        *np.moveaxis(points, -1, 0),
+                        color=cfg.color,
+                        alpha=cfg.opacity,
+                        linewidth=0,
+                        shade=False,
+                        zorder=0,
+                    )
+                )
+            if cfg.grid:
+                segments, colors = ground_grid(cfg, center, normal, size)
+                grid = Line3DCollection(
+                    segments, colors=colors, linewidths=0.6, zorder=0
+                )
+                ax.add_collection(grid, autolim=False)
+                artists.append(grid)
+        return artists
 
     def _update_base_markers(self, artists: list, curves: np.ndarray) -> None:
         """Update animated Matplotlib base markers."""
@@ -1048,7 +1062,7 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
             ax.set_xlabel("X [m]")
             ax.set_ylabel("Y [m]")
             ax.set_zlabel("Z [m]")
-            config = camera_config or CameraConfig()
+            config = camera_config or self.config.camera
             fov = float(np.clip(config.fov, 1.0, 179.0))
             focal_length = 1.0 / np.tan(np.deg2rad(fov) / 2.0)
             if hasattr(ax, "set_proj_type"):

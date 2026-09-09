@@ -61,12 +61,19 @@ class ActuatorStyleConfig:
 
 @dataclass(frozen=True)
 class RendererColorConfig:
-    """Shared renderer colors with sensible defaults."""
+    """Shared sRGB robot colors.
 
+    Attributes:
+        robot_override: Optional monochrome robot color overriding backbone and
+            actuator palettes, including scalar colors. Helper objects are excluded.
+        backbone: Robot, segment and point palette hierarchy.
+        base_plate_color: Base plate sRGB color.
+        actuators: Actuator colors, scalar maps and display radii.
+    """
+
+    robot_override: tuple[float, float, float] | None = None
     backbone: BackboneColorConfig = field(default_factory=BackboneColorConfig)
     base_plate_color: tuple[float, float, float] = (0.2, 0.2, 0.2)
-    ground_plane_color: tuple[float, float, float] = (0.94, 0.95, 0.96)
-    ground_plane_grid_color: tuple[float, float, float] = (0.72, 0.75, 0.78)
     actuators: ActuatorStyleConfig = field(default_factory=ActuatorStyleConfig)
 
 

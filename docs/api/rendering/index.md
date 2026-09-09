@@ -98,9 +98,9 @@ All renderers accept a robot model at construction and expose a single-frame
 entry point. For example:
 
 ```python
-from soromox.rendering import MatplotlibRenderer
+from soromox.rendering import RendererConfig, GeometryConfig, MatplotlibRenderer
 
-renderer = MatplotlibRenderer(robot, num_points=50)
+renderer = MatplotlibRenderer(robot, config=RendererConfig(geometry=GeometryConfig(num_points=50)))
 renderer.show(q)
 ```
 

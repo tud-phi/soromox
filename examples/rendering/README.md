@@ -1,74 +1,60 @@
-# Open3D and Viser studio examples
+# Shared scene presets in Open3D and Viser
 
-Run from the repository root with the rendering dependencies installed:
+Install the [rendering dependencies](../../tools/open3d/README.md). From the
+repository root, generate the six presets in either backend:
 
 ```bash
-python examples/rendering/open3d_studio.py
-python examples/rendering/open3d_studio.py --count 1 --output examples/rendering/figures/open3d_studio_single.png
-python examples/rendering/open3d_studio.py --video-output examples/rendering/videos/open3d_studio.mp4
+python examples/rendering/preset_gallery.py --backend open3d
+python examples/rendering/preset_gallery.py --backend viser
 ```
 
-The default output is `figures/open3d_studio.png` beside the script, at
-1920 × 1080. Use `--width`, `--height`, and `--output` to change the export.
-Install the [Open3D development build](../../tools/open3d/README.md) first. Image
-and video exports use `OffscreenRenderer`; macOS uses the patched Metal build.
-Other platforms need a working graphics driver. Video export needs `ffmpeg`.
+For Viser, open the printed local URL. The connected browser captures all six
+images automatically. Each command writes 1920 × 1080 PNGs to `figures/presets/`.
+The [preset gallery](gallery.md) compares the two backends. Use `--preset`,
+`--count`, `--width`, `--height`, `--output-dir` or `--port` to customize a run.
+The model, five prescribed poses, placement, palette and camera are shared in
+`tentacle_scene.py`.
 
-The example uses `Open3DRenderer` with `Open3DRenderConfig.studio()`: matte
-pastel materials, a grey floor curved into a backdrop, directional shadows,
-ambient occlusion, environment illumination, and a local fill light. Set
-`render_config=Open3DRenderConfig.studio(roughness=0.8, sun_intensity=50000)`
-on your renderer to adapt it. `RendererColorConfig` sets the colors; `CameraConfig` sets the camera. The backdrop uses world Z as up; `floor_z` sets its height.
-The shadows use variance shadow maps; the fill light does not cast shadows.
-This approximates a studio photograph, with some shadow-map softness and bias
-artifacts possible. It does not reproduce Cycles' path-traced area lights.
+To inspect one preset or export a prescribed two-second motion:
+
+```bash
+python examples/rendering/preset_gallery.py --backend open3d --preset clay --count 1
+python examples/rendering/preset_gallery.py --backend open3d --preset neutral --interactive
+python examples/rendering/preset_gallery.py --backend open3d --preset neutral --video-output studio.mp4
+python examples/rendering/preset_gallery.py --backend viser --preset bright --interactive
+```
+
+`--interactive` requires one preset. In Viser, the scene stays available until
+Ctrl+C; browser camera controls and Save Canvas can be used to inspect and capture
+other views. `--video-output` uses Open3D; browser video recording is available
+through `ViserRenderer.render_sequence()`.
+
+`--write-manifest` optionally saves the resolved configuration, backend version
+and reproduction command beside the images. These generated JSON files are local
+diagnostics and are ignored by Git. The twelve preset PNGs are versioned to
+illustrate the appearance of each preset.
+
+Open3D uses the modern renderer for images, synchronous videos and static
+`show()`. Animated interactive previews use efficient legacy geometry updates
+and warn about approximate appearance. Viser uses PBR geometry for static scenes
+and editable mesh geometry for playback and live visualization.
+
+`RendererConfig` composes scene, camera, colors, geometry and output settings.
+The [configuration guide](../../docs/api/rendering/configuration.md) describes
+physical light units, preset scaling, world floors and backend approximations.
 
 The upright GVS model uses the Section Va soft tentacle's two link lengths
-(305 and 55 mm) and tapered radii (15.41 → 6.42 → 4.80 mm), with constant
-strain on each link. The five configurations are prescribed visual examples,
-not equilibria, fitted measurements, or reruns of the system-identification
-experiment. Geometry comes from the robot's forward kinematics and shared
-cross-section lofting helpers. `--video-output` exports a prescribed two-second
-motion using the same renderer settings. `--interactive` opens a modern static viewer after
-exporting the image.
+(0.305 m and 0.055 m) and tapered radii. The configurations are prescribed visual
+examples, rather than simulated equilibria or fitted measurements. Geometry
+comes from forward kinematics and shared cross-section lofting utilities.
 
-`render_frame()` and `render_sequence(..., record_path=...)` use modern rendering.
-Recordings run synchronously and return after export, independently of playback
-controls. `record_every_n` selects frames and reduces the output FPS by the same
-factor; `playback_speed` scales FPS. Nonuniform timestamps produce a warning
-because video uses the median interval; resample first for exact timing.
+The technical preset displays a world grid without a filled ground slab. Set
+`config.scene.ground.surface = True` to add the surface. Grid spacing is in
+metres, with major lines every five cells by default. Studio presets use a curved
+backdrop, one directional key and point-light fills. Viser uses hemisphere
+illumination to approximate Open3D's environment lighting.
 
-`show()` uses the modern GUI with the same materials, lighting and backdrop.
-It supports camera orbit, pan, zoom, reset, save/restore and modern snapshots.
-Sequences without `record_path` use the legacy viewer and warn about approximate
-materials, lighting, transparency, shadows and ambient occlusion. Camera fitting
-for exports uses the whole trajectory and excludes the backdrop.
-
-The visual reference is the [EgoHumans teaser](https://rawalkhirodkar.github.io/egohumans/).
-Blender Cycles is the most likely renderer: the authors publish Blender scenes
-and their [rendering script](https://github.com/rawalkhirodkar/egohumans/blob/main/egohumans/lib/utils/blender.py#L293)
-explicitly sets `bpy.context.scene.render.engine = 'CYCLES'`. This establishes
-their use of Cycles, but does not prove which engine generated the exact teaser.
-
-## Viser comparison
-
-```bash
-python examples/rendering/viser_studio.py --port 8087
-```
-
-Open `http://localhost:8087` and press **Save studio PNG** to capture the
-connected browser's view at 1920 × 1080. The default output is
-`figures/viser_studio.png`; `--output` changes its destination. Drag to orbit
-the scene before saving if a different view is wanted. Stop with Ctrl+C.
-
-This uses the `ViserRenderer.show()` geometry pipeline, the same five
-GVS poses and camera as the Open3D study, a custom curved backdrop, and Viser
-directional/ambient/point lights. Viser 1.0.26 was used for the browser capture.
-The preset adapts palette values to Viser's sRGB color API and tunes light
-intensities for its renderer. It uses real cast shadows, but does not reproduce
-Open3D's ambient occlusion or material response exactly. Capped link boundaries are visible near the tentacle tips.
-
-The prototype imports the robot definition and palette from `open3d_studio.py`,
-so it requires both examples' dependencies, including Open3D. Rendering and PNG
-capture themselves are performed by Viser in the browser. The server binds only
-to the local machine, and the scene uses no remote HDR environment map.
+Static Viser capture supplies the camera pose explicitly and waits for stable
+images while the browser loads its meshes. Open3D's tested development build
+ignores the lit tone-mapping selector; its technical background is warmer than
+Viser's white canvas. The gallery describes these differences.

@@ -5,6 +5,14 @@ import pytest
 from jax import numpy as jnp
 from numpy.testing import assert_allclose, assert_array_equal
 
+from soromox.rendering.renderer_config import (
+    GeometryConfig,
+    GroundPlaneConfig,
+    RendererConfig,
+    RenderOutputConfig,
+    SceneConfig,
+)
+
 pytest.importorskip("open3d")
 
 from soromox.rendering import open3d_renderer as open3d_renderer_module  # noqa: E402
@@ -181,7 +189,10 @@ def test_open3d_swept_segment_uses_varying_endpoint_contours(
 
 def test_open3d_cached_swept_geometry_preserves_tapered_endpoint_sections():
     renderer = Open3DRenderer(
-        _AnimatingSpatialRobot(), num_points=2, cross_section_resolution=8
+        _AnimatingSpatialRobot(),
+        config=RendererConfig(
+            geometry=GeometryConfig(num_points=2, cross_section_resolution=8)
+        ),
     )
     vis = Mock()
     curve = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
@@ -221,7 +232,10 @@ def test_open3d_cached_swept_geometry_preserves_tapered_endpoint_sections():
 
 def test_open3d_discrete_marker_uses_shared_rectangular_box_specification():
     renderer = Open3DRenderer(
-        _AnimatingSpatialRobot(), backbone_style="discrete", num_points=2
+        _AnimatingSpatialRobot(),
+        config=RendererConfig(
+            geometry=GeometryConfig(backbone_style="discrete", num_points=2)
+        ),
     )
     section = CrossSection(CrossSectionGeometry.RECTANGULAR, np.array([0.2, 0.6]))
 
@@ -238,9 +252,10 @@ def test_open3d_discrete_marker_uses_shared_rectangular_box_specification():
 def test_open3d_swept_backbone_keeps_link_interfaces_discontinuous():
     renderer = Open3DRenderer(
         _DiscontinuousTwoLinkRobot(),
-        num_points=8,
-        cross_section_resolution=8,
-        show_ground_plane=False,
+        config=RendererConfig(
+            geometry=GeometryConfig(num_points=8, cross_section_resolution=8),
+            scene=SceneConfig(ground=GroundPlaneConfig(visible=False)),
+        ),
     )
     vis = Mock()
     curve, material_frames = renderer.compute_backbone_curves_and_frames_batched(
@@ -271,6 +286,13 @@ def test_open3d_swept_backbone_keeps_link_interfaces_discontinuous():
     class FakeRenderingScene:
         def __init__(self):
             self.geometry_names = []
+            self.scene = self
+
+        def geometry_shadows(self, name, cast, receive):
+            pass
+
+        def get_geometry_names(self):
+            return self.geometry_names
 
         def clear_geometry(self):
             self.geometry_names.clear()
@@ -463,9 +485,11 @@ def test_dynamic_sphere_batch_matches_individual_meshes_at_every_frame():
 
     renderer = Open3DRenderer(
         _AnimatingSpatialRobot(),
-        num_points=4,
         sphere_resolution=3,
-        show_ground_plane=False,
+        config=RendererConfig(
+            geometry=GeometryConfig(num_points=4),
+            scene=SceneConfig(ground=GroundPlaneConfig(visible=False)),
+        ),
     )
     renderer._warned_dynamic_geometry = True
     trajectories = np.array(
@@ -553,12 +577,13 @@ def test_merged_backbone_matches_unmerged_geometry_across_animation_frames():
 
     renderer = Open3DRenderer(
         _AnimatingSpatialRobot(),
-        width=64,
-        height=64,
-        num_points=6,
         sphere_resolution=3,
         recompute_normals=False,
-        show_ground_plane=False,
+        config=RendererConfig(
+            output=RenderOutputConfig(width=64, height=64),
+            geometry=GeometryConfig(num_points=6),
+            scene=SceneConfig(ground=GroundPlaneConfig(visible=False)),
+        ),
     )
     renderer._warned_dynamic_geometry = True
     q_ts = np.zeros((2, 2, 3), dtype=np.float64)
@@ -638,7 +663,12 @@ def test_merged_backbone_matches_unmerged_geometry_across_animation_frames():
 
 
 def test_open3d_backbone_merging_defaults_to_multi_robot_scenes():
-    renderer = Open3DRenderer(_AnimatingSpatialRobot(), show_ground_plane=False)
+    renderer = Open3DRenderer(
+        _AnimatingSpatialRobot(),
+        config=RendererConfig(
+            scene=SceneConfig(ground=GroundPlaneConfig(visible=False))
+        ),
+    )
 
     assert renderer.merge_backbone_meshes is None
     assert renderer._should_merge_backbone_meshes(1) is False
@@ -782,7 +812,10 @@ def test_open3d_export_order_fps_and_cleanup(monkeypatch, tmp_path):
 
     from soromox.rendering.open3d_renderer import RecordingConfig
 
-    renderer = Open3DRenderer(_AnimatingSpatialRobot(), width=4, height=2)
+    renderer = Open3DRenderer(
+        _AnimatingSpatialRobot(),
+        config=RendererConfig(output=RenderOutputConfig(width=4, height=2)),
+    )
     scene_data = SimpleNamespace(ts=np.arange(5) * 0.1, num_frames=5)
     events = []
 
@@ -845,7 +878,10 @@ def test_open3d_png_export_preserves_selected_frame_numbers(monkeypatch, tmp_pat
 
     from soromox.rendering.open3d_renderer import RecordingConfig
 
-    renderer = Open3DRenderer(_AnimatingSpatialRobot(), width=4, height=2)
+    renderer = Open3DRenderer(
+        _AnimatingSpatialRobot(),
+        config=RendererConfig(output=RenderOutputConfig(width=4, height=2)),
+    )
     scene = SimpleNamespace(ts=np.arange(5) / 10, num_frames=5)
     monkeypatch.setattr(renderer, "_modern_session", lambda *args: nullcontext(None))
     monkeypatch.setattr(
@@ -1007,3 +1043,13 @@ def test_open3d_modern_viewer_closes_native_window_once(monkeypatch, interrupt):
         renderer._run_modern_viewer(Mock(), None, None)
     window.close.assert_called_once()
     assert not widget.mock_calls
+
+
+def test_macos_rejects_unsafe_legacy_after_modern_gui(monkeypatch):
+    import soromox.rendering.open3d_renderer as module
+
+    monkeypatch.setattr(module.sys, "platform", "darwin")
+    monkeypatch.setattr(module, "_MODERN_GUI_CREATED", True)
+    renderer = Open3DRenderer(_AnimatingSpatialRobot())
+    with pytest.raises(RuntimeError, match="fresh Python process"):
+        renderer._create_visualizer("unsafe transition")

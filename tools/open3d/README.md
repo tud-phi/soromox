@@ -44,8 +44,8 @@ Select the surfaceless backend before importing Open3D:
 
 ```bash
 env -u DISPLAY EGL_PLATFORM=surfaceless \
-  uv run --no-sync python examples/rendering/open3d_studio.py \
-  --count 1 --output open3d.png --video-output open3d.mp4
+  uv run --no-sync python examples/rendering/preset_gallery.py --backend open3d --preset neutral \
+  --count 1 --output-dir open3d-figures --video-output open3d.mp4
 ```
 
 Interactive `show()` and trajectory playback use GLX and need a desktop display.

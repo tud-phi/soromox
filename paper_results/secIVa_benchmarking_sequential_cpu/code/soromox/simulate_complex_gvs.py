@@ -13,6 +13,7 @@ from soromox.rendering import (
     RendererColorConfig,
     ViserRenderer,
 )
+from soromox.rendering.renderer_config import GeometryConfig, RendererConfig
 from soromox.systems import (
     GVS,
     GVSSegment,
@@ -114,7 +115,9 @@ if __name__ == "__main__":
         raise ImportError("Open3DRenderer is unavailable. Install open3d to run this.")
 
     # Visualize the initial configuration using Open3DRenderer
-    renderer = Open3DRenderer(robot, num_points=50)
+    renderer = Open3DRenderer(
+        robot, config=RendererConfig(geometry=GeometryConfig(num_points=50))
+    )
     # renderer.show(q0)
 
     # Actuation parameters

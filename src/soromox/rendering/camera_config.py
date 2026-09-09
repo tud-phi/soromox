@@ -28,6 +28,7 @@ class CameraConfig:
     the base frame instead of fixed world axes.
 
     Attributes:
+        exposure_ev100: Exposure value at ISO 100; larger values darken lit scenes.
         fov: Field of view in degrees (used by 3D renderers)
         position: Explicit camera position as (x, y, z) or None for auto
         look_at: Point the camera looks at as (x, y, z) or None for auto (scene center)
@@ -56,6 +57,7 @@ class CameraConfig:
         ```
     """
 
+    exposure_ev100: float = 15.0
     fov: float = 75.0
     position: tuple[float, float, float] | None = None
     look_at: tuple[float, float, float] | None = None

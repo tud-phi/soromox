@@ -8,6 +8,13 @@ from numpy.testing import assert_allclose
 from soromox.rendering.actuators import ActuatorVisualLayer
 from soromox.rendering.camera_config import CameraConfig
 from soromox.rendering.matplotlib_renderer import MatplotlibRenderer
+from soromox.rendering.renderer_config import (
+    GeometryConfig,
+    GroundPlaneConfig,
+    RendererConfig,
+    RenderOutputConfig,
+    SceneConfig,
+)
 from soromox.systems.components import CrossSectionGeometry
 from soromox.utils.geometry import poses
 
@@ -97,14 +104,11 @@ class LegacyFakeMatplotlib3DAxis(FakeMatplotlib3DAxis):
         self.box_aspect = tuple(aspect)
 
 
-def test_ground_plane_arguments_follow_color_configuration():
+def test_matplotlib_uses_composed_configuration():
     parameters = list(signature(MatplotlibRenderer).parameters)
-    color_config_index = parameters.index("color_config")
-
-    assert parameters[color_config_index + 1 : color_config_index + 3] == [
-        "show_ground_plane",
-        "ground_plane_size",
-    ]
+    assert parameters[:2] == ["robot", "config"]
+    assert "show_ground_plane" not in parameters
+    assert "color_config" not in parameters
 
 
 def test_3d_default_camera_uses_base_pose_orientation():
@@ -175,7 +179,13 @@ def test_3d_camera_uses_shared_field_of_view():
 
 def test_actuator_overlay_changes_rendered_frame():
     robot = DummyActuatedSpatialRobot(jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]))
-    renderer = MatplotlibRenderer(robot, width=240, height=180, num_points=8)
+    renderer = MatplotlibRenderer(
+        robot,
+        config=RendererConfig(
+            output=RenderOutputConfig(width=240, height=180),
+            geometry=GeometryConfig(num_points=8),
+        ),
+    )
 
     without_actuators = renderer.render_frame(jnp.array([]), render_actuators=False)
     with_actuators = renderer.render_frame(jnp.array([]), render_actuators=True)
@@ -188,17 +198,19 @@ def test_ground_plane_changes_spatial_rendered_frame():
     robot = DummySpatialRobot(jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]))
     with_ground = MatplotlibRenderer(
         robot,
-        width=240,
-        height=180,
-        num_points=8,
-        show_ground_plane=True,
+        config=RendererConfig(
+            output=RenderOutputConfig(width=240, height=180),
+            geometry=GeometryConfig(num_points=8),
+            scene=SceneConfig(ground=GroundPlaneConfig(visible=True)),
+        ),
     ).render_frame(jnp.array([]))
     without_ground = MatplotlibRenderer(
         robot,
-        width=240,
-        height=180,
-        num_points=8,
-        show_ground_plane=False,
+        config=RendererConfig(
+            output=RenderOutputConfig(width=240, height=180),
+            geometry=GeometryConfig(num_points=8),
+            scene=SceneConfig(ground=GroundPlaneConfig(visible=False)),
+        ),
     ).render_frame(jnp.array([]))
 
     assert with_ground.shape == without_ground.shape
@@ -231,3 +243,28 @@ def test_3d_base_marker_lies_in_plate_face_plane():
     assert_allclose(marker[0], marker[-1], atol=1e-12)
     assert_allclose((marker - base) @ normal, np.zeros(marker.shape[0]), atol=1e-12)
     assert_allclose(np.linalg.norm(marker - base, axis=1), 0.2, atol=1e-12)
+
+
+def test_ground_grid_uses_one_collection_without_changing_view_limits():
+    import matplotlib.pyplot as plt
+    from mpl_toolkits.mplot3d.art3d import Line3DCollection
+
+    renderer = MatplotlibRenderer(DummySpatialRobot(jnp.array([0, 0, 0, 0, 0, 0, 1])))
+    fig = plt.figure()
+    try:
+        ax = fig.add_subplot(projection="3d")
+        ax.set(xlim=(-1, 1), ylim=(-1, 1), zlim=(-1, 1))
+        limits = (ax.get_xlim(), ax.get_ylim(), ax.get_zlim())
+        renderer.config.scene.ground.size = 10
+        renderer.config.scene.ground.grid_spacing = 0.1
+        artists = renderer._plot_ground_plane(
+            ax, np.array([[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]]), renderer.color_config
+        )
+        assert len(artists) == 1
+        assert isinstance(artists[0], Line3DCollection)
+        assert len(artists[0]._segments3d) > 100
+        assert not ax.lines
+        assert (ax.get_xlim(), ax.get_ylim(), ax.get_zlim()) == limits
+        fig.canvas.draw()
+    finally:
+        plt.close(fig)

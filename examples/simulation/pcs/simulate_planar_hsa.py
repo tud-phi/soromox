@@ -4,6 +4,8 @@ from pathlib import Path
 import cv2  # importing cv2
 import jax
 
+from soromox.rendering.renderer_config import RendererConfig, RenderOutputConfig
+
 jax.config.update("jax_enable_x64", True)  # double precision
 
 
@@ -71,7 +73,9 @@ if __name__ == "__main__":
     print(
         f"Planar HSA with {num_segments} segments and {num_rods_per_segment} rods per segment initialized."
     )
-    renderer = OpenCVPlanarHSARenderer(robot, width=700, height=700)
+    renderer = OpenCVPlanarHSARenderer(
+        robot, config=RendererConfig(output=RenderOutputConfig(width=700, height=700))
+    )
 
     # =====================================================
     # Simulation upon time

@@ -29,6 +29,8 @@ import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 
+from soromox.rendering.renderer_config import GeometryConfig, RendererConfig
+
 jax.config.update("jax_enable_x64", True)  # Double precision
 
 from soromox.actuation import ThreadlikeActuator, ThreadlikeRouting
@@ -628,7 +630,9 @@ def main(
         if render_name not in all_results:
             render_name = next(iter(all_results.keys()))
         render_results = all_results[render_name]
-        renderer = Open3DRenderer(robot, num_points=50)
+        renderer = Open3DRenderer(
+            robot, config=RendererConfig(geometry=GeometryConfig(num_points=50))
+        )
         renderer.render_sequence(
             ts=render_results["t"],
             q_ts=render_results["q"],

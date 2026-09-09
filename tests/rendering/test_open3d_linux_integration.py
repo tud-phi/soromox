@@ -35,8 +35,13 @@ if os.environ.get("SOROMOX_RUN_RENDERING_INTEGRATION") != "1":
 
 pytest.importorskip("open3d")
 
-from soromox.rendering.open3d_render_config import Open3DRenderConfig  # noqa: E402
 from soromox.rendering.open3d_renderer import Open3DRenderer  # noqa: E402
+from soromox.rendering.renderer_config import (  # noqa: E402
+    GeometryConfig,
+    RendererConfig,
+    RenderOutputConfig,
+    SceneConfig,
+)
 from soromox.systems.components import CrossSectionGeometry  # noqa: E402
 
 pytestmark = pytest.mark.rendering_integration
@@ -84,17 +89,25 @@ class _IntegrationRobot:
 
 
 def _renderer(*, xvfb_compatible: bool = False) -> Open3DRenderer:
-    """Create a small renderer that keeps native integration checks fast."""
+    """Create a small renderer that keeps native integration checks fast.
+
+    Args:
+        xvfb_compatible: Disable shadows and ambient occlusion for software GLX
+            contexts that cannot render these effects.
+
+    Returns:
+        Renderer with a 96 by 72 pixel output, 24 backbone samples and 12
+        cross-section samples. Surfaceless exports exercise shadows and AO.
+    """
     return Open3DRenderer(
         _IntegrationRobot(),
-        width=96,
-        height=72,
-        num_points=24,
-        cross_section_resolution=12,
-        render_config=(
-            Open3DRenderConfig(shadows=False, ambient_occlusion=False)
-            if xvfb_compatible
-            else None
+        config=RendererConfig(
+            output=RenderOutputConfig(width=96, height=72),
+            geometry=GeometryConfig(num_points=24, cross_section_resolution=12),
+            scene=SceneConfig(
+                shadows=not xvfb_compatible,
+                ambient_occlusion=not xvfb_compatible,
+            ),
         ),
     )
 

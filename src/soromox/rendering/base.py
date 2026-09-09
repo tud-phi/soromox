@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import copy
+import warnings
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -31,6 +33,7 @@ from soromox.rendering.color_config import (
     normalize_color_array,
     normalize_palette,
 )
+from soromox.rendering.renderer_config import RendererConfig, validate_config
 from soromox.systems.soft_robot import SoftRobot
 
 
@@ -69,26 +72,23 @@ class BaseSoftRobotRenderer(ABC):
     def __init__(
         self,
         robot: SoftRobot,
-        width: int = 800,
-        height: int = 600,
-        num_points: int = 50,
-        background_color: tuple[float, float, float] = (1.0, 1.0, 1.0),
-        color_config: RendererColorConfig | None = None,
-        show_ground_plane: bool = False,
-        ground_plane_size: float | None = None,
+        config: RendererConfig | None = None,
     ):
         """Initialize the renderer with a robot and visualization parameters.
 
         Args:
-            robot: Robot system with forward_kinematics method and length property
-            width: Image width in pixels
-            height: Image height in pixels
-            num_points: Number of points for backbone curve discretization
-            background_color: RGB background color tuple (values 0-1)
-            color_config: Shared renderer color configuration
-            show_ground_plane: Whether supported backends render a ground reference
-            ground_plane_size: Optional ground-plane side length in meters
-        """
+            config: Shared scene, camera, color, geometry and output defaults.
+            robot: Robot system with forward_kinematics method and length property"""
+        self.config = copy.deepcopy(config or RendererConfig())
+        validate_config(self.config)
+        self._appearance_warnings = set()
+        width = self.config.output.width
+        height = self.config.output.height
+        num_points = self.config.geometry.num_points
+        background_color = self.config.scene.background
+        color_config = self.config.colors
+        show_ground_plane = self.config.scene.ground.visible
+        ground_plane_size = self.config.scene.ground.size
         self.robot: SoftRobot = robot
         self.width = width
         self.height = height
@@ -140,6 +140,147 @@ class BaseSoftRobotRenderer(ABC):
             or self._has_batched_actuator_visual_layers
             or self._has_trajectory_actuator_visual_layers
         )
+
+    def _warn_appearance(self, mode: str, features: list[str]) -> None:
+        """Report unsupported or approximated appearance once per rendering mode.
+
+        Args:
+            mode: Rendering path, such as static, animated or export.
+            features: Human-readable descriptions of the approximations.
+
+        Returns:
+            None. Emits one UserWarning for a mode with unsupported features.
+        """
+        if features and mode not in self._appearance_warnings:
+            warnings.warn(
+                f"{type(self).__name__} ({mode}) approximates or ignores: "
+                + "; ".join(features),
+                UserWarning,
+                stacklevel=3,
+            )
+            self._appearance_warnings.add(mode)
+
+    def _warn_simple_appearance(self, mode: str) -> None:
+        """Report unavailable lighting features for line and pixel renderers.
+
+        Args:
+            mode: Rendering operation used to deduplicate warnings.
+
+        Returns:
+            None. Emits a warning only when requested appearance is approximated.
+        """
+        cfg = self.config.scene
+        features = []
+        if type(self).__name__.startswith("OpenCV"):
+            features.append("camera uses the planar pixel projection")
+        if cfg.material.shading != "unlit":
+            features.append("surface lighting and materials rendered as colored lines")
+        if cfg.shadows or cfg.ambient_occlusion:
+            features.append("shadows and ambient occlusion unavailable")
+        if cfg.material.opacity < 1 or cfg.ground.opacity < 1:
+            features.append("transparency uses backend line/surface support")
+        if cfg.backdrop.enabled:
+            features.append("curved backdrop represented by the ground reference")
+        if (
+            self.config.camera.exposure_ev100 != 15
+            or cfg.tone_mapping != "backend-default"
+        ):
+            features.append("exposure/tone mapping ignored to preserve line colors")
+        self._warn_appearance(mode, features)
+
+    def _world_up(self) -> np.ndarray:
+        """Resolve the configured floor normal in spatial renderer coordinates.
+
+        Returns:
+            Unit three-vector; defaults to planar +Y or spatial +Z.
+        """
+        normal = self.config.scene.ground.normal
+        if normal is None:
+            normal = (0.0, 1.0, 0.0) if self._is_planar else (0.0, 0.0, 1.0)
+        n = np.asarray(normal, dtype=float)
+        return n / np.linalg.norm(n)
+
+    def _fit_scene_bounds(self, points, padding: float | None = None) -> None:
+        """Fit stable scenery bounds from a complete arrangement or trajectory.
+
+        Args:
+            points: Array with a final coordinate axis of length two or three.
+            padding: Optional radial padding in metres; defaults to the larger
+                of 5% of robot length and base plate thickness.
+
+        Returns:
+            None. Stores the center and maximum padded extent for scene setup.
+        """
+        if getattr(self, "_appearance_bounds_locked", False):
+            return
+        points = np.asarray(points).reshape(-1, np.shape(points)[-1])
+        if points.shape[1] == 2:
+            points = np.pad(points, ((0, 0), (0, 1)))
+        if not len(points):
+            return
+        margin = (
+            max(0.05 * self.L_max, self.config.geometry.base_plate_thickness)
+            if padding is None
+            else padding
+        )
+        lower, upper = points.min(axis=0) - margin, points.max(axis=0) + margin
+        self._appearance_center = (lower + upper) / 2
+        self._appearance_extent = max(float(np.max(upper - lower)), 0.001)
+
+    def _expand_scene_bounds_for_spheres(self, positions, radii=None) -> None:
+        """Expand scene bounds to enclose static or moving helper spheres.
+
+        Args:
+            positions: Optional helper centers or trajectories ending in three
+                coordinates, in metres.
+            radii: Optional sphere radii in metres; defaults to 0.02 metres.
+
+        Returns:
+            None. Enlarges stored scenery bounds without including the scenery.
+        """
+        if positions is None or not np.asarray(positions).size:
+            return
+        points = np.asarray(positions).reshape(-1, 3)
+        radius = 0.02 if radii is None else float(np.max(radii))
+        half = self._appearance_extent / 2
+        lower = np.minimum(self._appearance_center - half, points.min(axis=0) - radius)
+        upper = np.maximum(self._appearance_center + half, points.max(axis=0) + radius)
+        self._appearance_center = (lower + upper) / 2
+        self._appearance_extent = max(float(np.max(upper - lower)), 0.001)
+
+    def _resolve_ground_planes(self, curves, base_axes=None):
+        """Compute ground plane centers, unit normals and side lengths.
+
+        Args:
+            curves: Current backbone curves, shape (robots, points, 2 or 3).
+            base_axes: Optional material-frame tangent vectors, shape (robots, 3).
+
+        Returns:
+            List of (center, normal, side length) tuples. Centers and side lengths
+            are in metres. World alignment produces one plane; base alignment
+            produces one plane for each robot, displaced below its base plate.
+        """
+        cfg = self.config.scene.ground
+        curves = np.asarray(curves)
+        if not hasattr(self, "_appearance_extent"):
+            self._fit_scene_bounds(curves)
+        size = cfg.size or max(self._appearance_extent * 1.35, 0.1)
+        if cfg.alignment == "world":
+            n = self._world_up()
+            c = self._appearance_center
+            return [(c - (c @ n) * n + cfg.height * n, n, size)]
+        count = len(curves)
+        normals = (
+            np.broadcast_to(self._base_tangent_axis(dim=3), (count, 3))
+            if base_axes is None
+            else np.asarray(base_axes)
+        )
+        normals = normals / np.linalg.norm(normals, axis=-1, keepdims=True)
+        centers = np.pad(curves[:, 0], ((0, 0), (0, 3 - curves.shape[-1])))
+        centers = (
+            centers + (cfg.height - self.config.geometry.base_plate_thickness) * normals
+        )
+        return list(zip(centers, normals, np.full(count, size)))
 
     def _resolve_ground_plane_size(self, *minimum_sizes: float) -> float:
         """Return the configured size or a robot-scaled backend default."""
@@ -1059,6 +1200,9 @@ class BaseSoftRobotRenderer(ABC):
         legend_segment = per_robot_segment[0]
         legend_point = per_robot_point[0]
 
+        if cfg.robot_override is not None:
+            for values in (per_robot_point, per_robot_segment, robot_colors_rgba):
+                values[..., :3] = cfg.robot_override
         resolved = ResolvedBackboneColors(
             per_robot_point_rgba=per_robot_point,
             per_robot_segment_rgba=per_robot_segment,

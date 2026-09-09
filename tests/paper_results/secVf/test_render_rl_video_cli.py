@@ -5,6 +5,12 @@ import numpy as np
 import pytest
 from numpy.testing import assert_allclose
 
+from soromox.rendering.renderer_config import (
+    GeometryConfig,
+    RendererConfig,
+    RenderOutputConfig,
+)
+
 pytest.importorskip("open3d")
 
 MODULE_DIR = (
@@ -183,10 +189,11 @@ def test_shared_renderer_vectorizes_tendon_geometry_over_envs_and_time():
     robot = render_rl_video.build_rl_robot()
     renderer = render_rl_video.HeadlessRLVideoRenderer(
         robot,
-        width=64,
-        height=64,
-        num_points=5,
         sphere_resolution=3,
+        config=RendererConfig(
+            output=RenderOutputConfig(width=64, height=64),
+            geometry=GeometryConfig(num_points=5),
+        ),
     )
     q_ts = np.zeros((2, 3, 6), dtype=np.float64)
     q_ts[1, 2, :3] = (0.1, -0.2, 0.05)

@@ -42,7 +42,6 @@ class UMArmViserRenderer(ViserRenderer):
         self,
         *args,
         actuator_color_mode: Literal["uniform", "pressure", "force"] = "uniform",
-        actuator_line_width: float | None = None,
         actuator_radius: float = 0.003,
         rod_core_radius_scale: float = 0.45,
         linkage_radius: float = 0.007,
@@ -68,11 +67,6 @@ class UMArmViserRenderer(ViserRenderer):
         self._end_effector_sphere_radius = end_effector_sphere_radius
         self._ujoint_disk_thickness = ujoint_disk_thickness
         self._actuator_disk_thickness = actuator_disk_thickness
-        self._actuator_line_width = (
-            actuator_line_width
-            if actuator_line_width is not None
-            else self._actuator_line_width
-        )
         self._actuator_pressures: Array | None = None
         self._actuator_frame_idx = 0
         self._current_geometry_q: Array | None = None
@@ -84,7 +78,7 @@ class UMArmViserRenderer(ViserRenderer):
         self._current_geometry_q = q_arr[None, :] if q_arr.ndim == 1 else q_arr
         self._actuator_pressures = None if pressures is None else jnp.asarray(pressures)
         self._actuator_frame_idx = 0
-        kwargs.setdefault("camera_config", self._default_umarm_camera_config())
+        kwargs.setdefault("camera_config", self.config.camera)
         kwargs.setdefault("render_actuators", True)
         if pressures is not None:
             kwargs.setdefault("actuator_inputs", pressures)
@@ -110,7 +104,7 @@ class UMArmViserRenderer(ViserRenderer):
         if actuator_color_mode is not None:
             self._actuator_color_mode = actuator_color_mode
         try:
-            kwargs.setdefault("camera_config", self._default_umarm_camera_config())
+            kwargs.setdefault("camera_config", self.config.camera)
             kwargs.setdefault("render_actuators", True)
             if pressures is not None:
                 kwargs.setdefault("actuator_inputs", pressures)
@@ -180,7 +174,7 @@ class UMArmViserRenderer(ViserRenderer):
             np.asarray(p0, dtype=np.float64) + np.asarray(p1, dtype=np.float64)
         )
         mesh = self._make_cylinder_trimesh(length=length, radius=radius, color=color)
-        handle = self._server.scene.add_mesh_simple(
+        handle = self._add_mesh(
             name=name,
             vertices=mesh.vertices,
             faces=mesh.faces,
@@ -426,7 +420,9 @@ class UMArmViserRenderer(ViserRenderer):
             sphere_handle = self._server.scene.add_icosphere(
                 name=f"/robots/robot_{robot_idx}/umarm/end_effector_sphere",
                 radius=self._end_effector_sphere_radius,
-                color=self._color_tuple(ee_sphere_color),
+                color=self._color_tuple(
+                    self._active_color_config.robot_override or ee_sphere_color
+                ),
                 position=tuple(
                     tip_frames_np[robot_idx, end_effector_link_idx, :3, 3] + offset
                 ),
