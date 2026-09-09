@@ -19,9 +19,12 @@ and include benchmark baseline and measurement context for performance claims.
 - Added shared scene settings for lighting, materials, shadows, ground planes and
   curved backdrops with adjustable bend height and curvature easing. Technical,
   neutral/bright/dark studio, flat and clay presets include an Open3D/Viser
-  tentacle gallery. Shared robot mounts include disk, beveled disk, truncated
+  tentacle gallery with upright and `--mounting hanging` views, separate capture
+  paths and a centered frontal camera. Shared robot mounts include disk, beveled disk, truncated
   cone and flared collar shapes, selected with
-  `config.geometry.base_plate_style`.
+  `config.geometry.base_plate_style`. Opt-in
+  `GroundPlaneConfig(height_reference="base_mounting_face")` places floors and
+  backdrops at the base plate mounting face.
 - Added reproducible Open3D development builds for macOS and Linux x86-64,
   including Metal image capture, neutral color grading and selectable linear/ACES
   tone mapping, and surfaceless EGL exports alongside GLX interactive viewing.
@@ -30,6 +33,9 @@ and include benchmark baseline and measurement context for performance claims.
 
 ### Changed
 
+- Regenerated the backend and preset galleries, including hanging views, and
+  Section V paper videos, snapshots and website media with neutral studio styling.
+  Hanging studio scenes retain the curved wall-to-ceiling backdrop.
 - Open3D static `show()` and image exports use the modern renderer. Animated
   previews use the same camera projection, retain efficient legacy geometry
   updates and warn about appearance differences. Viser applies or approximates
@@ -60,6 +66,15 @@ and include benchmark baseline and measurement context for performance claims.
   frame count and FPS; playback controls do not affect exported frames.
 
 ### Fixed
+
+- Viser removes buried caps at matching swept-link contours, avoiding dark rings
+  at continuous segment boundaries. Figure 11 and Figure 13 exports preserve
+  transparent canvas and plot backgrounds.
+
+- Preset lights now follow the ground normal, and the −z backdrop keeps its wall
+  behind the scene. Tilted normals no longer flip the backdrop and lights when
+  crossing the XY plane. Explicit world lights retain their coordinates. Gallery
+  mounting-height selection preserves each preset's ground color and visibility.
 
 - Modern Open3D swept surfaces share smooth normals at matching link ends,
   removing artificial inter-segment seams while preserving cross-section steps.

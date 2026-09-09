@@ -21,7 +21,12 @@ from soromox.rendering import (
     RendererColorConfig,
     ViserRenderer,
 )
-from soromox.rendering.config import GeometryConfig, RendererConfig
+from soromox.rendering.config import (
+    GeometryConfig,
+    GroundPlaneConfig,
+    RendererConfig,
+    SceneConfig,
+)
 from soromox.systems import (
     PCS,
     LinkSpec,
@@ -238,7 +243,16 @@ if __name__ == "__main__":
     )
 
     # render using the Open3DRenderer
-    renderer = Open3DRenderer(robot)
+    renderer = Open3DRenderer(
+        robot,
+        config=RendererConfig(
+            scene=SceneConfig.technical(
+                ground=GroundPlaneConfig(
+                    surface=False, height_reference="base_mounting_face"
+                )
+            )
+        ),
+    )
     renderer.render_sequence(
         ts=ts,
         q_ts=q_ts,
@@ -252,7 +266,15 @@ if __name__ == "__main__":
     # with GUI controls for playback, speed, and looping.
     # Plotly plots are automatically added to the GUI at the end of the sidebar
     viser_renderer = ViserRenderer(
-        robot, config=RendererConfig(geometry=GeometryConfig(num_points=50))
+        robot,
+        config=RendererConfig(
+            geometry=GeometryConfig(num_points=50),
+            scene=SceneConfig.technical(
+                ground=GroundPlaneConfig(
+                    surface=False, height_reference="base_mounting_face"
+                )
+            ),
+        ),
     )
 
     # Create custom strain plots for Tendon-Actuated PCS

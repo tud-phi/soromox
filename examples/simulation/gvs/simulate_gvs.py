@@ -4,7 +4,12 @@ from pathlib import Path
 import jax
 import jax.numpy as jnp
 
-from soromox.rendering.config import GeometryConfig, RendererConfig
+from soromox.rendering.config import (
+    GeometryConfig,
+    GroundPlaneConfig,
+    RendererConfig,
+    SceneConfig,
+)
 
 VIDEO_OUTPUT = Path(__file__).resolve().parent / "videos" / f"{Path(__file__).stem}.mp4"
 
@@ -115,7 +120,15 @@ if __name__ == "__main__":
 
     # Visualize the initial configuration using Open3DRenderer
     renderer = Open3DRenderer(
-        robot, config=RendererConfig(geometry=GeometryConfig(num_points=50))
+        robot,
+        config=RendererConfig(
+            geometry=GeometryConfig(num_points=50),
+            scene=SceneConfig.technical(
+                ground=GroundPlaneConfig(
+                    surface=False, height_reference="base_mounting_face"
+                )
+            ),
+        ),
     )
     renderer.show(q0)
 
@@ -204,7 +217,15 @@ if __name__ == "__main__":
         )
     )
     viser_renderer = ViserRenderer(
-        robot, config=RendererConfig(geometry=GeometryConfig(num_points=50))
+        robot,
+        config=RendererConfig(
+            geometry=GeometryConfig(num_points=50),
+            scene=SceneConfig.technical(
+                ground=GroundPlaneConfig(
+                    surface=False, height_reference="base_mounting_face"
+                )
+            ),
+        ),
     )
     viser_renderer.render_sequence(
         ts=ts,

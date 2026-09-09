@@ -1,12 +1,12 @@
 """Publication renderer for the operational-space impedance-control rollout.
 
-The visual language intentionally mirrors the trained Section Vf RL rendering:
-a solid coral robot, a dark base, and a green target trajectory on white.
+The visual language uses a neutral studio scene, a solid coral robot, a dark
+base, and a green target trajectory.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -352,7 +352,7 @@ def crop_snapshots_to_common_square(
     padding_fraction: float = 0.06,
     white_tolerance: int = 8,
 ) -> tuple[int, int, int, int]:
-    """Apply one square crop containing the union of all non-white content."""
+    """Apply one square crop containing the union of all rendered content."""
     paths = [Path(path) for path in snapshot_paths]
     if len(paths) != 4:
         raise ValueError("Exactly four snapshots are required for common cropping.")
@@ -365,7 +365,11 @@ def crop_snapshots_to_common_square(
         union_mask = np.zeros((height, width), dtype=bool)
         for image in images:
             rgb = np.asarray(image, dtype=np.uint8)
-            union_mask |= np.max(255 - rgb.astype(np.int16), axis=2) >= white_tolerance
+            background = rgb[0, 0].astype(np.int16)
+            distance = np.max(
+                np.abs(rgb.astype(np.int16) - background[None, None, :]), axis=2
+            )
+            union_mask |= distance >= white_tolerance
         rows, cols = np.nonzero(union_mask)
         if len(rows) == 0:
             raise ValueError("Snapshots contain no non-white rendered content.")
@@ -373,12 +377,19 @@ def crop_snapshots_to_common_square(
         x0, x1 = int(cols.min()), int(cols.max()) + 1
         y0, y1 = int(rows.min()), int(rows.max()) + 1
         content_side = max(x1 - x0, y1 - y0)
-        padding = int(np.ceil(padding_fraction * content_side))
-        side = content_side + 2 * padding
-        if side > min(width, height):
-            raise ValueError("Rendered content is too large for a common square crop.")
-        center_x = 0.5 * (x0 + x1)
-        center_y = 0.5 * (y0 + y1)
+        max_side = min(width, height)
+        if content_side + 2 * int(np.ceil(padding_fraction * content_side)) > max_side:
+            # A studio backdrop fills the frame, so the full rendered image is
+            # content. Center-crop it to preserve the existing square panel
+            # layout used by the paper snapshot strip.
+            side = max_side
+            center_x = 0.5 * width
+            center_y = 0.5 * height
+        else:
+            padding = int(np.ceil(padding_fraction * content_side))
+            side = content_side + 2 * padding
+            center_x = 0.5 * (x0 + x1)
+            center_y = 0.5 * (y0 + y1)
         left = int(round(center_x - 0.5 * side))
         top = int(round(center_y - 0.5 * side))
         left = int(np.clip(left, 0, width - side))
@@ -506,13 +517,6 @@ class OperationalSpacePaperRenderer(ViserRenderer):
     def _after_sequence_scene_built(self) -> None:
         if self._server is None:
             return
-        # Viser otherwise inherits its background from the browser theme.  A
-        # tiny viewport background image makes paper captures deterministically
-        # white without changing the generic renderer's interactive behavior.
-        self._server.scene.set_background_image(
-            np.full((2, 2, 3), 255, dtype=np.uint8),
-            format="png",
-        )
         if self._sphere_surface is not None:
             sphere = self._sphere_surface
             self._sphere_fill_handle = self._server.scene.add_mesh_simple(
@@ -680,7 +684,12 @@ def render_operational_space_tracking(
                 base_plate_thickness=DEFAULT_BASE_PLATE_THICKNESS,
             ),
             colors=color_config,
-            scene=SceneConfig(background=(1.0, 1.0, 1.0)),
+            scene=SceneConfig.studio(
+                "neutral",
+                ground=replace(
+                    SceneConfig.studio().ground, height=-0.06, height_reference="world"
+                ),
+            ),
         ),
     )
     try:

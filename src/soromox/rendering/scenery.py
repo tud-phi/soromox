@@ -1,8 +1,14 @@
 """Backend-independent scene bounds, floor placement and backdrop meshes."""
 
+from dataclasses import replace
+
 import numpy as np
 
-from soromox.rendering.config import GroundPlaneConfig, SceneConfig
+from soromox.rendering.config import (
+    DirectionalLightConfig,
+    GroundPlaneConfig,
+    SceneConfig,
+)
 
 
 def srgb_to_linear(color):
@@ -40,16 +46,23 @@ def plane_basis(normal):
         normal: Nonzero three-vector normal to the plane.
 
     Returns:
-        Matrix whose columns are the two plane axes and normalized normal.
+        Matrix whose columns are width, depth and normalized normal. Depth is
+        projected world +Y, with a +X-width fallback at normals parallel to Y.
+        The fallback is a coordinate singularity, not a continuous frame choice.
     """
     n = np.asarray(normal, dtype=float)
     n = n / np.linalg.norm(n)
-    u = np.array([1.0, 0.0, 0.0])
-    if abs(u @ n) > 0.95:
-        u = np.array([0.0, 1.0, 0.0])
-    u -= (u @ n) * n
+    # Project world +Y into the plane to preserve backdrop depth continuously
+    # across the XZ plane, including upright and hanging mounts.
+    u = np.cross([0.0, 1.0, 0.0], n)
+    if np.linalg.norm(u) < 1e-12:
+        # Depth is undefined at +/-Y. Retain the canonical planar convention
+        # with width along +X; no normal-only frame can be continuous everywhere.
+        u = np.array([1.0, 0.0, 0.0])
+        u -= (u @ n) * n
     u /= np.linalg.norm(u)
-    return np.column_stack((u, np.cross(n, u), n))
+    v = np.cross(n, u)
+    return np.column_stack((u, v, n))
 
 
 def _eased_backdrop_profile(config) -> np.ndarray:
@@ -100,7 +113,7 @@ def _eased_backdrop_profile(config) -> np.ndarray:
     )
 
 
-def backdrop_mesh(scene: SceneConfig, center, extent, normal):
+def backdrop_mesh(scene: SceneConfig, center, extent, normal, *, ground_height=None):
     """Build a curved floor/wall from shared dimensions and floor orientation.
 
     Args:
@@ -108,6 +121,8 @@ def backdrop_mesh(scene: SceneConfig, center, extent, normal):
         center: Robot scene center as a world three-vector.
         extent: Positive robot scene extent in metres.
         normal: World floor normal.
+        ground_height: Optional resolved floor height. Defaults to the scene
+            configuration's explicit world height.
 
     Returns:
         Tuple of vertices with shape (N, 3) and triangle indices with shape (M, 3).
@@ -115,7 +130,14 @@ def backdrop_mesh(scene: SceneConfig, center, extent, normal):
     cfg = scene.backdrop
     basis = plane_basis(normal)
     n = basis[:, 2]
-    origin = np.asarray(center) - np.dot(center, n) * n + scene.ground.height * n
+    if ground_height is None:
+        if scene.ground.height_reference != "world":
+            raise ValueError(
+                "ground_height is required when height_reference is not world"
+            )
+        ground_height = scene.ground.height
+    height = ground_height
+    origin = np.asarray(center) - np.dot(center, n) * n + height * n
     if cfg.vertical_radius is None and cfg.curvature_easing == 0:
         angles = np.linspace(0, np.pi / 2, 80)
         profile = [(-cfg.depth, 0), (cfg.wall_offset, 0)]
@@ -181,3 +203,25 @@ def ground_grid(config: GroundPlaneConfig, center, normal, size):
                 else config.grid_color
             )
     return np.asarray(segments).reshape(-1, 2, 3), np.asarray(colors).reshape(-1, 3)
+
+
+def resolved_lights(scene: SceneConfig, normal):
+    """Resolve ground-relative lights into world coordinates without mutation.
+
+    The same right-handed basis orients the backdrop and preset lights. Explicit
+    world lights retain their coordinates. Ground-relative point positions are
+    measured from the world origin, matching the preset's reference arrangement.
+    """
+    basis = plane_basis(normal)
+    for light in scene.lights:
+        if light.reference == "world":
+            yield light
+        else:
+            field = (
+                "direction" if isinstance(light, DirectionalLightConfig) else "position"
+            )
+            yield replace(
+                light,
+                reference="world",
+                **{field: tuple(basis @ getattr(light, field))},
+            )

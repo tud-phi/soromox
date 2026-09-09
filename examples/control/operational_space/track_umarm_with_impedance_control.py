@@ -38,8 +38,10 @@ from soromox.control import (
 from soromox.coordinate_transformations import OperationalSpaceDynamics
 from soromox.rendering import (
     GeometryConfig,
+    GroundPlaneConfig,
     RendererConfig,
     RenderOutputConfig,
+    SceneConfig,
     UMArmViserRenderer,
 )
 from soromox.systems import McKibbenActuatedUMArm, SystemState
@@ -696,6 +698,11 @@ def render_motion(
         config=RendererConfig(
             output=RenderOutputConfig(width=1280, height=720),
             geometry=GeometryConfig(num_points=80, backbone_style="discrete"),
+            scene=SceneConfig.technical(
+                ground=GroundPlaneConfig(
+                    surface=False, height_reference="base_mounting_face"
+                )
+            ),
         ),
         actuator_color_mode="pressure",
     )

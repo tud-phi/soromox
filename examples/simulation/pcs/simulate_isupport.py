@@ -12,7 +12,12 @@ import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 
-from soromox.rendering.config import GeometryConfig, RendererConfig
+from soromox.rendering.config import (
+    GeometryConfig,
+    GroundPlaneConfig,
+    RendererConfig,
+    SceneConfig,
+)
 
 jax.config.update("jax_enable_x64", True)  # double precision
 from soromox.rendering import (
@@ -238,7 +243,14 @@ if __name__ == "__main__":
         viser_renderer = ISupportViserRenderer(
             robot,
             visual_config=ISupportVisualConfig(pressure_range=(0.0, float(jnp.max(u)))),
-            config=RendererConfig(geometry=GeometryConfig(num_points=50)),
+            config=RendererConfig(
+                geometry=GeometryConfig(num_points=50),
+                scene=SceneConfig.technical(
+                    ground=GroundPlaneConfig(
+                        surface=False, height=-0.06, height_reference="world"
+                    )
+                ),
+            ),
         )
         viser_renderer.render_sequence(
             ts=ts,

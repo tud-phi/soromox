@@ -41,7 +41,7 @@ def test_shared_camera_matches_section_vf_viewpoint():
     camera = rl_render_style.make_rl_camera_config(0.25)
 
     assert camera.fov == 60.0
-    assert_allclose(camera.position, (-1.51471109, -0.77178385, 0.5), atol=1e-8)
+    assert_allclose(camera.position, (0.0, -0.4675, 0.331875), atol=1e-8)
     assert_allclose(camera.look_at, (0.0, 0.0, 0.0875), atol=1e-12)
 
 

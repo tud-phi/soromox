@@ -12,6 +12,10 @@ The neutral studio is the default studio variant, selected with
 See [shared configuration](configuration.md#scene-configuration) for the preset
 factories and [backend support](configuration.md#backend-support) for approximations.
 
+The gallery uses `GroundPlaneConfig(height_reference="base_mounting_face")` so the
+floor meets the mounting face of the configured base plates. This is an opt-in
+scene setting; the renderer default remains the world height `0`.
+
 Generate the images from the repository root:
 
 ```bash
@@ -130,3 +134,33 @@ The presets were informed by these visual references:
 - **Dark**: [GoodBread — Sharp Lights headphones](https://goodbread.co/3d-product-render-animation.html) · [reference image](https://goodbread.co/images/3d-headphones-contrasting-lights.webp)
 - **Flat**: [PyVista — Lighting Properties, no lighting](https://docs.pyvista.org/examples/02-plot/lighting_mesh) · [reference image](https://docs.pyvista.org/_images/sphx_glr_lighting_mesh_002.png)
 - **Clay**: [Gianluca Squillace / Marmoset — Clay Characters](https://marmoset.co/posts/rendering-high-quality-clay-characters-in-marmoset-toolbag/) · [reference image](https://marmoset.co/wp-content/uploads/2023/07/0_cover.jpg)
+
+## Hanging mounting
+
+Use `--mounting hanging` with either backend to place the mounting surface overhead.
+The gallery rotates the robot, backdrop, preset lights and camera together while
+keeping camera up at +z. All six presets support this mode; captures are saved in
+`figures/presets/hanging/` by default.
+
+```bash
+python examples/rendering/preset_gallery.py --backend open3d --mounting hanging
+python examples/rendering/preset_gallery.py --backend viser --mounting hanging
+```
+
+The neutral studio example illustrates the curved wall-to-ceiling backdrop, as in
+[Studio Sitges’ ceiling cyclorama](https://www.studiositges.com/blog/ceiling_cyclorama).
+The technical example shows the same transfer with an overhead grid. Open3D's
+world-oriented environment lighting can produce small shading differences between
+upright and hanging views.
+
+<div class="grid cards soromox-gallery soromox-preset-gallery" markdown>
+
+-   **Neutral studio — Open3D**
+
+    ![Hanging neutral Open3D](../../assets/rendering/presets/hanging/open3d_neutral.png)
+
+-   **Technical — Viser**
+
+    ![Hanging technical Viser](../../assets/rendering/presets/hanging/viser_technical.png)
+
+</div>

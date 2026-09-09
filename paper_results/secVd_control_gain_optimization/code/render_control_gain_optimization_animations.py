@@ -14,6 +14,7 @@ from typing import Any
 import numpy as np
 
 from soromox.rendering import GeometryConfig, RendererConfig, RenderOutputConfig
+from soromox.rendering.config import SceneConfig
 
 os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
 
@@ -60,8 +61,8 @@ MARKER_RADIUS = 0.004
 TARGET_MARKER_RADIUS = 0.008
 TRAIL_RADIUS = 0.0012
 CAMERA_FOV_DEGREES = 45.0
-CAMERA_POSITION_PER_LENGTH = (1.65, -1.52, 0.55)
-CAMERA_LOOK_AT_PER_LENGTH = (-0.05, -0.12, 0.55)
+CAMERA_POSITION_PER_LENGTH = (0.0, -3.0, 1.4)
+CAMERA_LOOK_AT_PER_LENGTH = (0.0, 0.0, 0.25)
 CAMERA_UP = (0.0, 0.0, -1.0)
 
 
@@ -216,9 +217,6 @@ class SecVdTrackingRenderer(ViserRenderer):
     def _after_sequence_scene_built(self) -> None:
         if self._server is None:
             return
-        self._server.scene.set_background_image(
-            np.full((2, 2, 3), 255, dtype=np.uint8), format="png"
-        )
         self._update_target_wireframe(0)
 
     def _after_sequence_frame_updated(self, frame_idx: int) -> None:
@@ -428,6 +426,8 @@ def render_method(
         dynamic_radii = np.array([MARKER_RADIUS, TARGET_MARKER_RADIUS])
         dynamic_colors = np.stack([CURRENT_POSITION_COLOR, TARGET_COLOR], axis=0)
 
+    scene = SceneConfig.studio("neutral")
+    scene.ground.height_reference = "base_mounting_face"
     renderer = renderer_factory(
         robot,
         desired_q_ts=desired_q_ts,
@@ -439,6 +439,7 @@ def render_method(
             colors=_color_config(
                 80, opacity=SYNERGISTIC_ROBOT_OPACITY if name == "synergistic" else 1.0
             ),
+            scene=scene,
         ),
     )
     renderer.render_sequence(

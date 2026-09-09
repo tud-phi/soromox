@@ -124,7 +124,10 @@ safety-unaware controller reaches about 33.5 N of pairwise normal force. The
 HOCBF-constrained controller stays at or below the prescribed 5 N limit while
 accepting a larger final goal distance.
 
-<video class="soromox-video" controls muted loop playsinline preload="metadata" poster="assets/paper/safety-constrained-control-poster.jpg" aria-label="Safety-unaware and HOCBF-constrained soft-robot control">
+The video shows the HOCBF-constrained controller approaching the green goal
+among the purple obstacles.
+
+<video class="soromox-video" controls muted loop playsinline preload="metadata" poster="assets/paper/safety-constrained-control-poster.jpg" aria-label="HOCBF-constrained soft robot approaching a goal among obstacles">
   <source src="assets/paper/safety-constrained-control.mp4" type="video/mp4">
   Your browser cannot play this video. View the <a href="assets/paper/safety-constrained-control.gif">animated GIF</a> instead.
 </video>
@@ -138,12 +141,14 @@ and 512 environments relative to the CPU PyElastica baseline jointly reflect
 model formulation, JIT compilation, hardware acceleration, and rollout
 parallelization.
 
-<video class="soromox-video" controls muted loop playsinline preload="metadata" poster="assets/paper/parallel-rl-poster.jpg" aria-label="Initialized and trained parallel reinforcement-learning policies">
+The video shows the trained policy tracking the green target in one environment.
+
+<video class="soromox-video" controls muted loop playsinline preload="metadata" poster="assets/paper/parallel-rl-poster.jpg" aria-label="Trained reinforcement-learning policy tracking a target in one soft-robot environment">
   <source src="assets/paper/parallel-rl.mp4" type="video/mp4">
   Your browser cannot play this video. View the <a href="assets/paper/parallel-rl.gif">animated GIF</a> instead.
 </video>
 
-Soromox can roll out many soft-robot environments in parallel, accelerating the
+SoRoMoX can roll out many soft-robot environments in parallel, accelerating the
 experience collection that dominates reinforcement-learning training. The
 animation below visualizes a trained policy acting simultaneously in 64
 independently simulated environments.
