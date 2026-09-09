@@ -1476,7 +1476,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                     ls = _make_polyline_lineset(
                         robot_actuators[actuator_idx], color=color
                     )
-                    mat_line = o3d.visualization.MaterialRecord()
+                    mat_line = o3d.visualization.rendering.MaterialRecord()
                     mat_line.shader = "unlitLine"
                     mat_line.line_width = layer.line_width or self.actuator_line_width
                     add_geometry(

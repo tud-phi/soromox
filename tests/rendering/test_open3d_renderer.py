@@ -1053,3 +1053,56 @@ def test_macos_rejects_unsafe_legacy_after_modern_gui(monkeypatch):
     renderer = Open3DRenderer(_AnimatingSpatialRobot())
     with pytest.raises(RuntimeError, match="fresh Python process"):
         renderer._create_visualizer("unsafe transition")
+
+
+@pytest.mark.parametrize("backbone_style", ["swept", "discrete"])
+def test_modern_scene_registers_actuator_lines_with_native_material(backbone_style):
+    """Exercise native tendon materials for the shared GUI and export scene path."""
+    from soromox.rendering.actuators import TrajectoryActuatorVisualLayer
+
+    renderer = Open3DRenderer(
+        _AnimatingSpatialRobot(),
+        config=RendererConfig(
+            geometry=GeometryConfig(
+                num_points=8,
+                cross_section_resolution=8,
+                backbone_style=backbone_style,
+            ),
+            scene=SceneConfig(ground=GroundPlaneConfig(visible=False)),
+        ),
+    )
+    curves, frames = renderer.compute_backbone_curves_and_frames_batched(
+        jnp.zeros((1, 3)), jnp.zeros((1, 3))
+    )
+    paths = np.array([[[[[0.0, 0.02, 0.0], [1.0, 0.02, 0.0]]]]])
+    layer = TrajectoryActuatorVisualLayer(
+        name="tendons",
+        kind="tendon",
+        points=paths,
+        line_width=3.0,
+    )
+    data = open3d_renderer_module.SceneData(
+        curves=np.asarray(curves)[:, None],
+        material_frames=np.asarray(frames)[:, None],
+        q_ts=np.zeros((1, 1, 3)),
+        ts=np.zeros(1),
+        layout=renderer._compute_segment_layout(8),
+        segment_colors_rgba=np.ones((1, 1, 4)),
+        actuator_layers=(layer,),
+    )
+    # Only the graphics context is mocked; Open3D geometry and materials are real.
+    scene = Mock()
+    renderer._populate_rendering_scene(scene, data, frame_idx=0)
+    calls = [
+        call
+        for call in scene.add_geometry.call_args_list
+        if call.args[0].startswith("actuator_")
+    ]
+    assert len(calls) == 1
+    _, geometry, material = calls[0].args
+    assert isinstance(
+        material, open3d_renderer_module.o3d.visualization.rendering.MaterialRecord
+    )
+    assert material.shader == "unlitLine"
+    assert material.line_width == 3.0
+    assert_allclose(np.asarray(geometry.points), paths[0, 0, 0])
