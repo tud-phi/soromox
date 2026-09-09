@@ -164,6 +164,10 @@ def test_render_motion_passes_pressures_to_umarm_viser(
     example.render_motion(robot, default_result)
 
     assert captured["robot"] is robot
+    config = captured["init_kwargs"]["config"]
+    assert (config.output.width, config.output.height) == (1280, 720)
+    assert config.geometry.num_points == 80
+    assert config.geometry.backbone_style == "discrete"
     assert captured["init_kwargs"]["actuator_color_mode"] == "pressure"
     assert_allclose(captured["sequence_kwargs"]["q_ts"], default_result.q)
     assert_allclose(

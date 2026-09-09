@@ -25,7 +25,6 @@ and include benchmark baseline and measurement context for performance claims.
   Ubuntu native-rendering tests and an upstream-revision check cover the
   source-build workflow.
 
-
 ### Changed
 
 - Open3D static `show()` and image exports use the modern renderer. Animated
