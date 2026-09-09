@@ -51,6 +51,7 @@ from soromox.systems import (
 from soromox.utils.geometry import poses
 
 FIGURES_DIR = Path(__file__).resolve().parent / "figures"
+VIDEO_OUTPUT = Path(__file__).resolve().parent / "videos" / f"{Path(__file__).stem}.mp4"
 
 
 def create_robot() -> tuple[PCS, int]:
@@ -624,7 +625,7 @@ def main(
     if not render:
         return
     if Open3DRenderer is None:
-        print("Open3DRenderer unavailable. Install open3d to view the animation.")
+        print("Open3DRenderer unavailable. Install open3d to export the video.")
     else:
         render_name = "PID (model-free)"
         if render_name not in all_results:
@@ -637,8 +638,10 @@ def main(
             ts=render_results["t"],
             q_ts=render_results["q"],
             playback_speed=1.0,
+            record_path=str(VIDEO_OUTPUT),
             window_name=f"Actuation-Space Regulation ({render_name})",
         )
+        print(f"Saved {VIDEO_OUTPUT}")
 
 
 if __name__ == "__main__":

@@ -221,15 +221,20 @@ def render_robot(
             renderer = Open3DRenderer(
                 robot, config=RendererConfig(geometry=GeometryConfig(num_points=80))
             )
+            open3d_output = record_path or (
+                Path(__file__).resolve().parent
+                / "videos"
+                / "articulated_soft_robot.mp4"
+            )
             renderer.render_sequence(
                 ts,
                 q_ts,
                 playback_speed=1.0,
-                loop=record_path is None,
-                record_path=None if record_path is None else str(record_path),
+                record_path=str(open3d_output),
                 camera_config=open3d_camera,
                 window_name="Articulated Soft Robot",
             )
+            print(f"Saved {open3d_output}")
 
     if backend in {"viser", "all"}:
         if ViserRenderer is None:

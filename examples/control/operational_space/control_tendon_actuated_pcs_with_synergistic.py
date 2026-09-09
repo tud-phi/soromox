@@ -40,6 +40,7 @@ from soromox.systems import (
 from soromox.utils.geometry import poses
 
 FIGURES_DIR = Path(__file__).resolve().parent / "figures"
+VIDEO_OUTPUT = Path(__file__).resolve().parent / "videos" / f"{Path(__file__).stem}.mp4"
 
 
 def main(
@@ -375,7 +376,7 @@ def main(
     if not render:
         return
     if Open3DRenderer is None:
-        print("\nOpen3DRenderer unavailable. Install open3d to view the animation.")
+        print("\nOpen3DRenderer unavailable. Install open3d to export the video.")
     else:
         target_radius = float(jnp.mean(robot.params.r)) * 0.5
         target_positions = jnp.asarray(x_des_traj_pos)[None, :, :]
@@ -386,11 +387,13 @@ def main(
             ts=t_traj,
             q_ts=q_traj,
             playback_speed=1.0,
+            record_path=str(VIDEO_OUTPUT),
             dynamic_spheres_positions=target_positions,
             dynamic_spheres_radii=jnp.array([target_radius]),
             dynamics_spheres_colors=jnp.array([[0.1, 0.6, 0.9]]),
             window_name="Operational-Space Tracking (Open3D)",
-        )  # '''
+        )
+        print(f"Saved {VIDEO_OUTPUT}")
 
 
 if __name__ == "__main__":

@@ -40,3 +40,8 @@ from the repository root or another working directory.
 
 See [the Open3D and Viser preset example](rendering/README.md) for upright tapered soft
 tentacles with pastel materials, a curved grey backdrop, lighting, and shadows.
+
+Open3D simulation and control examples export trajectory videos through the modern
+renderer to a `videos/` directory beside the script. Static Open3D views also use
+modern rendering. Legacy animation previews are available through the renderer
+API in a fresh process; mixing them with modern GUI windows on macOS is unsupported.

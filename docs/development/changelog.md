@@ -29,9 +29,12 @@ and include benchmark baseline and measurement context for performance claims.
 ### Changed
 
 - Open3D static `show()` and image exports use the modern renderer. Animated
-  previews retain efficient legacy geometry updates and warn about appearance
-  differences. Viser and OpenCV apply or approximate shared scene settings;
+  previews use the same camera projection, retain efficient legacy geometry
+  updates and warn about appearance differences. Viser and OpenCV apply or
+  approximate shared scene settings;
   Matplotlib uses a white background and standard axes, ignoring scene appearance.
+- Open3D simulation and control examples export trajectory videos by default,
+  avoiding modern-to-legacy graphics-context transitions on macOS.
 
 ### Performance
 
@@ -44,7 +47,8 @@ and include benchmark baseline and measurement context for performance claims.
   Public settings live in `soromox.rendering.config` and are also exported from
   `soromox.rendering`; direct camera, color and video configuration imports must
   use the new modules. Per-call camera, color and video overrides replace sections.
-- Default output is 800 × 600 with 80 backbone and 48 cross-section samples. Ground
+- Default output is 800 × 600 with 80 backbone and 48 cross-section samples.
+  The automatic camera distance factor is 1.5 instead of 10.0. Ground
   planes use world alignment (+Z spatial, +Y planar); base alignment is optional.
   OpenCV sequence options are keyword-only, with a required recording path.
 - Open3D sequences with `record_path` synchronously export through the modern

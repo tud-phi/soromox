@@ -2360,11 +2360,8 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         # First, let Open3D compute its default view to initialize internals
         vis.reset_view_point(True)
 
-        # Compute scene bounds from all curves (shape: N, T, P, 3)
-        all_points = scene_data.curves.reshape(-1, 3)
-        center = np.mean(all_points, axis=0)
-        extent = np.max(all_points, axis=0) - np.min(all_points, axis=0)
-        max_extent = float(np.max(extent))
+        # Use the same padded robot/helper bounds as modern images and videos.
+        center, max_extent = self._scene_bounds(scene_data)
 
         # Use provided config or defaults
         config = camera_config or self.config.camera
@@ -2387,38 +2384,32 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         ctrl.set_lookat(look_at)
         ctrl.set_up(up)
 
-        # Compute zoom empirically based on distance-to-extent ratio
-        # Open3D's zoom doesn't scale linearly with distance, but this formula
-        # provides consistent results: when camera is at ~10x scene extent, zoom≈1.0
-        # The constant 0.1 was determined empirically to match typical viewing distances.
+        # A pinhole camera gives legacy previews the same eye, field of view
+        # and framing as modern rendering, independently of scenery bounds.
         desired_distance = float(np.linalg.norm(camera_pos - look_at))
-        zoom = 0.1 * (desired_distance / max_extent) if max_extent > 1e-9 else 0.7
-        ctrl.set_zoom(zoom)
-        if self.scene_config.backdrop.enabled and self.scene_config.ground.visible:
-            # An explicit pinhole camera avoids fitting the large studio wall.
-            # ViewControl still owns interactive orbit/pan/zoom and snapshots.
-            forward = (look_at - camera_pos) / desired_distance
-            right = np.cross(forward, up)
-            right /= np.linalg.norm(right)
-            down = np.cross(forward, right)
-            rotation = np.stack((right, down, forward))
-            parameters = o3d.camera.PinholeCameraParameters()
-            focal = self.height / (2 * np.tan(np.deg2rad(config.fov) / 2))
-            parameters.intrinsic = o3d.camera.PinholeCameraIntrinsic(
-                self.width,
-                self.height,
-                focal,
-                focal,
-                (self.width - 1) / 2,
-                (self.height - 1) / 2,
-            )
-            extrinsic = np.eye(4)
-            extrinsic[:3, :3] = rotation
-            extrinsic[:3, 3] = -rotation @ camera_pos
-            parameters.extrinsic = extrinsic
-            ctrl.convert_from_pinhole_camera_parameters(
-                parameters, allow_arbitrary=True
-            )
+        forward = (look_at - camera_pos) / desired_distance
+        right = np.cross(forward, up)
+        right /= np.linalg.norm(right)
+        down = np.cross(forward, right)
+        rotation = np.stack((right, down, forward))
+        parameters = o3d.camera.PinholeCameraParameters()
+        focal = self.height / (2 * np.tan(np.deg2rad(config.fov) / 2))
+        parameters.intrinsic = o3d.camera.PinholeCameraIntrinsic(
+            self.width,
+            self.height,
+            focal,
+            focal,
+            (self.width - 1) / 2,
+            (self.height - 1) / 2,
+        )
+        extrinsic = np.eye(4)
+        extrinsic[:3, :3] = rotation
+        extrinsic[:3, 3] = -rotation @ camera_pos
+        parameters.extrinsic = extrinsic
+        if not ctrl.convert_from_pinhole_camera_parameters(
+            parameters, allow_arbitrary=True
+        ):
+            raise RuntimeError("Open3D could not apply the interactive camera")
 
         vis.poll_events()
         vis.update_renderer()

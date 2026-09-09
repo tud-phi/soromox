@@ -119,7 +119,7 @@ renderer.show(q, camera_config=camera)
 | `position` | tuple | None | Explicit camera position (x, y, z), None for auto |
 | `look_at` | tuple | None | Point camera looks at, None for scene center |
 | `up` | tuple | (0, 0, 1) | Camera up vector |
-| `distance_factor` | float | 10.0 | Multiplier for auto-positioning distance |
+| `distance_factor` | float | 1.5 | Multiplier for auto-positioning distance |
 | `position_offset` | tuple | (0.8, -0.8, 0.5) | Direction vector for camera placement |
 
 Matplotlib applies `fov` and the viewing direction from `position` to

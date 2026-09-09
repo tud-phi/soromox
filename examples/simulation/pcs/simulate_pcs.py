@@ -1,4 +1,5 @@
 from functools import partial
+from pathlib import Path
 
 import jax
 import jax.numpy as jnp
@@ -7,6 +8,8 @@ import plotly.graph_objects as go
 from diffrax import Tsit5
 
 from soromox.rendering.config import GeometryConfig, RendererConfig
+
+VIDEO_OUTPUT = Path(__file__).resolve().parent / "videos" / f"{Path(__file__).stem}.mp4"
 
 jax.config.update("jax_enable_x64", True)  # double precision
 from soromox.rendering import (
@@ -182,7 +185,8 @@ if __name__ == "__main__":
     renderer = Open3DRenderer(
         robot, config=RendererConfig(geometry=GeometryConfig(num_points=50))
     )
-    renderer.render_sequence(ts, q_ts)
+    renderer.render_sequence(ts, q_ts, record_path=str(VIDEO_OUTPUT))
+    print(f"Saved {VIDEO_OUTPUT}")
 
     # =====================================================
     # Viser web-based visualization (opens in browser)

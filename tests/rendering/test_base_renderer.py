@@ -525,3 +525,15 @@ def test_opencv_planar_base_marker_uses_base_pose_and_offset():
     # ppm = height / (length_scale * L_max) = 50. Base xy + offset = [0.3, 0.0].
     expected_uv = (65, 50)
     assert tuple(img[expected_uv[1], expected_uv[0]]) == (0, 255, 0)
+
+
+def test_default_camera_frames_scene_at_readable_distance():
+    """Default perspective framing avoids the former ten-extent camera distance."""
+    config = CameraConfig()
+    eye, target = config.compute_auto_position(np.zeros(3), 1.0)
+    distance = np.linalg.norm(eye - target)
+    projected_fraction = 1.0 / (2 * distance * np.tan(np.deg2rad(config.fov) / 2))
+    assert 0.3 < projected_fraction < 0.8
+    # Explicit camera distance and position preserve their documented semantics.
+    eye, _ = CameraConfig(distance_factor=10.0).compute_auto_position(np.zeros(3), 1.0)
+    assert_allclose(eye, 10 * np.array(config.position_offset))

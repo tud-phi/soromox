@@ -126,6 +126,11 @@ class FakeOpen3DViewControl:
     def set_zoom(self, zoom):
         self.zoom = float(zoom)
 
+    def convert_from_pinhole_camera_parameters(self, parameters, allow_arbitrary):
+        self.parameters = parameters
+        self.allow_arbitrary = allow_arbitrary
+        return True
+
 
 def test_swept_circular_contours_follow_material_frame_not_curve_chord():
     p0 = np.array([0.0, 0.0, 0.0])
@@ -680,7 +685,7 @@ def test_open3d_backbone_merging_defaults_to_multi_robot_scenes():
     assert renderer._should_merge_backbone_meshes(1) is True
 
 
-def test_open3d_interactive_camera_front_points_from_eye_to_target():
+def test_open3d_interactive_camera_front_points_from_eye_to_target(monkeypatch):
     pytest.importorskip("open3d")
     from soromox.rendering.open3d_renderer import Open3DRenderer
 
@@ -694,6 +699,9 @@ def test_open3d_interactive_camera_front_points_from_eye_to_target():
         {"curves": np.array([[[[0.0, 0.0, 0.0], [0.0, 1.0, 0.0]]]])},
     )()
 
+    monkeypatch.setattr(
+        renderer, "_scene_bounds", lambda data: (np.array([0.0, 0.5, 0.0]), 1.0)
+    )
     renderer._setup_interactive_camera(
         vis,
         ctrl,
@@ -709,6 +717,13 @@ def test_open3d_interactive_camera_front_points_from_eye_to_target():
     assert vis.reset_view_point_arg is True
     assert vis.polled
     assert vis.updated
+    assert ctrl.allow_arbitrary
+    assert ctrl.zoom is None
+    eye = -ctrl.parameters.extrinsic[:3, :3].T @ ctrl.parameters.extrinsic[:3, 3]
+    assert_allclose(eye, [1.0, 0.5, 0.0])
+    assert ctrl.parameters.intrinsic.intrinsic_matrix[1, 1] == pytest.approx(
+        renderer.height / (2 * np.tan(np.deg2rad(75.0) / 2))
+    )
 
 
 def test_open3d_visualizer_reports_window_creation_failure(monkeypatch):

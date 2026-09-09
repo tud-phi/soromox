@@ -52,8 +52,8 @@ class CameraConfig:
             look_at=(0.0, 0.0, 0.1),
         )
 
-        # Auto-positioned but closer to the scene
-        camera = CameraConfig(distance_factor=5.0)
+        # Auto-positioned with more space around the scene
+        camera = CameraConfig(distance_factor=2.0)
         ```
     """
 
@@ -62,7 +62,7 @@ class CameraConfig:
     position: tuple[float, float, float] | None = None
     look_at: tuple[float, float, float] | None = None
     up: tuple[float, float, float] = (0.0, 0.0, 1.0)  # Z-up convention
-    distance_factor: float = 10.0
+    distance_factor: float = 1.5
     position_offset: tuple[float, float, float] = (0.8, -0.8, 0.5)
 
     def compute_auto_position(
