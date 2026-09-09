@@ -51,6 +51,9 @@ and include benchmark baseline and measurement context for performance claims.
 
 ### Fixed
 
+- Matplotlib static ground surfaces no longer cover robot lines above the floor;
+  rounded line joins remove visible gaps between sampled backbone segments.
+
 ### Documentation
 
 ### Contributors

@@ -175,7 +175,9 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
         fig.patch.set_facecolor(self.background_color)
 
         if self.is_3d:
-            ax = fig.add_subplot(111, projection="3d")
+            # Respect the ground artists' zorder=0. Depth sorting a whole floor
+            # polygon can otherwise paint it over the robot above the floor.
+            ax = fig.add_subplot(111, projection="3d", computed_zorder=False)
         else:
             ax = fig.add_subplot(111)
 
@@ -596,6 +598,7 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
                     segments,
                     colors=segment_colors[idx],
                     linewidths=self.line_width,
+                    capstyle="round",
                 )
                 ax.add_collection3d(lc)
             else:
@@ -603,6 +606,7 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
                     segments,
                     colors=segment_colors[idx],
                     linewidths=self.line_width,
+                    capstyle="round",
                 )
                 ax.add_collection(lc)
             lines.append(lc)
@@ -1017,6 +1021,7 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
                     segments,
                     colors=seg_colors,
                     linewidths=self.line_width,
+                    capstyle="round",
                 )
                 ax.add_collection3d(lc)
             else:
@@ -1024,6 +1029,7 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
                     segments,
                     colors=seg_colors,
                     linewidths=self.line_width,
+                    capstyle="round",
                 )
                 ax.add_collection(lc)
             collections.append(lc)

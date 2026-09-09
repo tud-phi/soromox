@@ -167,17 +167,25 @@ GLX and EGL-headless Filament platforms. The Filament changes also re-bind the
 EGL API on worker threads, use a pbuffer-compatible configuration, and avoid a
 desktop-GL extension query that can return null.
 
-The local cross-version validation above passed; upstream submissions are
-still outstanding. The dual GLX/EGL selection, worker-thread API binding,
-pbuffer choice, and desktop-GL extension guard belong in a focused Filament
-issue and PR. The
-surfaceless Gaussian-splat-context guard and Filament patch hook belong in a
-focused Open3D issue and PR. Distribution naming, static-curl linking, and
-toolchain compatibility should be proposed separately so each change has a
-small regression test and can be reviewed independently. The mixed modern/legacy
-GUI finalization abort should also be reported as its own Open3D issue. No
-upstream issue or PR has been opened from this work, and no validation comment
-has been posted on PR #7550.
+Upstream tracking:
+
+| Finding | Upstream discussion |
+| --- | --- |
+| Metal RGB readback | [Validation comment on PR #7550](https://github.com/isl-org/Open3D/pull/7550#issuecomment-5595190113) |
+| Modern GUI followed by legacy Visualizer segfault | [Open3D #7553](https://github.com/isl-org/Open3D/issues/7553) |
+| Surfaceless rendering initializes splat GLX contexts | [Open3D #7554](https://github.com/isl-org/Open3D/issues/7554) |
+| Linux Filament archive byproduct paths | [Open3D #7555](https://github.com/isl-org/Open3D/issues/7555) |
+| Bundled curl/BoringSSL archive grouping | [Open3D #7556](https://github.com/isl-org/Open3D/issues/7556) |
+| Desktop OpenGL API binding on EGL worker threads | [Filament #10397](https://github.com/google/filament/issues/10397) |
+
+The reports distinguish local patched integration results from upstream builds.
+The mixed-GUI segfault was reproduced in a fresh macOS process; a legacy-only
+control succeeded. PR #7550 itself has not been built or validated here.
+Current Filament main already guards null extension strings and has revised
+swapchain selection; the older patch hunks need reassessment when Open3D updates
+its embedded Filament. The distribution-name patch, patch hook and runtime
+platform-selection policy support the downstream build and are not all
+independent upstream defects.
 
 ## Build configuration and overrides
 

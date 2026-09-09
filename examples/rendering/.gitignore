@@ -1,18 +1,2 @@
-# Curated PNGs displayed in gallery.md. Other captures and manifests are generated.
-!/figures/presets/
-/figures/presets/*
-!/figures/presets/open3d_technical.png
-!/figures/presets/open3d_neutral.png
-!/figures/presets/open3d_bright.png
-!/figures/presets/open3d_dark.png
-!/figures/presets/open3d_flat.png
-!/figures/presets/open3d_clay.png
-!/figures/presets/viser_technical.png
-!/figures/presets/viser_neutral.png
-!/figures/presets/viser_bright.png
-!/figures/presets/viser_dark.png
-!/figures/presets/viser_flat.png
-!/figures/presets/viser_clay.png
-
 # Local review reports and diagnostics.
 /.local/

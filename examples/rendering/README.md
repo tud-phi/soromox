@@ -10,7 +10,7 @@ python examples/rendering/preset_gallery.py --backend viser
 
 For Viser, open the printed local URL. The connected browser captures all six
 images automatically. Each command writes 1920 × 1080 PNGs to `figures/presets/`.
-The [preset gallery](gallery.md) compares the two backends. Use `--preset`,
+The [preset gallery](../../docs/api/rendering/presets.md) compares the two backends. Use `--preset`,
 `--count`, `--width`, `--height`, `--output-dir` or `--port` to customize a run.
 The model, five prescribed poses, placement, palette and camera are shared in
 `tentacle_scene.py`.
@@ -31,8 +31,10 @@ through `ViserRenderer.render_sequence()`.
 
 `--write-manifest` optionally saves the resolved configuration, backend version
 and reproduction command beside the images. These generated JSON files are local
-diagnostics and are ignored by Git. The twelve preset PNGs are versioned to
-illustrate the appearance of each preset.
+diagnostics and are ignored by Git. The twelve reviewed preset PNGs are versioned under
+`docs/assets/rendering/presets/` to illustrate each preset. Generated example
+captures stay local; use `--output-dir docs/assets/rendering/presets` when
+deliberately updating the published gallery.
 
 Open3D uses the modern renderer for images, synchronous videos and static
 `show()`. Animated interactive previews use efficient legacy geometry updates
@@ -58,3 +60,19 @@ Static Viser capture supplies the camera pose explicitly and waits for stable
 images while the browser loads its meshes. Open3D's tested development build
 ignores the lit tone-mapping selector; its technical background is warmer than
 Viser's white canvas. The gallery describes these differences.
+
+## Core renderer comparison
+
+Generate the neutral studio tentacle used in the rendering overview:
+
+```bash
+python examples/rendering/backend_gallery.py --backend matplotlib
+python examples/rendering/backend_gallery.py --backend open3d
+python examples/rendering/backend_gallery.py --backend viser
+python examples/rendering/backend_gallery.py --backend opencv
+```
+
+The default output is `docs/assets/rendering/`. OpenCV uses a planar PCS
+counterpart with matching link lengths and prescribed bending coordinates.
+Matplotlib and OpenCV approximate the studio as colored lines and a ground
+reference; they do not reproduce its surface lighting or curved backdrop.

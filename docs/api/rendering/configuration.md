@@ -1,53 +1,8 @@
 # Shared Renderer Configuration
 
-This page documents camera, base, ground-plane, and color settings shared by
-multiple SoRoMoX renderers.
-
-## Camera Configuration
-
-### CameraConfig
-
-The `CameraConfig` class provides unified camera configuration across renderers (Matplotlib, Open3D, Viser).
-
-```python
-from soromox.rendering import CameraConfig
-
-camera = CameraConfig(
-    fov=60.0,                           # Field of view in degrees
-    position=(0.6, -0.6, 0.4),          # Camera position (x, y, z)
-    look_at=(0.0, 0.0, 0.1),            # Point camera looks at
-    up=(0.0, 0.0, 1.0),                 # Camera up vector (default: Z-up)
-    distance_factor=2.0,                # Multiplier for auto-positioning
-)
-
-renderer.show(q, camera_config=camera)
-```
-
-#### Parameters
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `fov` | float | 75.0 | Field of view in degrees |
-| `exposure_ev100` | float | 15.0 | Exposure value at ISO 100, approximated through illumination gain |
-| `position` | tuple | None | Explicit camera position (x, y, z), None for auto |
-| `look_at` | tuple | None | Point camera looks at, None for scene center |
-| `up` | tuple | (0, 0, 1) | Camera up vector |
-| `distance_factor` | float | 10.0 | Multiplier for auto-positioning distance |
-| `position_offset` | tuple | (0.8, -0.8, 0.5) | Direction vector for camera placement |
-
-Matplotlib applies `fov` and the viewing direction from `position` to
-`look_at`; its axes limits determine the remaining framing. Open3D and Viser
-also use the explicit camera distance.
-
-::: soromox.rendering.config.camera.CameraConfig
-    options:
-      show_root_heading: true
-      show_source: false
-      heading_level: 3
-      docstring_section_style: table
-      members_order: source
-
----
+`RendererConfig` groups settings into five sections: scene, camera, colors,
+geometry and output. Start with a scene preset, then adjust the sections needed
+for your visualization. Compare the presets in the [preset gallery](presets.md).
 
 ## RendererConfig
 
@@ -76,7 +31,39 @@ Trajectories, placement offsets, recording paths and playback controls belong to
 rendering operations. Per-call `camera_config`, `color_config` and `video_config`
 replace the corresponding complete default section without modifying it.
 
-## Robot Base and Ground Plane
+## Scene configuration
+
+### Presets
+
+| Factory | Appearance |
+| --- | --- |
+| `SceneConfig.technical()` | Neutral shaded objects and a grid without a filled surface |
+| `SceneConfig.studio("neutral")` | Grey curved backdrop, balanced key and fill |
+| `SceneConfig.studio("bright")` | Bright backdrop and gentle grounding shadows |
+| `SceneConfig.studio("dark")` | Charcoal background with frontal key, fill and rim lighting |
+| `SceneConfig.flat()` | Unlit colors on white, without ground or shadows |
+| `RendererConfig.clay(color=(0.72, 0.65, 0.56))` | Uniform matte robot colors and studio lighting |
+
+Clay overrides backbone, base and actuator colors. Helper objects retain their
+semantic colors. Studio presets preserve the supplied robot palette.
+
+### Lighting and materials
+
+Directional lights use `illuminance_lux`; point lights use `intensity_candela`
+and world positions in metres. `PointLightConfig.from_lumens(flux)` divides
+isotropic flux by `4*pi`. Open3D converts candela back to lumens. Ambient
+illumination uses relative strength: Open3D uses its environment map, and Viser
+approximates it with a world-up hemisphere light. Preset `scene_extent` scales point positions
+linearly and intensities quadratically; explicit light settings are never resized
+during camera fitting or playback. Public colors are sRGB.
+
+
+
+`config.scene.material` controls lit/unlit or toon shading, roughness, metallicity,
+reflectance, opacity, face normals and wireframe. `config.scene.shadows` and
+`config.scene.ambient_occlusion` enable shadow and occlusion effects where supported.
+
+### Ground plane and backdrop
 
 Robot poses come from the model's fixed base or floating runtime coordinates.
 `config.geometry.base_plate_radius_scale` and `base_plate_thickness` control
@@ -105,7 +92,52 @@ with its tangent. Automatic sizing fits the whole robot trajectory and helper
 bounds. Scenery is excluded from camera fitting. Live visualization retains its
 initial bounds. A curved backdrop replaces the separate flat floor and grid.
 
-## Color Configuration
+## Camera configuration
+
+The `CameraConfig` class provides unified camera configuration across renderers (Matplotlib, Open3D, Viser).
+
+```python
+from soromox.rendering import CameraConfig
+
+camera = CameraConfig(
+    fov=60.0,                           # Field of view in degrees
+    position=(0.6, -0.6, 0.4),          # Camera position (x, y, z)
+    look_at=(0.0, 0.0, 0.1),            # Point camera looks at
+    up=(0.0, 0.0, 1.0),                 # Camera up vector (default: Z-up)
+    distance_factor=2.0,                # Multiplier for auto-positioning
+)
+
+renderer.show(q, camera_config=camera)
+```
+
+### Camera parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `fov` | float | 75.0 | Field of view in degrees |
+| `exposure_ev100` | float | 15.0 | Exposure value at ISO 100, approximated through illumination gain |
+| `position` | tuple | None | Explicit camera position (x, y, z), None for auto |
+| `look_at` | tuple | None | Point camera looks at, None for scene center |
+| `up` | tuple | (0, 0, 1) | Camera up vector |
+| `distance_factor` | float | 10.0 | Multiplier for auto-positioning distance |
+| `position_offset` | tuple | (0.8, -0.8, 0.5) | Direction vector for camera placement |
+
+Matplotlib applies `fov` and the viewing direction from `position` to
+`look_at`; its axes limits determine the remaining framing. Open3D and Viser
+also use the explicit camera distance.
+
+### Exposure and tone mapping
+
+`CameraConfig.exposure_ev100` defaults to 15. Increasing it by one halves light
+strength in the modern Open3D adapter and the Viser approximation. This scales
+illumination because their public APIs do not expose a shared photographic camera
+exposure control. It does not simulate aperture, shutter blur or depth of field.
+Choose `scene.tone_mapping="backend-default"`, `"linear"` or `"aces"`.
+The tested Open3D development build ignores this selector while post-processing
+is enabled; requesting a specific lit tone mapper produces a warning. The flat
+unlit path bypasses post-processing. Viser also uses its browser tone mapper.
+
+## Color configuration
 
 ### Color Hierarchy
 
@@ -142,13 +174,6 @@ color_config = RendererColorConfig(
 renderer.show(q, color_config=color_config)
 ```
 
-::: soromox.rendering.config.colors.RendererColorConfig
-    options:
-      show_root_heading: true
-      show_source: false
-      heading_level: 3
-      docstring_section_style: table
-      members_order: source
 
 ### BackboneColorConfig
 
@@ -164,19 +189,11 @@ backbone_config = BackboneColorConfig(
 )
 ```
 
-::: soromox.rendering.config.colors.BackboneColorConfig
-    options:
-      show_root_heading: true
-      show_source: false
-      heading_level: 3
-      docstring_section_style: table
-      members_order: source
 
----
 
-## Built-in Palettes and Themes
+### Built-in palettes and themes
 
-### Available Palettes
+#### Available palettes
 
 SoRoMoX includes publication-friendly color palettes:
 
@@ -197,7 +214,7 @@ from soromox.rendering import list_builtin_palettes
 print(list_builtin_palettes())
 ```
 
-### Color Themes
+#### Color themes
 
 Pre-configured themes for consistent styling:
 
@@ -212,9 +229,8 @@ theme = get_color_theme("soromox:paper")
 renderer = ViserRenderer(robot, config=RendererConfig(colors=theme))
 ```
 
----
 
-## Color Shape Reference
+### Color shape reference
 
 When providing explicit colors, use these shapes:
 
@@ -226,9 +242,8 @@ When providing explicit colors, use these shapes:
 | `robot_segment_colors` | (N, S, 3/4) | Per-robot, per-segment colors |
 | `robot_point_colors` | (N, P, 3/4) | Per-robot, per-point colors |
 
----
 
-## Color Legend
+### Color legend
 
 For creating legends in plots:
 
@@ -237,17 +252,12 @@ legend = renderer.get_color_legend(num_robots=3, color_config=color_config)
 # Returns ColorLegend with robot labels and colors
 ```
 
-::: soromox.rendering.config.colors.ColorLegend
-    options:
-      show_root_heading: true
-      show_source: false
-      heading_level: 3
-      docstring_section_style: table
-      members_order: source
+## Geometry and multi-robot layouts
 
----
-
-## Multi-Robot Layouts
+`config.geometry` sets backbone and cross-section sample counts, swept or discrete
+geometry, base plate dimensions, line widths and automatic robot spacing. Base
+poses and runtime configurations determine the robot geometry; scene settings
+only control its display. Increase sample counts for smoother exported surfaces.
 
 Matplotlib, Open3D, and Viser accept batched robot configurations:
 
@@ -275,38 +285,24 @@ renderer.render_sequence(
 )
 ```
 
----
+## Output and recording
 
-## Scene presets and physical light units
+`RenderOutputConfig` selects image dimensions and default video encoding:
 
-| Factory | Appearance |
-| --- | --- |
-| `SceneConfig.technical()` | Neutral shaded objects and a grid without a filled surface |
-| `SceneConfig.studio("neutral")` | Grey curved backdrop, balanced key and fill |
-| `SceneConfig.studio("bright")` | Bright backdrop and gentle grounding shadows |
-| `SceneConfig.studio("dark")` | Charcoal background with frontal key, fill and rim lighting |
-| `SceneConfig.flat()` | Unlit colors on white, without ground or shadows |
-| `RendererConfig.clay(color=(0.72, 0.65, 0.56))` | Uniform matte robot colors and studio lighting |
+```python
+from soromox.rendering import RenderOutputConfig, VideoEncodingConfig
 
-Clay overrides backbone, base and actuator colors. Helper objects retain their
-semantic colors. Studio presets preserve the supplied robot palette.
+config.output = RenderOutputConfig(
+    width=1920, height=1080,
+    video=VideoEncodingConfig(codec="libx264", crf=18, pix_fmt="yuv420p"),
+)
+```
 
-Directional lights use `illuminance_lux`; point lights use `intensity_candela`
-and world positions in metres. `PointLightConfig.from_lumens(flux)` divides
-isotropic flux by `4*pi`. Open3D converts candela back to lumens. Ambient
-illumination uses relative strength: Open3D uses its environment map, and Viser
-approximates it with a world-up hemisphere light. Preset `scene_extent` scales point positions
-linearly and intensities quadratically; explicit light settings are never resized
-during camera fitting or playback. Public colors are sRGB.
-
-`CameraConfig.exposure_ev100` defaults to 15. Increasing it by one halves light
-strength in the modern Open3D adapter and the Viser approximation. This scales
-illumination because their public APIs do not expose a shared photographic camera
-exposure control. It does not simulate aperture, shutter blur or depth of field.
-Choose `scene.tone_mapping="backend-default"`, `"linear"` or `"aces"`.
-The tested Open3D development build ignores this selector while post-processing
-is enabled; requesting a specific lit tone mapper produces a warning. The flat
-unlit path bypasses post-processing. Viser also uses its browser tone mapper.
+Set this before constructing the renderer. A per-call `video_config` replaces
+`config.output.video` for that operation. Supply `record_path` to
+`render_sequence()` to export a video or, where supported, an image sequence.
+Open3D export is synchronous; a sequence without a recording path opens animated
+playback. See the [renderer API](renderers.md) for backend-specific operations.
 
 ## Backend support
 
@@ -332,8 +328,10 @@ produce a warning. Presets use one directional key plus point lights for fill
 and rim illumination; they do not reproduce area-light reflections,
 subsurface scattering or reference-image compositing.
 
-See the [preset comparison gallery](../../../examples/rendering/gallery.md) for
-actual tentacle renders, references and measured limitations.
+See the [preset comparison gallery](presets.md) for
+actual tentacle renders, references and backend differences.
+
+## Configuration API
 
 All public settings are available from `soromox.rendering.config` and re-exported
 from `soromox.rendering`. Their implementation is organized by responsibility:
