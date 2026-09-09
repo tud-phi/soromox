@@ -23,16 +23,8 @@ from PIL import Image
 SECTION_DIR = Path(__file__).resolve().parent.parent
 PAPER_RESULTS_DIR = SECTION_DIR.parent
 PAPER_STYLE = PAPER_RESULTS_DIR / "paper.mplstyle"
-CONFIGURATION_CODE_DIR = (
-    SECTION_DIR
-    / "configuration_space_comparison"
-    / "code"
-)
-OPERATIONAL_CODE_DIR = (
-    SECTION_DIR
-    / "operational_space_impedance_control"
-    / "code"
-)
+CONFIGURATION_CODE_DIR = SECTION_DIR / "configuration_space_comparison" / "code"
+OPERATIONAL_CODE_DIR = SECTION_DIR / "operational_space_impedance_control" / "code"
 for code_dir in (CONFIGURATION_CODE_DIR, OPERATIONAL_CODE_DIR):
     if str(code_dir) not in sys.path:
         sys.path.insert(0, str(code_dir))
@@ -63,16 +55,12 @@ MARKER_SIZE = 2.5
 
 DEFAULT_CONFIGURATION_INPUT = configuration_plot.CANONICAL_INPUT
 DEFAULT_OPERATIONAL_INPUT = DEFAULT_TRAJECTORY_OUTPUT
-DEFAULT_SNAPSHOT_DIR = OPERATIONAL_CODE_DIR.parent / "outputs" / (
-    "operational_space_impedance_snapshots"
+DEFAULT_SNAPSHOT_DIR = (
+    OPERATIONAL_CODE_DIR.parent / "outputs" / ("operational_space_impedance_snapshots")
 )
-DEFAULT_OUTPUT_BASE = (
-    SECTION_DIR / "outputs" / "model_based_control"
-)
+DEFAULT_OUTPUT_BASE = SECTION_DIR / "outputs" / "model_based_control"
 
-SNAPSHOT_PATTERN = re.compile(
-    r"^snapshot_t(?P<seconds>\d+)p(?P<fraction>\d+)s\.png$"
-)
+SNAPSHOT_PATTERN = re.compile(r"^snapshot_t(?P<seconds>\d+)p(?P<fraction>\d+)s\.png$")
 
 COMPOSITE_RC_PARAMS = {
     "font.family": "serif",
@@ -395,9 +383,7 @@ def load_snapshots(snapshot_dir: Path) -> list[tuple[float, Path]]:
         if match is None:
             continue
         fraction = match.group("fraction")
-        time_seconds = float(
-            f"{int(match.group('seconds'))}.{fraction}"
-        )
+        time_seconds = float(f"{int(match.group('seconds'))}.{fraction}")
         snapshots.append((time_seconds, path))
     snapshots.sort(key=lambda item: item[0])
     if len(snapshots) != 4:
@@ -565,8 +551,7 @@ def build_composite_figure(
             wspace=0.06,
         )
         snapshot_axes = tuple(
-            fig.add_subplot(snapshot_grid[0, column])
-            for column in range(4)
+            fig.add_subplot(snapshot_grid[0, column]) for column in range(4)
         )
         for snapshot_axis in snapshot_axes:
             snapshot_axis.set_anchor("S")
