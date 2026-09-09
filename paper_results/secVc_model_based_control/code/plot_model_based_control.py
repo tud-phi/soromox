@@ -48,7 +48,7 @@ from operational_space_impedance_common import (  # noqa: E402
     operational_tracking_data,
 )
 
-FIGURE_SIZE_CM = (18.1, 17.0)
+FIGURE_SIZE_CM = (18.1, 16.2)
 CM_TO_INCH = 1.0 / 2.54
 
 FONT_SIZE = 8.0
@@ -512,7 +512,7 @@ def build_composite_figure(
             right=0.975,
             bottom=0.019,
             top=0.985,
-            height_ratios=(6.15, 1.05, 9.15),
+            height_ratios=(6.15, 1.05, 8.47),
             hspace=0.0,
         )
 
@@ -525,7 +525,7 @@ def build_composite_figure(
         operational_grid = outer[2, 0].subgridspec(
             7,
             2,
-            height_ratios=(0.42, 1.0, 0.12, 1.0, 0.82, 3.70, 0.18),
+            height_ratios=(0.42, 1.0, 0.12, 1.0, 0.72, 3.10, 0.18),
             hspace=0.05,
             wspace=0.24,
         )
