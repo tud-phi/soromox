@@ -27,12 +27,12 @@ topology. It adds corrugated chamber surfaces, six translucent spacers per
 pneumatic segment, and the base, intermediate, and tip interfaces.
 
 ```python
-from soromox.rendering import ISupportViserRenderer, ISupportVisualConfig
+from soromox.rendering import RendererConfig, GeometryConfig, ISupportViserRenderer, ISupportVisualConfig
 
 renderer = ISupportViserRenderer(
     robot,
     visual_config=ISupportVisualConfig(),
-    num_points=50,
+    config=RendererConfig(geometry=GeometryConfig(num_points=50)),
 )
 renderer.show(q)
 ```

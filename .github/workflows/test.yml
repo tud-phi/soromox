@@ -13,6 +13,70 @@ on:
       - main
 
 jobs:
+  rendering-ubuntu:
+    name: Native rendering (Ubuntu, Python 3.12)
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          lfs: true
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install Open3D build, graphics, display, and video dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            git build-essential cmake ninja-build glslang-tools \
+            xorg-dev libxcb-shm0 libglu1-mesa-dev libssl-dev \
+            libc++-dev libc++abi-dev libsdl2-dev libxi-dev libtbb-dev \
+            libegl1-mesa-dev libudev-dev libusb-1.0-0-dev \
+            autoconf libtool clang xvfb xauth ffmpeg
+
+      - name: Restore native Open3D build cache
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/soromox/open3d
+          key: rendering-ubuntu-open3d-py312-${{ hashFiles('tools/open3d/**') }}
+
+      - name: Build Open3D and install rendering tests
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install ./tools/open3d
+          python -m pip install -e ".[rendering,test]"
+
+      - name: Test Open3D configuration adaptation
+        run: |
+          python -m pytest -q \
+            tests/rendering/test_renderer_config.py::test_open3d_converts_point_flux_and_applies_exposure_without_mutating
+
+      - name: Test headless frame and MP4 export
+        run: |
+          env -u DISPLAY \
+            EGL_PLATFORM=surfaceless \
+            LIBGL_ALWAYS_SOFTWARE=true \
+            SOROMOX_RUN_RENDERING_INTEGRATION=1 \
+            python -m pytest -q \
+            tests/rendering/test_open3d_linux_integration.py::test_open3d_surfaceless_frame_and_mp4_export \
+            tests/rendering/test_open3d_color_integration.py
+
+      - name: Test interactive viewers under Xvfb
+        run: |
+          xvfb-run -a env -u EGL_PLATFORM \
+            LIBGL_ALWAYS_SOFTWARE=true \
+            SOROMOX_RUN_RENDERING_INTEGRATION=1 \
+            python -m pytest -q \
+            tests/rendering/test_open3d_linux_integration.py::test_open3d_show_opens_and_closes_real_xvfb_window \
+            tests/rendering/test_open3d_linux_integration.py::test_open3d_unavailable_display_raises_with_native_log \
+            tests/rendering/test_open3d_linux_integration.py::test_open3d_interactive_sequence_advances_in_real_xvfb_window
+
   test:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     strategy:

@@ -36,7 +36,12 @@ from soromox.control import (
     ReferenceTrajectory,
 )
 from soromox.coordinate_transformations import OperationalSpaceDynamics
-from soromox.rendering import UMArmViserRenderer
+from soromox.rendering import (
+    GeometryConfig,
+    RendererConfig,
+    RenderOutputConfig,
+    UMArmViserRenderer,
+)
 from soromox.systems import McKibbenActuatedUMArm, SystemState
 from soromox.utils.geometry import poses
 
@@ -688,10 +693,10 @@ def render_motion(
 
     renderer = UMArmViserRenderer(
         robot,
-        width=1280,
-        height=720,
-        num_points=80,
-        backbone_style="discrete",
+        config=RendererConfig(
+            output=RenderOutputConfig(width=1280, height=720),
+            geometry=GeometryConfig(num_points=80, backbone_style="discrete"),
+        ),
         actuator_color_mode="pressure",
     )
     renderer.render_sequence(

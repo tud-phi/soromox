@@ -7,6 +7,8 @@ from pathlib import Path
 
 import jax
 
+from soromox.rendering.config import GeometryConfig, RendererConfig
+
 jax.config.update("jax_enable_x64", True)
 
 import jax.numpy as jnp
@@ -142,7 +144,9 @@ def render_robot(
         record_path.parent.mkdir(parents=True, exist_ok=True)
 
     if backend == "matplotlib":
-        renderer = MatplotlibRenderer(robot, num_points=80)
+        renderer = MatplotlibRenderer(
+            robot, config=RendererConfig(geometry=GeometryConfig(num_points=80))
+        )
         if record_path is None:
             renderer.animate(ts=ts, q_ts=q_ts, mode="slider", interval=60)
         else:
@@ -161,9 +165,10 @@ def render_robot(
             return
         renderer = UMArmViserRenderer(
             robot,
-            num_points=80,
-            backbone_style="discrete",
             actuator_color_mode="pressure",
+            config=RendererConfig(
+                geometry=GeometryConfig(num_points=80, backbone_style="discrete")
+            ),
         )
         renderer.render_sequence(
             ts=ts,

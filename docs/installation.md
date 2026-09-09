@@ -2,20 +2,6 @@
 
 **Get started with SoRoMoX in minutes!** Choose from multiple installation methods to get Soft Robot Models in jaX (SoRoMoX) running on your system.
 
-!!! warning "📢 Migration from JSRM"
-    
-    If you're migrating from the [JSRM package](https://github.com/tud-phi/jax-soft-robot-modeling), please note that SoRoMoX introduces breaking changes:
-    
-    - **Package Name**: `import jsrm` → `import soromox`
-    - **Architecture**: Functional approach → Object-oriented Equinox dataclasses
-    - **Performance**: Symbolic derivations → Numerical implementations
-    - **New Soft Robot Models**: Support for Spatial PCS, GVS, and articulated soft robot systems
-    - **Actuation**: Popular soft robot actuation modalities such as tendon and pressure actuation are implemented into the models (instead of just direct-torque actuation like in JSRM)
-    - **Renderers**: SoRoMoX includes built-in renderers for visualization
-    - **Control**: Model-based control implementations are included
-
----
-
 ## 🔧 Requirements
 
 !!! note "System Requirements"
@@ -25,7 +11,9 @@
     - **NumPy**
 
 !!! warning "Python Version Compatibility"
-    - **Open3D Rendering**: Open3D rendering is currently not compatible with Python 3.13+
+    - **Open3D Rendering**: Patched Open3D development source builds are tested
+      with Python 3.11–3.14 on Ubuntu x86-64. Python 3.12–3.14 are also tested
+      on Apple Silicon.
     - **Python 3.14 on Windows**: There may currently exist an incompatibility of Python 3.14 on Windows with the package
 
 ---
@@ -100,7 +88,20 @@ pip install soromox[rendering]
     encoding when FFmpeg is unavailable.
 
 !!! note "Open3D Compatibility"
-    Open3D rendering is currently not compatible with Python 3.13+. If you need 3D visualization, please use Python 3.12 or earlier, or use the `viser` renderer instead.
+    This checkout follows an immutable, regularly checked Open3D `main`
+    revision. On Ubuntu x86-64 and macOS, `uv sync --extra rendering` builds the
+    patched source locally; the first build takes time and disk space. Ubuntu
+    needs the documented compiler, graphics, Xvfb, and FFmpeg packages. macOS
+    needs Xcode with its Metal Toolchain and Homebrew `cmake`, `ninja`,
+    `openblas`, `glslang`, and `spirv-cross`. See the
+    [build instructions](https://github.com/tud-phi/soromox/tree/main/tools/open3d)
+    for prerequisites, environment variables, cache controls, validation commands,
+    and other platforms. On Ubuntu 26.04 x86-64, Python 3.11–3.14 pass real
+    surfaceless image and MP4 export plus modern and animated viewers under Xvfb.
+    Apple Silicon image, video, and modern-window checks pass with Python
+    3.12–3.14. Native Windows rendering remains unverified. Plain
+    `pip install soromox[rendering]` uses PyPI; use the source-checkout instructions
+    when following Open3D `main`.
 
 ### 📚 Examples Dependencies
 

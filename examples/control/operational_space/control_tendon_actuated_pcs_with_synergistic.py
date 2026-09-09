@@ -19,6 +19,8 @@ import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 
+from soromox.rendering.config import GeometryConfig, RendererConfig
+
 jax.config.update("jax_enable_x64", True)  # Double precision
 
 from soromox.actuation import ThreadlikeActuator, ThreadlikeRouting
@@ -38,6 +40,7 @@ from soromox.systems import (
 from soromox.utils.geometry import poses
 
 FIGURES_DIR = Path(__file__).resolve().parent / "figures"
+VIDEO_OUTPUT = Path(__file__).resolve().parent / "videos" / f"{Path(__file__).stem}.mp4"
 
 
 def main(
@@ -373,20 +376,24 @@ def main(
     if not render:
         return
     if Open3DRenderer is None:
-        print("\nOpen3DRenderer unavailable. Install open3d to view the animation.")
+        print("\nOpen3DRenderer unavailable. Install open3d to export the video.")
     else:
         target_radius = float(jnp.mean(robot.params.r)) * 0.5
         target_positions = jnp.asarray(x_des_traj_pos)[None, :, :]
-        renderer = Open3DRenderer(robot, num_points=50)
+        renderer = Open3DRenderer(
+            robot, config=RendererConfig(geometry=GeometryConfig(num_points=50))
+        )
         renderer.render_sequence(
             ts=t_traj,
             q_ts=q_traj,
             playback_speed=1.0,
+            record_path=str(VIDEO_OUTPUT),
             dynamic_spheres_positions=target_positions,
             dynamic_spheres_radii=jnp.array([target_radius]),
             dynamics_spheres_colors=jnp.array([[0.1, 0.6, 0.9]]),
             window_name="Operational-Space Tracking (Open3D)",
-        )  # '''
+        )
+        print(f"Saved {VIDEO_OUTPUT}")
 
 
 if __name__ == "__main__":

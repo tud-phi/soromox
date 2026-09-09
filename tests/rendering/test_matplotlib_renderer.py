@@ -6,7 +6,13 @@ import pytest
 from numpy.testing import assert_allclose
 
 from soromox.rendering.actuators import ActuatorVisualLayer
-from soromox.rendering.camera_config import CameraConfig
+from soromox.rendering.config import (
+    GeometryConfig,
+    RendererConfig,
+    RenderOutputConfig,
+    SceneConfig,
+)
+from soromox.rendering.config.camera import CameraConfig
 from soromox.rendering.matplotlib_renderer import MatplotlibRenderer
 from soromox.systems.components import CrossSectionGeometry
 from soromox.utils.geometry import poses
@@ -97,14 +103,11 @@ class LegacyFakeMatplotlib3DAxis(FakeMatplotlib3DAxis):
         self.box_aspect = tuple(aspect)
 
 
-def test_ground_plane_arguments_follow_color_configuration():
+def test_matplotlib_uses_composed_configuration():
     parameters = list(signature(MatplotlibRenderer).parameters)
-    color_config_index = parameters.index("color_config")
-
-    assert parameters[color_config_index + 1 : color_config_index + 3] == [
-        "show_ground_plane",
-        "ground_plane_size",
-    ]
+    assert parameters[:2] == ["robot", "config"]
+    assert "show_ground_plane" not in parameters
+    assert "color_config" not in parameters
 
 
 def test_3d_default_camera_uses_base_pose_orientation():
@@ -175,7 +178,13 @@ def test_3d_camera_uses_shared_field_of_view():
 
 def test_actuator_overlay_changes_rendered_frame():
     robot = DummyActuatedSpatialRobot(jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]))
-    renderer = MatplotlibRenderer(robot, width=240, height=180, num_points=8)
+    renderer = MatplotlibRenderer(
+        robot,
+        config=RendererConfig(
+            output=RenderOutputConfig(width=240, height=180),
+            geometry=GeometryConfig(num_points=8),
+        ),
+    )
 
     without_actuators = renderer.render_frame(jnp.array([]), render_actuators=False)
     with_actuators = renderer.render_frame(jnp.array([]), render_actuators=True)
@@ -184,25 +193,37 @@ def test_actuator_overlay_changes_rendered_frame():
     assert np.any(without_actuators != with_actuators)
 
 
-def test_ground_plane_changes_spatial_rendered_frame():
+@pytest.mark.parametrize(
+    "scene",
+    [
+        SceneConfig.technical(),
+        SceneConfig.studio(),
+        SceneConfig.studio("bright"),
+        SceneConfig.studio("dark"),
+        SceneConfig.flat(),
+        RendererConfig.clay().scene,
+    ],
+)
+def test_scene_presets_keep_white_matplotlib_background_and_standard_axes(scene):
+    """Scene presets cannot add a floor, recolor the plot, or change its bounds."""
     robot = DummySpatialRobot(jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]))
-    with_ground = MatplotlibRenderer(
-        robot,
-        width=240,
-        height=180,
-        num_points=8,
-        show_ground_plane=True,
-    ).render_frame(jnp.array([]))
-    without_ground = MatplotlibRenderer(
-        robot,
-        width=240,
-        height=180,
-        num_points=8,
-        show_ground_plane=False,
-    ).render_frame(jnp.array([]))
 
-    assert with_ground.shape == without_ground.shape
-    assert np.any(with_ground != without_ground)
+    def render(scene):
+        renderer = MatplotlibRenderer(
+            robot,
+            config=RendererConfig(
+                scene=scene,
+                output=RenderOutputConfig(width=240, height=180),
+                geometry=GeometryConfig(num_points=8),
+            ),
+        )
+        with pytest.warns(UserWarning, match="white background"):
+            return renderer.render_frame(jnp.array([]))
+
+    pixels = render(scene)
+    baseline = render(SceneConfig.flat())
+    np.testing.assert_array_equal(pixels, baseline)
+    np.testing.assert_array_equal(pixels[0, 0], [255, 255, 255])
 
 
 def test_2d_base_marker_is_perpendicular_to_base_tangent():
@@ -231,3 +252,64 @@ def test_3d_base_marker_lies_in_plate_face_plane():
     assert_allclose(marker[0], marker[-1], atol=1e-12)
     assert_allclose((marker - base) @ normal, np.zeros(marker.shape[0]), atol=1e-12)
     assert_allclose(np.linalg.norm(marker - base, axis=1), 0.2, atol=1e-12)
+
+
+def test_slider_ignores_studio_background_and_floor(monkeypatch):
+    """Playback uses the same white plotting style as still images."""
+    import matplotlib.pyplot as plt
+    from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+
+    renderer = MatplotlibRenderer(
+        DummySpatialRobot(jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0])),
+        config=RendererConfig(scene=SceneConfig.studio("dark")),
+    )
+    inspected = []
+
+    def inspect_figure():
+        fig = plt.gcf()
+        assert_allclose(fig.get_facecolor(), [1, 1, 1, 1])
+        assert_allclose(fig.axes[0].get_facecolor(), [1, 1, 1, 1])
+        # One filled base disk, with no ground or backdrop surfaces.
+        assert (
+            sum(isinstance(item, Poly3DCollection) for item in fig.axes[0].collections)
+            == 1
+        )
+        inspected.append(True)
+
+    monkeypatch.setattr(plt, "show", inspect_figure)
+    with pytest.warns(UserWarning, match="white background"):
+        renderer.animate(jnp.array([0.0, 0.1]), jnp.empty((2, 0)), mode="slider")
+    assert inspected == [True]
+
+
+@pytest.mark.parametrize(
+    "style", ["disk", "beveled_disk", "truncated_cone", "flared_collar"]
+)
+def test_spatial_base_is_a_filled_disk_and_updates_in_place(style):
+    """Detailed mount styles all use a simple disk, including during playback."""
+    import matplotlib.pyplot as plt
+    from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+
+    renderer = MatplotlibRenderer(
+        DummySpatialRobot(jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0])),
+        config=RendererConfig(geometry=GeometryConfig(base_plate_style=style)),
+    )
+    fig = plt.figure()
+    try:
+        ax = fig.add_subplot(projection="3d")
+        curves = np.array([[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]])
+        artists = renderer._plot_base_markers(ax, curves, (0.2, 0.2, 0.2))
+        assert len(artists) == 1
+        disk = artists[0]
+        assert isinstance(disk, Poly3DCollection)
+        assert disk.get_edgecolor().size == 0
+        captured = []
+        disk.set_verts = lambda vertices: captured.append(np.asarray(vertices))
+        renderer._update_base_markers(artists, curves + [0.0, 2.0, 3.0])
+        points = captured[0][0]
+        assert points.shape == (64, 3)
+        assert_allclose(points.mean(axis=0), [0.0, 2.0, 3.0], atol=1e-12)
+        assert_allclose(np.linalg.norm(points - [0.0, 2.0, 3.0], axis=1), 0.04)
+        assert_allclose(points[:, 0], 0.0)
+    finally:
+        plt.close(fig)

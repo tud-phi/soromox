@@ -28,6 +28,7 @@ class CameraConfig:
     the base frame instead of fixed world axes.
 
     Attributes:
+        exposure_ev100: Exposure value at ISO 100; larger values darken lit scenes.
         fov: Field of view in degrees (used by 3D renderers)
         position: Explicit camera position as (x, y, z) or None for auto
         look_at: Point the camera looks at as (x, y, z) or None for auto (scene center)
@@ -51,16 +52,17 @@ class CameraConfig:
             look_at=(0.0, 0.0, 0.1),
         )
 
-        # Auto-positioned but closer to the scene
-        camera = CameraConfig(distance_factor=5.0)
+        # Auto-positioned with more space around the scene
+        camera = CameraConfig(distance_factor=2.0)
         ```
     """
 
+    exposure_ev100: float = 15.0
     fov: float = 75.0
     position: tuple[float, float, float] | None = None
     look_at: tuple[float, float, float] | None = None
     up: tuple[float, float, float] = (0.0, 0.0, 1.0)  # Z-up convention
-    distance_factor: float = 10.0
+    distance_factor: float = 1.5
     position_offset: tuple[float, float, float] = (0.8, -0.8, 0.5)
 
     def compute_auto_position(

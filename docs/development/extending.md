@@ -695,26 +695,20 @@ class BaseSoftRobotRenderer:
 
 ```python
 import numpy as np
-from soromox.rendering import BaseSoftRobotRenderer, RendererColorConfig
+from soromox.rendering import BaseSoftRobotRenderer, RendererConfig
 from soromox.systems import SoftRobot
 
 class MyCustomRenderer(BaseSoftRobotRenderer):
     def __init__(
         self,
         robot: SoftRobot,
-        width: int = 800,
-        height: int = 600,
-        num_points: int = 50,
-        color_config: RendererColorConfig = None,
+        config: RendererConfig | None = None,
         # Your custom parameters
         my_param: float = 1.0,
     ):
         super().__init__(
             robot=robot,
-            width=width,
-            height=height,
-            num_points=num_points,
-            color_config=color_config,
+            config=config,
         )
         self.my_param = my_param
 ```

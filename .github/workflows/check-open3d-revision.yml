@@ -1,0 +1,20 @@
+name: Check Open3D upstream revision
+
+on:
+  schedule:
+    - cron: '17 7 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compare-revisions:
+    name: Compare pinned revision with upstream main
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Compare Open3D revisions
+        run: python tools/open3d/update_revision.py

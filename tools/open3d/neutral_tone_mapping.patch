@@ -1,0 +1,106 @@
+diff --git a/cpp/open3d/visualization/rendering/ColorGrading.h b/cpp/open3d/visualization/rendering/ColorGrading.h
+index 0a2298b..39a3b01 100644
+--- a/cpp/open3d/visualization/rendering/ColorGrading.h
++++ b/cpp/open3d/visualization/rendering/ColorGrading.h
+@@ -28,6 +28,7 @@ public:
+         kUchimura = 4,
+         kReinhard = 5,
+         kDisplayRange = 6,
++        kPbrNeutral = 7,
+     };
+ 
+     ColorGradingParams(Quality q, ToneMapping algorithm);
+diff --git a/cpp/open3d/visualization/rendering/filament/FilamentView.cpp b/cpp/open3d/visualization/rendering/filament/FilamentView.cpp
+index 80f6cf0..cb141ff 100644
+--- a/cpp/open3d/visualization/rendering/filament/FilamentView.cpp
++++ b/cpp/open3d/visualization/rendering/filament/FilamentView.cpp
+@@ -24,6 +24,7 @@
+ #include <filament/Engine.h>
+ #include <filament/RenderableManager.h>
+ #include <filament/Scene.h>
++#include <filament/ToneMapper.h>
+ #include <filament/View.h>
+ #include <filament/Viewport.h>
+ 
+@@ -244,34 +245,32 @@ void FilamentView::SetColorGrading(const ColorGradingParams& color_grading) {
+             break;
+     }
+ 
+-    // Tone mapping is not supported in Filament's ColorGrading::Builder API.
+-    // The toneMapping() method was removed/deprecated in newer versions of
+-    // Filament, so this code is commented out. The ToneMapping parameter in
+-    // ColorGradingParams is kept for API compatibility but is not applied.
+-    // filament::ColorGrading::ToneMapping tm =
+-    //         filament::ColorGrading::ToneMapping::LINEAR;
+-    // switch (color_grading.GetToneMapping()) {
+-    //     case ColorGradingParams::ToneMapping::kAcesLegacy:
+-    //         tm = filament::ColorGrading::ToneMapping::ACES_LEGACY;
+-    //         break;
+-    //     case ColorGradingParams::ToneMapping::kAces:
+-    //         tm = filament::ColorGrading::ToneMapping::ACES;
+-    //         break;
+-    //     case ColorGradingParams::ToneMapping::kFilmic:
+-    //         tm = filament::ColorGrading::ToneMapping::FILMIC;
+-    //         break;
+-    //     case ColorGradingParams::ToneMapping::kUchimura:
+-    //         tm = filament::ColorGrading::ToneMapping::UCHIMURA;
+-    //         break;
+-    //     case ColorGradingParams::ToneMapping::kReinhard:
+-    //         tm = filament::ColorGrading::ToneMapping::REINHARD;
+-    //         break;
+-    //     case ColorGradingParams::ToneMapping::kDisplayRange:
+-    //         tm = filament::ColorGrading::ToneMapping::DISPLAY_RANGE;
+-    //         break;
+-    //     default:
+-    //         break;
+-    // }
++    // The mapper is needed only while the grading LUT is built synchronously.
++    std::unique_ptr<filament::ToneMapper> tone_mapper;
++    switch (color_grading.GetToneMapping()) {
++        case ColorGradingParams::ToneMapping::kLinear:
++            tone_mapper = std::make_unique<filament::LinearToneMapper>();
++            break;
++        case ColorGradingParams::ToneMapping::kAcesLegacy:
++            tone_mapper = std::make_unique<filament::ACESLegacyToneMapper>();
++            break;
++        case ColorGradingParams::ToneMapping::kAces:
++            tone_mapper = std::make_unique<filament::ACESToneMapper>();
++            break;
++        case ColorGradingParams::ToneMapping::kFilmic:
++            tone_mapper = std::make_unique<filament::FilmicToneMapper>();
++            break;
++        case ColorGradingParams::ToneMapping::kDisplayRange:
++            tone_mapper = std::make_unique<filament::DisplayRangeToneMapper>();
++            break;
++        case ColorGradingParams::ToneMapping::kPbrNeutral:
++            tone_mapper = std::make_unique<filament::PBRNeutralToneMapper>();
++            break;
++        default:
++            // Uchimura and Reinhard have no equivalent built-in mapper in the
++            // current Filament API. Preserve the development build's fallback.
++            break;
++    }
+ 
+     if (color_grading_) {
+         engine_.destroy(color_grading_);
+@@ -279,7 +278,7 @@ void FilamentView::SetColorGrading(const ColorGradingParams& color_grading) {
+     color_grading_ =
+             filament::ColorGrading::Builder()
+                     .quality(q)
+-                    // .toneMapping(tm)
++                    .toneMapper(tone_mapper.get())
+                     .whiteBalance(color_grading.GetTemperature(),
+                                   color_grading.GetTint())
+                     .channelMixer(
+diff --git a/cpp/pybind/visualization/rendering/rendering.cpp b/cpp/pybind/visualization/rendering/rendering.cpp
+index 2115791..a5ed876 100644
+--- a/cpp/pybind/visualization/rendering/rendering.cpp
++++ b/cpp/pybind/visualization/rendering/rendering.cpp
+@@ -191,6 +191,7 @@ void pybind_rendering_declarations(py::module &m) {
+     py::native_enum<ColorGradingParams::ToneMapping>(
+             color_grading, "ToneMapping", "enum.Enum",
+             "Specifies the tone-mapping algorithm")
++            .value("PBR_NEUTRAL", ColorGradingParams::ToneMapping::kPbrNeutral)
+             .value("LINEAR", ColorGradingParams::ToneMapping::kLinear)
+             .value("ACES_LEGACY", ColorGradingParams::ToneMapping::kAcesLegacy)
+             .value("ACES", ColorGradingParams::ToneMapping::kAces)

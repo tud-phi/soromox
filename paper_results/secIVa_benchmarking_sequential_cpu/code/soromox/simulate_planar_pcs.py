@@ -9,6 +9,11 @@ import numpy as np
 from diffrax import Tsit5
 
 from soromox.rendering import MatplotlibRenderer, OpenCVPlanarRenderer
+from soromox.rendering.config import (
+    GeometryConfig,
+    RendererConfig,
+    RenderOutputConfig,
+)
 from soromox.systems import LinkSpec, PlanarPCS, SystemState
 
 jax.config.update("jax_enable_x64", True)  # double precision
@@ -227,14 +232,21 @@ if __name__ == "__main__":
     # =====================================================
     # Plot the robot configuration upon time
     # =====================================================
-    renderer = MatplotlibRenderer(robot, num_points=50)
+    renderer = MatplotlibRenderer(
+        robot, config=RendererConfig(geometry=GeometryConfig(num_points=50))
+    )
     renderer.animate(ts=ts, q_ts=q_ts, interval=100, mode="slider")
 
     # =====================================================
     # OpenCV-based rendering example
     # =====================================================
     opencv_renderer = OpenCVPlanarRenderer(
-        robot, num_points=50, width=700, height=700, length_scale=3.0
+        robot,
+        length_scale=3.0,
+        config=RendererConfig(
+            geometry=GeometryConfig(num_points=50),
+            output=RenderOutputConfig(width=700, height=700),
+        ),
     )
     opencv_renderer.render_sequence(
         ts, q_ts, record_path="videos/planar_pcs_opencv.mp4"

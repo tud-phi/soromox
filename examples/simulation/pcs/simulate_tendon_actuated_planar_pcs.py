@@ -5,6 +5,8 @@ import matplotlib.pyplot as plt
 from diffrax import Tsit5
 from jax import numpy as jnp
 
+from soromox.rendering.config import GeometryConfig, RendererConfig
+
 jax.config.update("jax_enable_x64", True)  # double precision
 from soromox.actuation import ThreadlikeActuator, ThreadlikeRouting
 from soromox.rendering import MatplotlibRenderer
@@ -241,5 +243,7 @@ if __name__ == "__main__":
     # =====================================================
     # Plot the robot configuration upon time
     # =====================================================
-    renderer = MatplotlibRenderer(robot, num_points=50)
+    renderer = MatplotlibRenderer(
+        robot, config=RendererConfig(geometry=GeometryConfig(num_points=50))
+    )
     renderer.animate(ts=ts, q_ts=q_ts, interval=100, mode="slider")

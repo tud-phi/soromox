@@ -18,7 +18,14 @@ from typing import Any
 import numpy as np
 from jax import Array
 
-from soromox.rendering import CameraConfig, ViserRenderer
+from soromox.rendering import (
+    CameraConfig,
+    GeometryConfig,
+    GroundPlaneConfig,
+    RendererConfig,
+    SceneConfig,
+    ViserRenderer,
+)
 from soromox.systems import GVS, SystemState
 
 if __package__:
@@ -144,8 +151,10 @@ def render_motion(
     renderer_type = SoftCartPoleViserRenderer if cart else ViserRenderer
     renderer = renderer_type(
         robot,
-        num_points=100,
-        ground_plane_size=2.5,
+        config=RendererConfig(
+            geometry=GeometryConfig(num_points=100),
+            scene=SceneConfig(ground=GroundPlaneConfig(size=2.5)),
+        ),
         port=port,
         open_browser=True,
     )

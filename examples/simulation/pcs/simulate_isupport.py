@@ -12,6 +12,8 @@ import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 
+from soromox.rendering.config import GeometryConfig, RendererConfig
+
 jax.config.update("jax_enable_x64", True)  # double precision
 from soromox.rendering import (
     ISupportViserRenderer,
@@ -222,7 +224,9 @@ if __name__ == "__main__":
     # =====================================================
     # Plot the robot configuration upon time
     # =====================================================
-    renderer = MatplotlibRenderer(robot, num_points=50)
+    renderer = MatplotlibRenderer(
+        robot, config=RendererConfig(geometry=GeometryConfig(num_points=50))
+    )
     renderer.animate(ts=ts, q_ts=q_ts, interval=100, mode="slider")
 
     # =====================================================
@@ -233,8 +237,8 @@ if __name__ == "__main__":
     else:
         viser_renderer = ISupportViserRenderer(
             robot,
-            num_points=50,
             visual_config=ISupportVisualConfig(pressure_range=(0.0, float(jnp.max(u)))),
+            config=RendererConfig(geometry=GeometryConfig(num_points=50)),
         )
         viser_renderer.render_sequence(
             ts=ts,

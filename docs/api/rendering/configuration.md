@@ -1,11 +1,144 @@
 # Shared Renderer Configuration
 
-This page documents camera, base, ground-plane, and color settings shared by
-multiple SoRoMoX renderers.
+`RendererConfig` groups settings into five sections: scene, camera, colors,
+geometry and output. Start with a scene preset, then adjust the sections needed
+for your visualization. Compare the presets in the [preset gallery](presets.md).
 
-## Camera Configuration
+## RendererConfig
 
-### CameraConfig
+Every renderer accepts `config=RendererConfig(...)`. The renderer copies and
+validates the supplied configuration at construction. Preset results are editable;
+configure them before creating the renderer. Independent defaults use 800 × 600
+pixels, 80 backbone samples and 48 cross-section samples.
+
+```python
+from soromox.rendering import (
+    RendererConfig, SceneConfig, GeometryConfig, RenderOutputConfig, ViserRenderer,
+)
+
+config = RendererConfig(
+    scene=SceneConfig.studio("neutral", scene_extent=1.2),
+    geometry=GeometryConfig(num_points=100, cross_section_resolution=64),
+    output=RenderOutputConfig(width=1920, height=1080),
+)
+config.scene.material.roughness = 0.8
+renderer = ViserRenderer(robot, config=config, port=8080)
+```
+
+The sections are `scene`, `camera`, `colors`, `geometry` and `output`.
+Backend controls, such as the Viser server port, are constructor arguments.
+Trajectories, placement offsets, recording paths and playback controls belong to
+rendering operations. Per-call `camera_config`, `color_config` and `video_config`
+replace the corresponding complete default section without modifying it.
+
+## Scene configuration
+
+### Presets
+
+| Factory | Appearance |
+| --- | --- |
+| `SceneConfig.technical()` | White background, shaded objects and a grid without a filled surface |
+| `SceneConfig.studio("neutral")` | Grey curved backdrop, balanced key and fill |
+| `SceneConfig.studio("bright")` | Bright backdrop and gentle grounding shadows |
+| `SceneConfig.studio("dark")` | Charcoal background with frontal key, fill and rim lighting |
+| `SceneConfig.flat()` | Unlit colors on white, without ground or shadows |
+| `RendererConfig.clay(color=(0.72, 0.65, 0.56))` | Uniform matte robot colors and studio lighting |
+
+Clay overrides backbone, base and actuator colors. Helper objects retain their
+semantic colors. Studio presets preserve the supplied robot palette.
+
+### Lighting and materials
+
+Directional lights use `illuminance_lux`; point lights use `intensity_candela`
+and world positions in metres. `PointLightConfig.from_lumens(flux)` divides
+isotropic flux by `4*pi`. Open3D converts candela back to lumens. Ambient
+illumination uses relative strength: Open3D uses its environment map, and Viser
+approximates it with a world-up hemisphere light. Preset `scene_extent` scales point positions
+linearly and intensities quadratically; explicit light settings are never resized
+during camera fitting or playback. Public colors are sRGB.
+
+
+
+`config.scene.material` controls lit/unlit or toon shading, roughness, metallicity,
+reflectance, opacity, face normals and wireframe. `config.scene.shadows` and
+`config.scene.ambient_occlusion` enable shadow and occlusion effects where supported.
+
+### Robot base
+
+Robot poses come from the model's fixed base or floating runtime coordinates.
+Open3D and Viser support four circular mounting shapes through
+`config.geometry.base_plate_style`: `"disk"`, `"beveled_disk"`,
+`"truncated_cone"` and `"flared_collar"` (the default). The flared collar has
+a lower flange, tapered body and upper rim; the beveled disk provides a smaller
+visual accent. Matplotlib uses a simple filled disk in 3D and a transverse marker in 2D,
+independently of the selected mount style. OpenCV uses its planar base marker.
+
+`base_plate_radius_scale` multiplies the proximal cross-section's maximum radial
+extent: the circle radius, larger ellipse semi-axis, or rectangle half-diagonal.
+The default multiplier is 2.0. `base_plate_thickness` specifies the total mount
+height in metres (default 0.06), independently of the radius. The mount extends
+behind the robot's proximal point along its base axis.
+
+```python
+config.geometry.base_plate_style = "flared_collar"
+config.geometry.base_plate_radius_scale = 2.0
+config.geometry.base_plate_thickness = 0.024
+```
+
+![Four base shapes in Open3D (left) and Viser (right)](../../assets/rendering/base-shapes.jpg)
+
+The disk and beveled disk above use a 28 mm radius and 12 mm height; the cone
+and collar use a 32 mm radius and 24 mm height. Each style can use either size.
+
+### Ground plane and backdrop
+
+The independent `config.scene.ground` describes the floor:
+
+```python
+from soromox.rendering import GroundPlaneConfig
+
+config.scene.ground = GroundPlaneConfig(
+    visible=True, surface=True, alignment="world", height=0.0, size=1.2,
+    color=(0.85, 0.85, 0.85), opacity=1.0,
+    grid=True, grid_spacing=0.1, grid_major_every=5, receive_shadow=True,
+)
+```
+
+The technical default uses `surface=False`: a grid without a filled slab.
+`surface=True` adds a shadow-receiving plane. Grid spacing is fixed in metres,
+anchored to the world origin and shared between backends. Automatic spacing
+selects a 1/2/5 decimal step; `grid_major_every` and `grid_major_color` control
+the major lines. Planar renderers show this reference as a line.
+
+A world floor uses +Z for spatial robots and +Y for planar robots. `normal`
+selects an explicit world normal; `height` is measured along it in metres.
+`alignment="base"` creates one plane behind each robot's base plate, aligned
+with its tangent. Automatic sizing fits the whole robot trajectory and helper
+bounds. Scenery is excluded from camera fitting. Live visualization retains its
+initial bounds. A curved backdrop replaces the separate flat floor and grid.
+
+`BackdropConfig.radius` controls the bend's horizontal reach;
+`vertical_radius` controls its height and defaults to the same value.
+`curvature_easing` ranges from 0 (an elliptical arc) to 1 (a curve that gradually
+flattens into the floor and wall). `wall_offset` places the start of the bend
+behind the scene center. These dimensions are multiples of the fitted scene extent.
+
+The studio and clay presets use a low, gradually curved transition:
+
+```python
+scene = SceneConfig.studio()
+scene.backdrop.radius = 0.40
+scene.backdrop.vertical_radius = 0.23
+scene.backdrop.wall_offset = 0.02
+scene.backdrop.curvature_easing = 0.80
+```
+
+Its key light illuminates both the floor and wall, with ambient illumination and
+point fills reducing the contrast across the bend. Bright and dark retain their
+distinct lighting settings. Clay uses neutral studio lighting with an additional
+cool rim light and a uniform matte robot material.
+
+## Camera configuration
 
 The `CameraConfig` class provides unified camera configuration across renderers (Matplotlib, Open3D, Viser).
 
@@ -23,66 +156,36 @@ camera = CameraConfig(
 renderer.show(q, camera_config=camera)
 ```
 
-#### Parameters
+### Camera parameters
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `fov` | float | 75.0 | Field of view in degrees |
+| `exposure_ev100` | float | 15.0 | Exposure value at ISO 100, approximated through illumination gain |
 | `position` | tuple | None | Explicit camera position (x, y, z), None for auto |
 | `look_at` | tuple | None | Point camera looks at, None for scene center |
 | `up` | tuple | (0, 0, 1) | Camera up vector |
-| `distance_factor` | float | 10.0 | Multiplier for auto-positioning distance |
+| `distance_factor` | float | 1.5 | Multiplier for auto-positioning distance |
 | `position_offset` | tuple | (0.8, -0.8, 0.5) | Direction vector for camera placement |
 
 Matplotlib applies `fov` and the viewing direction from `position` to
 `look_at`; its axes limits determine the remaining framing. Open3D and Viser
 also use the explicit camera distance.
 
-::: soromox.rendering.camera_config.CameraConfig
-    options:
-      show_root_heading: true
-      show_source: false
-      heading_level: 3
-      docstring_section_style: table
-      members_order: source
+### Exposure and tone mapping
 
----
+`CameraConfig.exposure_ev100` defaults to 15. Increasing it by one halves light
+strength in the modern Open3D adapter and the Viser approximation. This scales
+illumination because their public APIs do not expose a shared photographic camera
+exposure control. It does not simulate aperture, shutter blur or depth of field.
+Choose `scene.tone_mapping="backend-default"`, `"linear"` or `"aces"`.
+The patched Open3D build uses Filament’s Filmic mapper for `backend-default`,
+preserving neutral highlights, and supports explicit linear and ACES selection.
+The technical preset selects linear mapping to retain a white background; studio
+presets use the default Filmic mapping. Older builds warn when this support is unavailable. The flat unlit path bypasses
+post-processing. Viser uses its browser tone mapper.
 
-## Robot Base and Ground Plane
-
-All renderers obtain the robot origin and orientation from
-`fixed_base_pose` for fixed robots and from the leading base coordinates in
-each floating runtime configuration. This keeps the rendered backbone, base,
-and reference geometry in the same world frame without a renderer-specific
-pose override.
-
-| Setting | Purpose | Availability |
-| --- | --- | --- |
-| `base_plate_radius_scale` | Scales the rendered base-plate radius relative to the robot cross section | Open3D and Viser |
-| `base_plate_thickness` | Sets the base-plate thickness in meters | Open3D and Viser |
-| `show_ground_plane` | Shows or hides the base-aligned reference plane | Matplotlib, Open3D, and Viser |
-| `ground_plane_size` | Sets the reference-plane side length in meters; `None` uses a robot-scaled default | Matplotlib, Open3D, and Viser |
-
-```python
-from soromox.rendering import ViserRenderer
-
-renderer = ViserRenderer(
-    robot,
-    base_plate_radius_scale=2.0,
-    base_plate_thickness=0.06,
-    show_ground_plane=True,
-    ground_plane_size=0.6,
-)
-```
-
-Matplotlib draws a lightweight base marker. Open3D and Viser render base-plate
-geometry and place the ground plane immediately behind it along the model's
-base axis. Viser uses its native grid primitive. Specialized Viser renderers,
-including I-SUPPORT and UMArm, inherit these settings.
-
----
-
-## Color Configuration
+## Color configuration
 
 ### Color Hierarchy
 
@@ -109,8 +212,6 @@ color_config = RendererColorConfig(
         segment_palette="soromox:ember",
     ),
     base_plate_color=(0.5, 0.5, 0.5),
-    ground_plane_color=(0.94, 0.95, 0.96),
-    ground_plane_grid_color=(0.72, 0.75, 0.78),
     actuators=ActuatorStyleConfig(
         default_color=(0.8, 0.2, 0.2),
         kind_colors={"tendon": (0.85, 0.2, 0.15)},
@@ -121,13 +222,6 @@ color_config = RendererColorConfig(
 renderer.show(q, color_config=color_config)
 ```
 
-::: soromox.rendering.color_config.RendererColorConfig
-    options:
-      show_root_heading: true
-      show_source: false
-      heading_level: 3
-      docstring_section_style: table
-      members_order: source
 
 ### BackboneColorConfig
 
@@ -143,19 +237,11 @@ backbone_config = BackboneColorConfig(
 )
 ```
 
-::: soromox.rendering.color_config.BackboneColorConfig
-    options:
-      show_root_heading: true
-      show_source: false
-      heading_level: 3
-      docstring_section_style: table
-      members_order: source
 
----
 
-## Built-in Palettes and Themes
+### Built-in palettes and themes
 
-### Available Palettes
+#### Available palettes
 
 SoRoMoX includes publication-friendly color palettes:
 
@@ -176,7 +262,7 @@ from soromox.rendering import list_builtin_palettes
 print(list_builtin_palettes())
 ```
 
-### Color Themes
+#### Color themes
 
 Pre-configured themes for consistent styling:
 
@@ -188,12 +274,11 @@ print(list_builtin_themes())
 
 # Use a theme
 theme = get_color_theme("soromox:paper")
-renderer = ViserRenderer(robot, color_config=theme)
+renderer = ViserRenderer(robot, config=RendererConfig(colors=theme))
 ```
 
----
 
-## Color Shape Reference
+### Color shape reference
 
 When providing explicit colors, use these shapes:
 
@@ -205,9 +290,8 @@ When providing explicit colors, use these shapes:
 | `robot_segment_colors` | (N, S, 3/4) | Per-robot, per-segment colors |
 | `robot_point_colors` | (N, P, 3/4) | Per-robot, per-point colors |
 
----
 
-## Color Legend
+### Color legend
 
 For creating legends in plots:
 
@@ -216,36 +300,29 @@ legend = renderer.get_color_legend(num_robots=3, color_config=color_config)
 # Returns ColorLegend with robot labels and colors
 ```
 
-::: soromox.rendering.color_config.ColorLegend
-    options:
-      show_root_heading: true
-      show_source: false
-      heading_level: 3
-      docstring_section_style: table
-      members_order: source
+## Geometry and multi-robot layouts
 
----
-
-## Multi-Robot Layouts
+`config.geometry` sets backbone and cross-section sample counts, swept or discrete
+geometry, base plate dimensions, line widths and automatic robot spacing. Base
+poses and runtime configurations determine the robot geometry; scene settings
+only control its display. Increase sample counts for smoother exported surfaces.
 
 Matplotlib, Open3D, and Viser accept batched robot configurations:
 
 - `q` with shape `(N, DOF)` for `show()` and `render_frame()`;
 - `q_ts` with shape `(N, T, DOF)` for sequence rendering or animation.
 
-Use `base_offsets` to place each robot explicitly or `grid_spacing` to control
+Use `base_offsets` to place each robot explicitly or `config.geometry.grid_spacing` to control
 automatically generated layouts. Viser additionally supports
 `multi_robot_layout="overlay"` to render robots at a common base pose. Per-robot
 colors and alpha values can distinguish overlaid configurations.
 
 Open3D automatically merges each robot's backbone primitives into one dynamic
-mesh when an animated scene contains multiple robots. This removes most backend
+mesh when an interactive scene contains multiple robots. This removes most backend
 geometry registrations; set `merge_backbone_meshes=True` to force merging for
-one robot or `False` to disable it for profiling or compatibility. Viser always
-uses its instanced or color-grouped backbone representation because browser
-scene-handle and message counts dominate that backend. Automatically sized
-Viser ground planes are centered on the rendered bases and expanded to cover
-the layout.
+one robot or `False` to disable it for profiling or compatibility. Viser uses
+instanced or color-grouped meshes for animation and PBR meshes for static output.
+Automatically sized ground planes use the complete trajectory and helper bounds.
 
 ```python
 renderer.render_sequence(
@@ -256,39 +333,72 @@ renderer.render_sequence(
 )
 ```
 
----
+## Output and recording
 
-## Recording and Video Encoding
-
-All renderer families accept `record_path` for sequence output, while their
-capture mechanisms differ:
-
-- Matplotlib uses its animation writers and requires FFmpeg for MP4 output.
-- Open3D and Viser use FFmpeg with `VideoEncodingConfig`.
-- Open3D writes PNG frames when `record_path` names a directory.
-- Viser can capture synchronized browser snapshots with `snapshot_paths`.
-- OpenCV uses FFmpeg when available and otherwise falls back to
-  `cv2.VideoWriter`.
+`RenderOutputConfig` selects image dimensions and default video encoding:
 
 ```python
-from soromox.rendering import VideoEncodingConfig
+from soromox.rendering import RenderOutputConfig, VideoEncodingConfig
 
-renderer.render_sequence(
-    ts,
-    q_ts,
-    record_path="trajectory.mp4",
-    video_config=VideoEncodingConfig(crf=18, pix_fmt="yuv420p"),
+config.output = RenderOutputConfig(
+    width=1920, height=1080,
+    video=VideoEncodingConfig(codec="libx264", crf=18, pix_fmt="yuv420p"),
 )
 ```
 
-Use `record_every_n` to subsample captured frames where supported. Recording
-depends on the backend, so consult the relevant [renderer API](renderers.md)
-for capture-only options.
+Set this before constructing the renderer. A per-call `video_config` replaces
+`config.output.video` for that operation. Supply `record_path` to
+`render_sequence()` to export a video or, where supported, an image sequence.
+Open3D export is synchronous; a sequence without a recording path opens animated
+playback. See the [renderer API](renderers.md) for backend-specific operations.
 
-::: soromox.rendering.video_encoding.VideoEncodingConfig
+## Backend support
+
+Unsupported requested features produce one warning per renderer and mode.
+
+| Backend/mode | Supported appearance | Approximation or omission |
+| --- | --- | --- |
+| Modern Open3D: image, video, static `show()` | PBR material, explicit lights, floor/backdrop, shadows, AO | Exposure through light scaling; older builds may ignore tone-map selection; ambient tint, toon, face-normal and wireframe settings approximated |
+| Legacy Open3D animation | Efficient geometry updates, colors, floor/backdrop, basic lit/unlit shading | PBR lighting, opacity, shadows, AO and exposure differ from modern output |
+| Viser static | PBR GLB meshes, unlit materials, explicit lights, floor/backdrop, cast shadows | Lux/candela calibrated to browser intensity; fixed browser tone mapping can shift unlit colors; no AO or custom dielectric reflectance |
+| Viser playback/live | Efficient mesh updates, colors, lights, floor/backdrop, shadows | Roughness/metallicity and unlit materials approximated by the editable mesh shader |
+| Matplotlib | Robot colors, line geometry, viewing direction, white background and standard axes | Scene appearance, ground planes, backdrops, materials, lighting, shadows, AO and exposure ignored |
+| OpenCV planar/HSA | BGR output, sRGB robot colors, line geometry and white background | Scene appearance, ground planes, backdrops, materials, lighting, shadows, AO and camera settings ignored |
+
+On the tested macOS development build, opening a legacy OpenGL preview after a
+modern Metal GUI window can crash upstream GLFW. SoRoMoX rejects that transition
+with a clear error; launch the animated preview in a fresh Python process.
+Modern image and video exports and static windows are available independently.
+
+Physical light units do not imply identical images: environment illumination,
+material models, tone mapping and shadow algorithms differ. Filament supports one dominant directional light; additional directional lights
+produce a warning. Presets use one directional key plus point lights for fill
+and rim illumination; they do not reproduce area-light reflections,
+subsurface scattering or reference-image compositing.
+
+See the [preset comparison gallery](presets.md) for
+actual tentacle renders, references and backend differences.
+
+## Configuration API
+
+All public settings are available from `soromox.rendering.config` and re-exported
+from `soromox.rendering`. Their implementation is organized by responsibility:
+
+| Module | Contents |
+| --- | --- |
+| `config.scene` | Scene presets, lights, materials, ground planes and backdrops |
+| `config.camera` | Camera position, orientation and exposure |
+| `config.colors` | Robot/actuator colors, palettes and color resolution |
+| `config.output` | Image dimensions and video encoding settings |
+| `config.renderer` | Composed renderer settings, geometry sampling and validation |
+
+`base.py` implements shared rendering behavior. Backend scene handles and
+recording state stay with their renderers; `video_encoding.py` implements the
+FFmpeg writer.
+
+::: soromox.rendering.config
     options:
       show_root_heading: true
       show_source: false
       heading_level: 3
       docstring_section_style: table
-      members_order: source

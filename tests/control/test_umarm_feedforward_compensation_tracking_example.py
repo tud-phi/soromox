@@ -260,8 +260,8 @@ def test_render_motion_records_viser_at_video_frame_rate(
 
     example.render_motion(robot, default_result, record_path=record_path)
 
-    assert captured["init_kwargs"]["width"] == 1280
-    assert captured["init_kwargs"]["height"] == 720
+    assert captured["init_kwargs"]["config"].output.width == 1280
+    assert captured["init_kwargs"]["config"].output.height == 720
     sequence_kwargs = captured["sequence_kwargs"]
     assert sequence_kwargs["record_path"] == str(record_path)
     assert sequence_kwargs["record_client_timeout"] == 120.0

@@ -2,16 +2,21 @@
 
 Visualization and rendering utilities for soft robot systems.
 
-## Overview
-
 The rendering module provides a class-based architecture for visualizing soft robots. All renderers inherit from a common base class `BaseSoftRobotRenderer` which provides cached forward kinematics and a unified interface.
 
-### Core renderer gallery
+## Core renderer gallery
 
-The Matplotlib, Open3D, and Viser samples show the same three-segment spatial
-PCS configuration with the paper color theme, a dark base, and a base-aligned
-ground plane. The OpenCV sample uses its three-segment planar counterpart with
-the same dark-base and warm-backbone styling.
+The Matplotlib, Open3D, and Viser samples show the same upright tapered GVS
+tentacle with `SceneConfig.studio()` (the neutral studio variant), a pastel
+purple backbone and a dark base. OpenCV shows a two-link planar PCS counterpart
+with the same lengths and prescribed bending coordinates. Matplotlib uses a
+white background and its standard axes, ignoring scene appearance presets.
+OpenCV also uses a white background, with colored robot geometry and no scene
+lighting or ground scenery.
+
+The [preset gallery](presets.md) compares all six scene presets in Open3D and
+Viser. These examples select neutral studio explicitly; the renderer-wide default
+is the technical preset.
 
 <div class="grid cards soromox-gallery" markdown>
 
@@ -52,6 +57,9 @@ the same dark-base and warm-backbone styling.
 
 </div>
 
+Reproduce these images with `examples/rendering/backend_gallery.py --backend`
+followed by `matplotlib`, `open3d`, `viser` or `opencv`.
+
 System-specific renderer designs are documented alongside their robots: the
 [Planar HSA OpenCV renderer](../systems/pcs/planar-hsa.md),
 [I-SUPPORT Viser renderer](../systems/pcs/isupport.md), and
@@ -84,6 +92,8 @@ Complete API reference for all renderer classes:
 
 Settings shared by multiple renderer backends:
 
+- `RendererConfig` - Scene, camera, colors, geometry and output settings
+- Scene presets, physical light units and backend approximations
 - `CameraConfig` - Camera positioning and field of view
 - Robot base, base-plate, and ground-plane behavior
 - Multi-robot layouts and spacing
@@ -98,9 +108,9 @@ All renderers accept a robot model at construction and expose a single-frame
 entry point. For example:
 
 ```python
-from soromox.rendering import MatplotlibRenderer
+from soromox.rendering import RendererConfig, GeometryConfig, MatplotlibRenderer
 
-renderer = MatplotlibRenderer(robot, num_points=50)
+renderer = MatplotlibRenderer(robot, config=RendererConfig(geometry=GeometryConfig(num_points=50)))
 renderer.show(q)
 ```
 

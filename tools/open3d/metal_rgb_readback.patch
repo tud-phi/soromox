@@ -1,0 +1,47 @@
+diff --git a/cpp/open3d/visualization/rendering/Renderer.cpp b/cpp/open3d/visualization/rendering/Renderer.cpp
+index c660344..e3fe431 100644
+--- a/cpp/open3d/visualization/rendering/Renderer.cpp
++++ b/cpp/open3d/visualization/rendering/Renderer.cpp
+@@ -7,6 +7,8 @@
+ 
+ #include "open3d/visualization/rendering/Renderer.h"
+ 
++#include <algorithm>
++
+ #include "open3d/geometry/Image.h"
+ #include "open3d/utility/Logging.h"
+ #include "open3d/visualization/rendering/Material.h"
+@@ -70,8 +72,14 @@ void Renderer::RenderToImage(
+         std::function<void(std::shared_ptr<geometry::Image>)> cb) {
+     auto vp = view->GetViewport();
+     auto render = CreateBufferRenderer();
++#if defined(__APPLE__)
++    // Metal has no RGB8 readback. Preserve the public RGB image API below.
++    constexpr int color_channels = 4;
++#else
++    constexpr int color_channels = 3;
++#endif
+     render->Configure(
+-            view, scene, vp[2], vp[3], 3, false,
++            view, scene, vp[2], vp[3], color_channels, false,
+             // the shared_ptr (render) is const unless the lambda
+             // is made mutable
+             [render, cb](const RenderToBuffer::Buffer& buffer) mutable {
+@@ -80,8 +88,17 @@ void Renderer::RenderToImage(
+                 image->height_ = int(buffer.height);
+                 image->num_of_channels_ = 3;
+                 image->bytes_per_channel_ = 1;
++#if defined(__APPLE__)
++                const size_t pixels = buffer.width * buffer.height;
++                image->data_.resize(pixels * 3);
++                for (size_t i = 0; i < pixels; ++i) {
++                    std::copy_n(buffer.bytes + 4 * i, 3,
++                                image->data_.data() + 3 * i);
++                }
++#else
+                 image->data_ = std::vector<uint8_t>(buffer.bytes,
+                                                     buffer.bytes + buffer.size);
++#endif
+                 cb(image);
+                 // This does not actually cause the object to be destroyed--
+                 // the lambda still has a copy--but it does ensure that the

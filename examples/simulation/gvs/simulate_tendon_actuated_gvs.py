@@ -1,4 +1,5 @@
 from functools import partial
+from pathlib import Path
 
 import jax
 import jax.numpy as jnp
@@ -7,6 +8,7 @@ import optimistix as optx
 
 from soromox.actuation import ThreadlikeActuator, ThreadlikeRouting
 from soromox.rendering import Open3DRenderer
+from soromox.rendering.config import GeometryConfig, RendererConfig
 from soromox.systems import (
     GVS,
     GVSSegment,
@@ -17,6 +19,8 @@ from soromox.systems import (
     SystemState,
 )
 from soromox.utils.geometry import poses
+
+VIDEO_OUTPUT = Path(__file__).resolve().parent / "videos" / f"{Path(__file__).stem}.mp4"
 
 jax.config.update("jax_enable_x64", True)
 # jax.config.update("jax_platform_name", "gpu")  # or "cpu"
@@ -205,7 +209,9 @@ if Open3DRenderer is None:
     raise ImportError("Open3DRenderer is unavailable. Install open3d to run this.")
 
 # Create renderer for visualization
-renderer = Open3DRenderer(robot, num_points=50)
+renderer = Open3DRenderer(
+    robot, config=RendererConfig(geometry=GeometryConfig(num_points=50))
+)
 
 # =====================================================
 # Static equilibrium (solve statics) and plot its shape
@@ -330,4 +336,7 @@ plt.show()
 # =====================================================
 # Plot the robot configuration upon time
 # =====================================================
-renderer.render_sequence(ts=ts, q_ts=q_ts, playback_speed=1.0)
+renderer.render_sequence(
+    ts=ts, q_ts=q_ts, playback_speed=1.0, record_path=str(VIDEO_OUTPUT)
+)
+print(f"Saved {VIDEO_OUTPUT}")

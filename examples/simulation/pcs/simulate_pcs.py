@@ -1,10 +1,15 @@
 from functools import partial
+from pathlib import Path
 
 import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import plotly.graph_objects as go
 from diffrax import Tsit5
+
+from soromox.rendering.config import GeometryConfig, RendererConfig
+
+VIDEO_OUTPUT = Path(__file__).resolve().parent / "videos" / f"{Path(__file__).stem}.mp4"
 
 jax.config.update("jax_enable_x64", True)  # double precision
 from soromox.rendering import (
@@ -154,7 +159,9 @@ if __name__ == "__main__":
     q_demo = q_ts[len(ts) // 2]
 
     # Color scheme demos (built-in palettes + themes)
-    demo_renderer = MatplotlibRenderer(robot, num_points=50)
+    demo_renderer = MatplotlibRenderer(
+        robot, config=RendererConfig(geometry=GeometryConfig(num_points=50))
+    )
     demo_renderer.show(
         q_demo,
         color_config=RendererColorConfig(
@@ -171,10 +178,15 @@ if __name__ == "__main__":
         ),
     )
 
-    renderer = MatplotlibRenderer(robot, num_points=50)
+    renderer = MatplotlibRenderer(
+        robot, config=RendererConfig(geometry=GeometryConfig(num_points=50))
+    )
     renderer.animate(ts=ts, q_ts=q_ts, interval=100, mode="slider")
-    renderer = Open3DRenderer(robot, num_points=50)
-    renderer.render_sequence(ts, q_ts)
+    renderer = Open3DRenderer(
+        robot, config=RendererConfig(geometry=GeometryConfig(num_points=50))
+    )
+    renderer.render_sequence(ts, q_ts, record_path=str(VIDEO_OUTPUT))
+    print(f"Saved {VIDEO_OUTPUT}")
 
     # =====================================================
     # Viser web-based visualization (opens in browser)
@@ -182,7 +194,9 @@ if __name__ == "__main__":
     # ViserRenderer provides interactive 3D visualization in the browser
     # with GUI controls for playback, speed, and looping.
     # Plotly plots are automatically added to the GUI at the end of the sidebar
-    viser_renderer = ViserRenderer(robot, num_points=50)
+    viser_renderer = ViserRenderer(
+        robot, config=RendererConfig(geometry=GeometryConfig(num_points=50))
+    )
 
     # Create custom strain plots for PCS
     # Reshape to (T, num_segments, 6)

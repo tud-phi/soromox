@@ -16,8 +16,27 @@ and include benchmark baseline and measurement context for performance claims.
 - Added a UMArm operational-space example using
   `OperationalSpaceImpedanceControlTracker` and balanced antagonistic pressure
   inputs to track a base-parallel circle.
+- Added shared scene settings for lighting, materials, shadows, ground planes and
+  curved backdrops with adjustable bend height and curvature easing. Technical,
+  neutral/bright/dark studio, flat and clay presets include an Open3D/Viser
+  tentacle gallery. Shared robot mounts include disk, beveled disk, truncated
+  cone and flared collar shapes, selected with
+  `config.geometry.base_plate_style`.
+- Added reproducible Open3D development builds for macOS and Linux x86-64,
+  including Metal image capture, neutral color grading and selectable linear/ACES
+  tone mapping, and surfaceless EGL exports alongside GLX interactive viewing.
+  Ubuntu native-rendering tests and an upstream-revision check cover the
+  source-build workflow.
 
 ### Changed
+
+- Open3D static `show()` and image exports use the modern renderer. Animated
+  previews use the same camera projection, retain efficient legacy geometry
+  updates and warn about appearance differences. Viser applies or approximates
+  shared scene settings. Matplotlib and OpenCV ignore scene appearance and use
+  white backgrounds; Matplotlib also uses standard plotting axes.
+- Open3D simulation and control examples export trajectory videos by default,
+  avoiding modern-to-legacy graphics-context transitions on macOS.
 
 ### Performance
 
@@ -25,7 +44,31 @@ and include benchmark baseline and measurement context for performance claims.
 
 ### Breaking changes
 
+- Renderer constructors accept shared defaults through `config=RendererConfig(...)`;
+  appearance, geometry and output constructor arguments move into its sections.
+  Public settings live in `soromox.rendering.config` and are also exported from
+  `soromox.rendering`; direct camera, color and video configuration imports must
+  use the new modules. Per-call camera, color and video overrides replace sections.
+- Default output is 800 × 600 with 80 backbone and 48 cross-section samples.
+  The automatic camera distance factor is 1.5 instead of 10.0. Ground
+  planes use world alignment (+Z spatial, +Y planar); base alignment is optional.
+  OpenCV sequence options are keyword-only, with a required recording path.
+  Open3D and Viser use flared collar mounts by default; `base_plate_style="disk"`
+  selects a cylindrical mount.
+- Open3D sequences with `record_path` synchronously export through the modern
+  renderer and return without interactive playback. `record_every_n` reduces both
+  frame count and FPS; playback controls do not affect exported frames.
+
 ### Fixed
+
+- Modern Open3D swept surfaces share smooth normals at matching link ends,
+  removing artificial inter-segment seams while preserving cross-section steps.
+- Open3D static viewing checks Linux window creation in a separate process and
+  reports native display failures with their logs before initializing the viewer.
+- Matplotlib video exports respect configured pixel dimensions regardless of the
+  global figure DPI setting.
+- Matplotlib static ground surfaces no longer cover robot lines above the floor;
+  rounded line joins remove visible gaps between sampled backbone segments.
 
 ### Documentation
 
@@ -310,8 +353,7 @@ and include benchmark baseline and measurement context for performance claims.
 - Differentiable unit-response mappings from Young's modulus with either shear
   modulus or Poisson's ratio, plus optional material damping, to canonical
   generalized link matrices.
-- Continuum-component, parameter-update, material-optimization, and
-  [parameter-API migration](../user-guide/parameter-api-migration.md)
+- Continuum-component, parameter-update, and material-optimization
   documentation with complete PCS and GVS examples.
 
 - Compiled parameter-update examples and regression coverage for every public
@@ -508,9 +550,7 @@ and include benchmark baseline and measurement context for performance claims.
   arguments.
 - Moved `reference_strain` from `StrainBasisSpec` to `LinkSpec`; basis specs now
   describe only the selected strains and basis order.
-- No compatibility aliases are provided. See the compact
-  [PCS/GVS parameter migration guide](../user-guide/parameter-api-migration.md)
-  for direct replacements.
+- No compatibility aliases are provided.
 
 ## [0.2.2] - 2026-08-11
 

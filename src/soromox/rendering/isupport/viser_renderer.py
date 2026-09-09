@@ -19,7 +19,7 @@ from matplotlib.colors import LinearSegmentedColormap, Normalize
 from matplotlib.figure import Figure
 from matplotlib.ticker import FixedLocator, FuncFormatter
 
-from soromox.rendering.color_config import validate_rgb
+from soromox.rendering.config.colors import validate_rgb
 from soromox.rendering.viser_renderer import (
     LiveModeController,
     ViserRenderer,
@@ -442,7 +442,7 @@ class ISupportViserRenderer(ViserRenderer):
             radius=radius,
             color=color,
         )
-        return self._server.scene.add_mesh_simple(
+        return self._add_mesh(
             name=name,
             vertices=np.asarray(mesh.vertices, dtype=np.float32),
             faces=np.asarray(mesh.faces, dtype=np.uint32),
@@ -780,7 +780,7 @@ class ISupportViserRenderer(ViserRenderer):
 
             for spec in self._pneumatic_specs:
                 for chamber_idx in range(self.robot.num_chambers_per_segment):
-                    handle = self._server.scene.add_mesh_simple(
+                    handle = self._add_mesh(
                         name=(
                             f"/robots/robot_{robot_idx}/isupport/chambers/"
                             f"segment_{spec.pneumatic_idx}/chamber_{chamber_idx}"

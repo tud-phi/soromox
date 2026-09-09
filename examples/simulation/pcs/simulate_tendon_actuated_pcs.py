@@ -21,6 +21,7 @@ from soromox.rendering import (
     RendererColorConfig,
     ViserRenderer,
 )
+from soromox.rendering.config import GeometryConfig, RendererConfig
 from soromox.systems import (
     PCS,
     LinkSpec,
@@ -222,11 +223,13 @@ if __name__ == "__main__":
     # animate using the MatplotlibRenderer
     matplotlib_renderer = MatplotlibRenderer(
         robot,
-        num_points=60,
-        line_width=2.5,
-        actuator_line_width=2.0,
-        color_config=RendererColorConfig(
-            actuators=ActuatorStyleConfig(default_color=(0.9, 0.1, 0.1))
+        config=RendererConfig(
+            geometry=GeometryConfig(
+                num_points=60, line_width=2.5, actuator_line_width=2.0
+            ),
+            colors=RendererColorConfig(
+                actuators=ActuatorStyleConfig(default_color=(0.9, 0.1, 0.1))
+            ),
         ),
     )
     # q_ts is (T, DOF); animate in slider mode for quick inspection
@@ -248,7 +251,9 @@ if __name__ == "__main__":
     # ViserRenderer provides interactive 3D visualization in the browser
     # with GUI controls for playback, speed, and looping.
     # Plotly plots are automatically added to the GUI at the end of the sidebar
-    viser_renderer = ViserRenderer(robot, num_points=50)
+    viser_renderer = ViserRenderer(
+        robot, config=RendererConfig(geometry=GeometryConfig(num_points=50))
+    )
 
     # Create custom strain plots for Tendon-Actuated PCS
     # Reshape to (T, num_segments, 6)

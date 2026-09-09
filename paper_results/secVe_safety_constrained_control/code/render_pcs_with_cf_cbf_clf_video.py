@@ -24,6 +24,11 @@ from soromox.rendering import (
     Open3DRenderer,
     RendererColorConfig,
 )
+from soromox.rendering.config import (
+    GeometryConfig,
+    RendererConfig,
+    RenderOutputConfig,
+)
 
 PAPER_RESULTS_DIR = Path(__file__).resolve().parents[2]
 if str(PAPER_RESULTS_DIR) not in sys.path:
@@ -162,12 +167,13 @@ def main() -> None:
     print("L_cum =", robot.L_cum)
     renderer = Open3DRenderer(
         robot,
-        num_points=80,
-        color_config=color_config,
-        width=1920,
-        height=1080,
-        backbone_style="discrete",
-        actuator_line_width=2.0,
+        config=RendererConfig(
+            geometry=GeometryConfig(
+                num_points=80, backbone_style="discrete", actuator_line_width=2.0
+            ),
+            colors=color_config,
+            output=RenderOutputConfig(width=1920, height=1080),
+        ),
     )
 
     render_stride = max(1, len(ts) // 300)

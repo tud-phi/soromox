@@ -8,8 +8,8 @@ from pathlib import Path
 import numpy as np
 from matplotlib import colors
 
-from soromox.rendering.camera_config import CameraConfig
-from soromox.rendering.color_config import BackboneColorConfig, RendererColorConfig
+from soromox.rendering.config.camera import CameraConfig
+from soromox.rendering.config.colors import BackboneColorConfig, RendererColorConfig
 
 PAPER_RESULTS_DIR = Path(__file__).resolve().parents[2]
 if str(PAPER_RESULTS_DIR) not in sys.path:

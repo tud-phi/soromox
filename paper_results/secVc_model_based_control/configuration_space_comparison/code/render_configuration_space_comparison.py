@@ -18,6 +18,7 @@ from configuration_space_comparison_simulation import (
 )
 
 from soromox.rendering import BackboneColorConfig, RendererColorConfig, ViserRenderer
+from soromox.rendering.config import GeometryConfig, RendererConfig
 
 ACTUAL_RENDER_COLORS = np.array(
     [
@@ -376,11 +377,12 @@ def render_run(
         robot, _, _ = create_robot()
     renderer = ViserRenderer(
         robot,
-        num_points=num_points,
         port=viser_port,
-        backbone_style="discrete",
         open_browser=open_browser,
-        color_config=color_config,
+        config=RendererConfig(
+            geometry=GeometryConfig(num_points=num_points, backbone_style="discrete"),
+            colors=color_config,
+        ),
     )
     target_curves = np.asarray(
         renderer.compute_backbone_curves_batched(

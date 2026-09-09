@@ -18,8 +18,14 @@ from jax import Array
 from PIL import Image
 from trajectory_primitives import make_surface_geometry_metadata
 
-from soromox.rendering.camera_config import CameraConfig
-from soromox.rendering.color_config import BackboneColorConfig, RendererColorConfig
+from soromox.rendering.config import (
+    GeometryConfig,
+    RendererConfig,
+    RenderOutputConfig,
+    SceneConfig,
+)
+from soromox.rendering.config.camera import CameraConfig
+from soromox.rendering.config.colors import BackboneColorConfig, RendererColorConfig
 from soromox.rendering.viser_renderer import ViserRenderer
 from soromox.utils.geometry.rotations import (
     RotationRepresentation,
@@ -660,23 +666,22 @@ def render_operational_space_tracking(
         reference_wxyz=reference_wxyz,
         target_disk_radius=1.25 * robot_radius,
         sphere_surface=sphere_surface,
-        width=DEFAULT_VIDEO_SIZE[0],
-        height=DEFAULT_VIDEO_SIZE[1],
-        num_points=80,
         port=port,
         open_browser=open_browser,
-        color_config=color_config,
-        backbone_style="swept",
-        cross_section_resolution=64,
-        background_color=(1.0, 1.0, 1.0),
-        material="standard",
-        flat_shading=False,
-        wireframe=False,
-        cast_shadows=False,
-        backbone_cast_shadow=False,
-        sphere_cast_shadow=False,
-        base_plate_radius_scale=DEFAULT_BASE_PLATE_RADIUS_SCALE,
-        base_plate_thickness=DEFAULT_BASE_PLATE_THICKNESS,
+        config=RendererConfig(
+            output=RenderOutputConfig(
+                width=DEFAULT_VIDEO_SIZE[0], height=DEFAULT_VIDEO_SIZE[1]
+            ),
+            geometry=GeometryConfig(
+                num_points=80,
+                backbone_style="swept",
+                cross_section_resolution=64,
+                base_plate_radius_scale=DEFAULT_BASE_PLATE_RADIUS_SCALE,
+                base_plate_thickness=DEFAULT_BASE_PLATE_THICKNESS,
+            ),
+            colors=color_config,
+            scene=SceneConfig(background=(1.0, 1.0, 1.0)),
+        ),
     )
     try:
         renderer.render_sequence(

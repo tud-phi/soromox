@@ -43,7 +43,7 @@ def test_explicit_trajectory_controls_style_and_recording_terminates(
 
     class DummyRenderer:
         def __init__(self, *args, **kwargs):
-            captured["color_config"] = kwargs["color_config"]
+            captured["color_config"] = kwargs["config"].colors
 
         def render_sequence(self, **kwargs):
             captured["render_kwargs"] = kwargs

@@ -39,11 +39,11 @@ jobs:
 
       - name: Install dependencies
         run: |
-          uv sync --extra docs --extra examples
+          uv sync --frozen --extra docs
 
       - name: Build documentation
         run: |
-          uv run --extra docs zensical build --clean
+          uv run --no-sync zensical build --clean
 
       - name: Setup Pages
         if: github.ref == 'refs/heads/main'
