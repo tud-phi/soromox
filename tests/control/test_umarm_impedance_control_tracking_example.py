@@ -2,8 +2,10 @@ import jax.numpy as jnp
 import pytest
 from numpy.testing import assert_allclose
 
-from examples.control.operational_space import track_mckibben_umarm as example
-from examples.control.operational_space.track_mckibben_umarm import (
+from examples.control.operational_space import (
+    track_umarm_with_impedance_control as example,
+)
+from examples.control.operational_space.track_umarm_with_impedance_control import (
     CIRCLE_PERIOD,
     DEFAULT_INITIAL_CONFIGURATION,
     DEFAULT_MAX_DELTA_PRESSURE,

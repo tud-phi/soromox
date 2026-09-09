@@ -53,7 +53,7 @@ DEFAULT_FIGURES_DIR = Path(__file__).resolve().parent / "figures"
 DEFAULT_VIDEO_PATH = (
     Path(__file__).resolve().parent
     / "videos"
-    / "track_mckibben_umarm_operational_space.mp4"
+    / "track_umarm_with_impedance_control.mp4"
 )
 
 # A bent initial posture keeps the three-dimensional position Jacobian away
@@ -638,7 +638,7 @@ def plot_results(
     axes[2].grid(True, alpha=0.3)
 
     figure.tight_layout()
-    output_path = figures_dir / "track_mckibben_umarm_operational_space.pdf"
+    output_path = figures_dir / "track_umarm_with_impedance_control.pdf"
     figure.savefig(output_path, dpi=200, bbox_inches="tight")
     if show:
         plt.show()
