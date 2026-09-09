@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, fields, is_dataclass, replace
-from typing import Literal
+from typing import Any, Literal
 
 import numpy as np
 
@@ -46,7 +46,7 @@ class GeometryConfig:
     actuator_line_width: float = 2.0
     grid_spacing: tuple[float, float] = (0.5, 0.5)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate sample counts, dimensions and backbone style.
 
         Returns:
@@ -102,7 +102,11 @@ class RendererConfig:
 
     @classmethod
     def clay(
-        cls, color: RGB = (0.72, 0.65, 0.56), *, scene_extent: float = 1.2, **overrides
+        cls,
+        color: RGB = (0.72, 0.65, 0.56),
+        *,
+        scene_extent: float = 1.2,
+        **overrides: Any,
     ) -> RendererConfig:
         """Create a studio with uniform matte clay robot surfaces.
 

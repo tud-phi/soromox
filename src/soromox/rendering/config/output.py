@@ -46,7 +46,7 @@ class RenderOutputConfig:
     height: int = 600
     video: VideoEncodingConfig = field(default_factory=VideoEncodingConfig)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate integer image dimensions.
 
         Returns:

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from typing import Literal
+from typing import Any, Literal
 
 import numpy as np
 
@@ -28,7 +28,7 @@ class AmbientLightConfig:
     strength: float = 0.6
     color: RGB = (1.0, 1.0, 1.0)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate intensity and tint.
 
         Returns:
@@ -57,7 +57,7 @@ class DirectionalLightConfig:
     color: RGB = (1.0, 0.97, 0.94)
     cast_shadow: bool = True
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate photometric intensity, color and direction.
 
         Returns:
@@ -90,7 +90,7 @@ class PointLightConfig:
     cast_shadow: bool = False
 
     @classmethod
-    def from_lumens(cls, lumens: float, **kwargs) -> PointLightConfig:
+    def from_lumens(cls, lumens: float, **kwargs: Any) -> PointLightConfig:
         """Construct an isotropic light from its total luminous flux.
 
         Args:
@@ -106,7 +106,7 @@ class PointLightConfig:
         _nonnegative(lumens, "lumens")
         return cls(intensity_candela=lumens / (4 * np.pi), **kwargs)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate photometric intensity, position, color and range.
 
         Returns:
@@ -144,7 +144,7 @@ class MaterialConfig:
     flat_shading: bool = False
     wireframe: bool = False
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate the shading mode and normalized material parameters.
 
         Returns:
@@ -196,7 +196,7 @@ class GroundPlaneConfig:
     grid_major_color: RGB = (0.72, 0.72, 0.72)
     receive_shadow: bool = True
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate alignment, dimensions and surface colors.
 
         Returns:
@@ -248,7 +248,7 @@ class BackdropConfig:
     radius: float = 0.5
     wall_offset: float = 0.42
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate positive backdrop dimensions.
 
         Returns:
@@ -304,7 +304,7 @@ class SceneConfig:
     backbone_cast_shadow: bool = True
     sphere_cast_shadow: bool = True
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate the background and output transformation.
 
         Returns:
@@ -325,7 +325,7 @@ class SceneConfig:
             )
 
     @classmethod
-    def technical(cls, *, scene_extent: float = 1.2, **overrides) -> SceneConfig:
+    def technical(cls, *, scene_extent: float = 1.2, **overrides: Any) -> SceneConfig:
         """Create a neutral technical view with a grid and balanced illumination.
 
         Args:
@@ -349,7 +349,7 @@ class SceneConfig:
         return replace(scene, **overrides)
 
     @classmethod
-    def flat(cls, **overrides) -> SceneConfig:
+    def flat(cls, **overrides: Any) -> SceneConfig:
         """Create an unlit white scene preserving assigned object colors.
 
         Args:
@@ -375,7 +375,7 @@ class SceneConfig:
         style: Literal["neutral", "bright", "dark"] = "neutral",
         *,
         scene_extent: float = 1.2,
-        **overrides,
+        **overrides: Any,
     ) -> SceneConfig:
         """Create a studio scene with concrete world-space lights.
 
