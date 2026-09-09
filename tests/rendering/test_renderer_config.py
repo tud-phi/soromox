@@ -433,3 +433,10 @@ def test_batched_base_ground_planes_normalize_axes_and_preserve_integer_curves()
     assert_allclose(curves, originals)
     fallback = renderer._resolve_ground_planes(curves)
     assert_allclose(fallback[0][1], fallback[1][1])
+
+
+def test_technical_tone_mapping_preserves_white_without_changing_studio_defaults():
+    """Keep the technical background white and studio shading filmic by default."""
+    assert SceneConfig.technical().tone_mapping == "linear"
+    assert SceneConfig.technical(tone_mapping="aces").tone_mapping == "aces"
+    assert SceneConfig.studio().tone_mapping == "backend-default"

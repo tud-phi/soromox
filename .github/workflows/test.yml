@@ -59,7 +59,8 @@ jobs:
             LIBGL_ALWAYS_SOFTWARE=true \
             SOROMOX_RUN_RENDERING_INTEGRATION=1 \
             python -m pytest -q \
-            tests/rendering/test_open3d_linux_integration.py::test_open3d_surfaceless_frame_and_mp4_export
+            tests/rendering/test_open3d_linux_integration.py::test_open3d_surfaceless_frame_and_mp4_export \
+            tests/rendering/test_open3d_color_integration.py
 
       - name: Test interactive viewers under Xvfb
         run: |

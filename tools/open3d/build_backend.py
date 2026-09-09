@@ -27,8 +27,10 @@ RUNTIME_REQUIREMENTS = (
     "nbformat>=5.7.0",
     "configargparse",
 )
-MACOS_PATCHES = [HERE / "metal_rgb_readback.patch"]
+COMMON_PATCHES = [HERE / "neutral_tone_mapping.patch"]
+MACOS_PATCHES = [*COMMON_PATCHES, HERE / "metal_rgb_readback.patch"]
 LINUX_PATCHES = [
+    *COMMON_PATCHES,
     HERE / "linux_surfaceless.patch",
     HERE / "linux_distribution_name.patch",
     HERE / "linux_static_curl.patch",
@@ -54,7 +56,7 @@ def _pinned_commit():
 
 def _version():
     """Return the patched wheel version without consulting the platform."""
-    return f"{BASE_VERSION}+{_pinned_commit()[:7]}.soromox1"
+    return f"{BASE_VERSION}+{_pinned_commit()[:7]}.soromox2"
 
 
 def _recipe_fingerprint(patches):
@@ -85,8 +87,8 @@ def _run(*args, cwd=None):
 def _build_macos():
     """Build or reuse a patched Open3D wheel for the running macOS Python.
 
-    Checks the cache manifest, applies the Metal
-    readback patch and invokes upstream CMake targets. Cache and source/build
+    Checks the cache manifest, applies the color-grading and Metal
+    readback patches and invokes upstream CMake targets. Cache and source/build
     overrides use the ``SOROMOX_OPEN3D_*`` environment variables documented in
     this directory's README. Shaders are compiled with Apple's Metal toolchain.
 
@@ -121,7 +123,7 @@ def _build_macos():
         "python": sys.implementation.cache_tag,
         "shaders": "compiled",
     }
-    pattern = f"open3d-*+{commit[:7]}.soromox1-cp{sys.version_info.major}{sys.version_info.minor}-*.whl"
+    pattern = f"open3d-*+{commit[:7]}.soromox2-cp{sys.version_info.major}{sys.version_info.minor}-*.whl"
     existing = list(wheels.glob(pattern))
     if (
         existing
@@ -203,7 +205,7 @@ def _build_macos():
         "-DUSE_SYSTEM_BLAS=ON",
         f"-DCMAKE_PREFIX_PATH={prefix('openblas')}",
         f"-DCMAKE_CXX_FLAGS=-I{prefix('openblas')}/include -Wno-error=unused-private-field",
-        f"-DOPEN3D_GIT_HASH={commit[:7]}.soromox1",
+        f"-DOPEN3D_GIT_HASH={commit[:7]}.soromox2",
         f"-DPython3_EXECUTABLE={sys.executable}",
     ]
     _run(cmake, "-S", source, "-B", build, "-G", "Ninja", *flags)
@@ -307,7 +309,7 @@ def _build_linux():
         # supported diagnostics retain their normal error handling.
         "-DCMAKE_CXX_FLAGS=-include cstddef -include cstdint "
         "-Wno-unknown-warning-option -Wno-invalid-specialization -Wno-nontrivial-memcall",
-        f"-DOPEN3D_GIT_HASH={commit[:7]}.soromox1",
+        f"-DOPEN3D_GIT_HASH={commit[:7]}.soromox2",
         f"-DPython3_EXECUTABLE={sys.executable}",
     ]
     _run(cmake, "-S", source, "-B", build, "-G", "Ninja", *flags)

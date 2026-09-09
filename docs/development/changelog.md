@@ -20,9 +20,10 @@ and include benchmark baseline and measurement context for performance claims.
   curved backdrops, with technical, neutral/bright/dark studio, flat and clay
   presets and an Open3D/Viser tentacle gallery.
 - Added reproducible Open3D development builds for macOS and Linux x86-64,
-  including Metal image capture and surfaceless EGL exports alongside GLX
-  interactive viewing. Ubuntu native-rendering tests and an upstream-revision
-  check cover the source-build workflow.
+  including Metal image capture, neutral color grading and selectable linear/ACES
+  tone mapping, and surfaceless EGL exports alongside GLX interactive viewing.
+  Ubuntu native-rendering tests and an upstream-revision check cover the
+  source-build workflow.
 
 
 ### Changed

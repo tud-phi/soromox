@@ -57,9 +57,9 @@ backdrop, one directional key and point-light fills. Viser uses hemisphere
 illumination to approximate Open3D's environment lighting.
 
 Static Viser capture supplies the camera pose explicitly and waits for stable
-images while the browser loads its meshes. Open3D's tested development build
-ignores the lit tone-mapping selector; its technical background is warmer than
-Viser's white canvas. The gallery describes these differences.
+images while the browser loads its meshes. The patched Open3D build uses Filmic
+tone mapping to preserve neutral highlights. Lighting and shading still
+differ between backends; the gallery describes these differences.
 
 ## Core renderer comparison
 

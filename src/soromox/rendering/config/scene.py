@@ -326,7 +326,10 @@ class SceneConfig:
 
     @classmethod
     def technical(cls, *, scene_extent: float = 1.2, **overrides: Any) -> SceneConfig:
-        """Create a neutral technical view with a grid and balanced illumination.
+        """Create a white technical view with a grid and balanced illumination.
+
+        Linear tone mapping preserves the white background in Open3D. Backends
+        with fixed output transforms approximate the requested tone mapping.
 
         Args:
             scene_extent: Reference extent in metres; scales preset point lighting.
@@ -340,7 +343,7 @@ class SceneConfig:
         """
         if not np.isfinite(scene_extent) or scene_extent <= 0:
             raise ValueError("scene_extent must be finite and positive")
-        scene = cls()
+        scene = cls(tone_mapping="linear")
         scale = scene_extent / 1.2
         point = scene.lights[1]
         point.position = tuple(np.asarray(point.position) * scale)

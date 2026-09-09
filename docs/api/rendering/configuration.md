@@ -37,7 +37,7 @@ replace the corresponding complete default section without modifying it.
 
 | Factory | Appearance |
 | --- | --- |
-| `SceneConfig.technical()` | Neutral shaded objects and a grid without a filled surface |
+| `SceneConfig.technical()` | White background, shaded objects and a grid without a filled surface |
 | `SceneConfig.studio("neutral")` | Grey curved backdrop, balanced key and fill |
 | `SceneConfig.studio("bright")` | Bright backdrop and gentle grounding shadows |
 | `SceneConfig.studio("dark")` | Charcoal background with frontal key, fill and rim lighting |
@@ -133,9 +133,11 @@ strength in the modern Open3D adapter and the Viser approximation. This scales
 illumination because their public APIs do not expose a shared photographic camera
 exposure control. It does not simulate aperture, shutter blur or depth of field.
 Choose `scene.tone_mapping="backend-default"`, `"linear"` or `"aces"`.
-The tested Open3D development build ignores this selector while post-processing
-is enabled; requesting a specific lit tone mapper produces a warning. The flat
-unlit path bypasses post-processing. Viser also uses its browser tone mapper.
+The patched Open3D build uses Filament’s Filmic mapper for `backend-default`,
+preserving neutral highlights, and supports explicit linear and ACES selection.
+The technical preset selects linear mapping to retain a white background; studio
+presets use the default Filmic mapping. Older builds warn when this support is unavailable. The flat unlit path bypasses
+post-processing. Viser uses its browser tone mapper.
 
 ## Color configuration
 
@@ -310,7 +312,7 @@ Unsupported requested features produce one warning per renderer and mode.
 
 | Backend/mode | Supported appearance | Approximation or omission |
 | --- | --- | --- |
-| Modern Open3D: image, video, static `show()` | PBR material, explicit lights, floor/backdrop, shadows, AO | Exposure through light scaling; development tone-map selection can be ignored; ambient tint, toon, face-normal and wireframe settings approximated |
+| Modern Open3D: image, video, static `show()` | PBR material, explicit lights, floor/backdrop, shadows, AO | Exposure through light scaling; older builds may ignore tone-map selection; ambient tint, toon, face-normal and wireframe settings approximated |
 | Legacy Open3D animation | Efficient geometry updates, colors, floor/backdrop, basic lit/unlit shading | PBR lighting, opacity, shadows, AO and exposure differ from modern output |
 | Viser static | PBR GLB meshes, unlit materials, explicit lights, floor/backdrop, cast shadows | Lux/candela calibrated to browser intensity; fixed browser tone mapping can shift unlit colors; no AO or custom dielectric reflectance |
 | Viser playback/live | Efficient mesh updates, colors, lights, floor/backdrop, shadows | Roughness/metallicity and unlit materials approximated by the editable mesh shader |

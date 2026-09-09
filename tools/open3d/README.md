@@ -160,6 +160,17 @@ before returning the normal RGB image. Open3D
 [PR #7550](https://github.com/isl-org/Open3D/pull/7550) contains equivalent
 handling.
 
+`neutral_tone_mapping.patch` restores linear, ACES, legacy ACES, Filmic and
+Display Range selection through Filament's current `ToneMapper` API, and exposes
+PBR Neutral; see [Open3D issue #7557](https://github.com/isl-org/Open3D/issues/7557).
+SoRoMoX selects Filmic for its default lit rendering: neutral greys
+and readable midtones without the legacy ACES highlight tint. The technical
+preset selects linear mapping to keep its background white. Upstream's
+Uchimura/Reinhard fallback is unchanged. Wheels with these fixes use the
+`.soromox2` suffix; run `uv sync --extra rendering` to update an older build.
+The color-grading regression test was run with native Metal on Python 3.12;
+Ubuntu CI also runs it with surfaceless EGL.
+
 The Linux patches make the source package retain the `open3d` distribution name,
 fix current static-curl linking and Filament build integration, avoid creating
 the optional Gaussian-splat sharing context in surfaceless mode, and build both
@@ -178,9 +189,11 @@ Upstream tracking:
 | Bundled curl/BoringSSL archive grouping | [Open3D #7556](https://github.com/isl-org/Open3D/issues/7556) |
 | Desktop OpenGL API binding on EGL worker threads | [Filament #10397](https://github.com/google/filament/issues/10397) |
 
-The reports distinguish local patched integration results from upstream builds.
-The mixed-GUI segfault was reproduced in a fresh macOS process; a legacy-only
-control succeeded. PR #7550 itself has not been built or validated here.
+The mixed-GUI segfault and Metal RGB readback abort were reproduced with the
+official unmodified macOS development wheel; the reports include complete logs
+and a successful legacy-only control. The Linux source findings require isolated
+Ubuntu reproductions with full error logs. The macOS tone-mapper reproduction
+is blocked by that wheel's Metal readback abort, which is captured in #7557.
 Current Filament main already guards null extension strings and has revised
 swapchain selection; the older patch hunks need reassessment when Open3D updates
 its embedded Filament. The distribution-name patch, patch hook and runtime

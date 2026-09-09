@@ -1606,13 +1606,19 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         cfg = self.scene_config
         camera = camera_config or self.config.camera
         gain = 2.0 ** (15.0 - camera.exposure_ev100)
+        grading = o3d.visualization.rendering.ColorGrading
+        # This enum is added by the patch that restores mapper selection.
+        tone_mapping_supported = hasattr(grading.ToneMapping, "PBR_NEUTRAL")
         features = []
+        if cfg.material.shading != "unlit" and not tone_mapping_supported:
+            features.append(
+                "tone-mapper selection is not verified for this Open3D build; "
+                "update the source build if neutral highlights appear warm"
+            )
         if sum(isinstance(light, DirectionalLightConfig) for light in cfg.lights) > 1:
             features.append(
                 "Filament uses only the dominant directional light; use point lights for fill"
             )
-        if cfg.tone_mapping != "backend-default" and cfg.material.shading != "unlit":
-            features.append("development Open3D may ignore the requested tone mapper")
         if camera.exposure_ev100 != 15:
             features.append("exposure through illumination scaling")
         if cfg.ambient.color != (1.0, 1.0, 1.0):
@@ -1636,13 +1642,16 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         scene.view.set_shadowing(
             cfg.shadows, o3d.visualization.rendering.View.ShadowType.VSM
         )
-        if cfg.tone_mapping != "backend-default":
-            grading = o3d.visualization.rendering.ColorGrading
-            algorithm = (
-                grading.ToneMapping.LINEAR
-                if cfg.tone_mapping == "linear"
-                else grading.ToneMapping.ACES
-            )
+        # Filmic keeps greys neutral and preserves readable midtones, without
+        # recoloring materials or disabling shadows and ambient occlusion.
+        algorithm = {
+            "backend-default": (
+                grading.ToneMapping.FILMIC if tone_mapping_supported else None
+            ),
+            "linear": grading.ToneMapping.LINEAR,
+            "aces": grading.ToneMapping.ACES,
+        }[cfg.tone_mapping]
+        if algorithm is not None:
             scene.view.set_color_grading(grading(grading.Quality.ULTRA, algorithm))
         for index, light in enumerate(cfg.lights):
             name = f"configured_light_{index}"
@@ -1673,7 +1682,9 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             RuntimeError: The macOS Open3D build lacks the Metal readback fix.
                 The local build suffix identifies the validated patched build.
         """
-        if sys.platform == "darwin" and not o3d.__version__.endswith(".soromox1"):
+        if sys.platform == "darwin" and not o3d.__version__.endswith(
+            (".soromox1", ".soromox2")
+        ):
             raise RuntimeError(
                 "Modern Open3D rendering on macOS requires the source build "
                 "with the Metal readback fix. "

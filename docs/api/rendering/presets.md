@@ -31,7 +31,7 @@ Reviewed gallery images are published under `docs/assets/rendering/presets/`.
 
 </div>
 
-Both use a grid without a filled slab, anchored to world coordinates with major/minor lines. Balanced fill makes the supplied colors readable. Open3D retains a warmer off-white background and softer surface shading; Viser has a white background and stronger highlights. Workbench's outlines and cavity shading are outside this preset.
+Both use a grid without a filled slab, anchored to world coordinates with major/minor lines. Balanced fill makes the supplied colors readable. Both have a white background. The technical preset requests linear tone mapping, which avoids Open3D's filmic background compression; Viser approximates this with its fixed browser transform. Open3D has softer surface shading, while Viser has stronger highlights. Workbench's outlines and cavity shading are outside this preset.
 
 ## Neutral
 
@@ -63,7 +63,7 @@ A broader curved sweep, neutral key light and point fills give both scenes a lig
 
 </div>
 
-Bright backgrounds and subtle grounding shadows follow the stool-and-blocks reference. Viser is closer to neutral white; Open3D's environment gives a warm cast. Robot highlights retain color and shape. The reference's reflective floor is intentionally outside this matte preset.
+Bright backgrounds and subtle grounding shadows follow the stool-and-blocks reference. Both backgrounds are neutral, with a broader floor-to-wall brightness gradient in Open3D. Robot highlights retain color and shape. The reference's reflective floor is intentionally outside this matte preset.
 
 ## Dark
 
@@ -79,7 +79,7 @@ Bright backgrounds and subtle grounding shadows follow the stool-and-blocks refe
 
 </div>
 
-A stronger frontal key and fill illuminate the colored tentacle surfaces against the charcoal sweep; a cool rim separates their edges. Open3D retains deeper shading than Viser. The lower key angle casts longer shadows toward the backdrop. The reference's glossy, concentrated highlight strips are broader and weaker on these matte robots.
+A stronger frontal key and fill illuminate the colored tentacle surfaces against the charcoal sweep; a cool rim separates their edges. Both keep the colored tentacles readable; Open3D has softer surface gradients and more visible cast shadows. The lower key angle casts longer shadows toward the backdrop. The reference's glossy, concentrated highlight strips are broader and weaker on these matte robots.
 
 ## Flat
 

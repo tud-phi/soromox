@@ -2958,7 +2958,7 @@ wheels = [
 
 [[package]]
 name = "open3d"
-version = "0.19.0+1a9eb99.soromox1"
+version = "0.19.0+1a9eb99.soromox2"
 source = { directory = "tools/open3d" }
 resolution-markers = [
     "python_full_version >= '3.15' and sys_platform == 'darwin'",
@@ -4076,7 +4076,7 @@ all = [
     { name = "numpy" },
     { name = "open3d", version = "0.19.0", source = { registry = "https://github.com/isl-org/Open3D/releases/expanded_assets/main-devel" }, marker = "python_full_version < '3.15' and platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux'" },
     { name = "open3d", version = "0.19.0+1a9eb99", source = { registry = "https://github.com/isl-org/Open3D/releases/expanded_assets/main-devel" }, marker = "(python_full_version >= '3.15' and platform_machine == 'aarch64' and sys_platform == 'linux') or (python_full_version >= '3.15' and platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (platform_machine == 'aarch64' and platform_python_implementation != 'CPython' and sys_platform == 'linux') or (platform_machine == 'x86_64' and platform_python_implementation != 'CPython' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'linux')" },
-    { name = "open3d", version = "0.19.0+1a9eb99.soromox1", source = { directory = "tools/open3d" }, marker = "(python_full_version < '3.15' and platform_machine == 'x86_64' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or sys_platform == 'darwin'" },
+    { name = "open3d", version = "0.19.0+1a9eb99.soromox2", source = { directory = "tools/open3d" }, marker = "(python_full_version < '3.15' and platform_machine == 'x86_64' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or sys_platform == 'darwin'" },
     { name = "opencv-python" },
     { name = "openpyxl" },
     { name = "optimistix" },
@@ -4129,7 +4129,7 @@ examples = [
     { name = "numpy" },
     { name = "open3d", version = "0.19.0", source = { registry = "https://github.com/isl-org/Open3D/releases/expanded_assets/main-devel" }, marker = "python_full_version < '3.15' and platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux'" },
     { name = "open3d", version = "0.19.0+1a9eb99", source = { registry = "https://github.com/isl-org/Open3D/releases/expanded_assets/main-devel" }, marker = "(python_full_version >= '3.15' and platform_machine == 'aarch64' and sys_platform == 'linux') or (python_full_version >= '3.15' and platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (platform_machine == 'aarch64' and platform_python_implementation != 'CPython' and sys_platform == 'linux') or (platform_machine == 'x86_64' and platform_python_implementation != 'CPython' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'linux')" },
-    { name = "open3d", version = "0.19.0+1a9eb99.soromox1", source = { directory = "tools/open3d" }, marker = "(python_full_version < '3.15' and platform_machine == 'x86_64' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or sys_platform == 'darwin'" },
+    { name = "open3d", version = "0.19.0+1a9eb99.soromox2", source = { directory = "tools/open3d" }, marker = "(python_full_version < '3.15' and platform_machine == 'x86_64' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or sys_platform == 'darwin'" },
     { name = "opencv-python" },
     { name = "optax" },
     { name = "optimistix" },
@@ -4147,7 +4147,7 @@ paper-results = [
     { name = "numpy" },
     { name = "open3d", version = "0.19.0", source = { registry = "https://github.com/isl-org/Open3D/releases/expanded_assets/main-devel" }, marker = "python_full_version < '3.15' and platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux'" },
     { name = "open3d", version = "0.19.0+1a9eb99", source = { registry = "https://github.com/isl-org/Open3D/releases/expanded_assets/main-devel" }, marker = "(python_full_version >= '3.15' and platform_machine == 'aarch64' and sys_platform == 'linux') or (python_full_version >= '3.15' and platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (platform_machine == 'aarch64' and platform_python_implementation != 'CPython' and sys_platform == 'linux') or (platform_machine == 'x86_64' and platform_python_implementation != 'CPython' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'linux')" },
-    { name = "open3d", version = "0.19.0+1a9eb99.soromox1", source = { directory = "tools/open3d" }, marker = "(python_full_version < '3.15' and platform_machine == 'x86_64' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or sys_platform == 'darwin'" },
+    { name = "open3d", version = "0.19.0+1a9eb99.soromox2", source = { directory = "tools/open3d" }, marker = "(python_full_version < '3.15' and platform_machine == 'x86_64' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or sys_platform == 'darwin'" },
     { name = "opencv-python" },
     { name = "openpyxl" },
     { name = "optax" },
@@ -4165,7 +4165,7 @@ rendering = [
     { name = "matplotlib" },
     { name = "open3d", version = "0.19.0", source = { registry = "https://github.com/isl-org/Open3D/releases/expanded_assets/main-devel" }, marker = "python_full_version < '3.15' and platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux'" },
     { name = "open3d", version = "0.19.0+1a9eb99", source = { registry = "https://github.com/isl-org/Open3D/releases/expanded_assets/main-devel" }, marker = "(python_full_version >= '3.15' and platform_machine == 'aarch64' and sys_platform == 'linux') or (python_full_version >= '3.15' and platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (platform_machine == 'aarch64' and platform_python_implementation != 'CPython' and sys_platform == 'linux') or (platform_machine == 'x86_64' and platform_python_implementation != 'CPython' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'linux')" },
-    { name = "open3d", version = "0.19.0+1a9eb99.soromox1", source = { directory = "tools/open3d" }, marker = "(python_full_version < '3.15' and platform_machine == 'x86_64' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or sys_platform == 'darwin'" },
+    { name = "open3d", version = "0.19.0+1a9eb99.soromox2", source = { directory = "tools/open3d" }, marker = "(python_full_version < '3.15' and platform_machine == 'x86_64' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or sys_platform == 'darwin'" },
     { name = "opencv-python" },
     { name = "plotly" },
     { name = "trimesh" },
