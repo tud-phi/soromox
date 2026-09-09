@@ -23,12 +23,37 @@ and include benchmark baseline and measurement context for performance claims.
   tentacles, pastel materials, a curved grey backdrop, lighting, and shadows,
   including native macOS image export for Open3D and browser PNG capture for Viser.
 
+- Added opt-in Ubuntu rendering integration tests that exercise the actual
+  native graphics paths: surfaceless EGL renders non-empty frames and H.264
+  video without an X server, while Xvfb verifies that modern `show()` windows
+  open and close and that legacy interactive playback advances the sequence.
+  The tests are guarded on non-Ubuntu hosts; source builds and both rendering
+  paths were validated with CPython 3.11–3.14.
+
+- Added a daily `Check Open3D upstream revision` workflow. It compares the
+  immutable commit in `OPEN3D_REVISION` with upstream `main` and fails when a
+  newer commit is available; updating the pin remains a deliberate operation
+  followed by lockfile refresh and native regression testing. This allows the
+  project to track pre-release Open3D development closely without making two
+  installations from the same lock resolve different source code.
+
 ### Changed
 
-- Added Open3D development dependencies that follow upstream `main`, with a macOS
-  source build that compiles Metal shaders and fixes RGB image readback. Static
-  `show()` views use the modern GUI; animated previews use efficient legacy mesh
+- Changed the Open3D development dependency to a reproducible snapshot of
+  upstream `main`. On macOS and Linux x86-64, a cross-platform PEP 517 adapter
+  exposes static, platform-neutral metadata during dependency resolution and
+  builds an ABI-specific wheel only during installation; other platforms keep
+  using compatible wheels from Open3D's development channel. Static `show()`
+  views use the modern GUI, while animated previews use efficient legacy mesh
   updates and warn about visual differences from modern rendering.
+
+- Extended that source build for each platform's native renderer. macOS compiles
+  Metal shaders and applies the pending RGB-readback correction. Linux builds
+  both Filament backends so exports can select surfaceless EGL without an X
+  server and interactive viewers can continue to select display-backed GLX. The
+  Linux adaptation also covers EGL API binding on worker threads, pbuffer
+  selection, safe desktop-GL extension initialization, current static-curl
+  linking, and integration of the Filament patch into Open3D's build.
 
 ### Performance
 

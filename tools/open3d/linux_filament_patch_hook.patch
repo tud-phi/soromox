@@ -1,0 +1,44 @@
+diff --git a/3rdparty/filament/filament_build.cmake b/3rdparty/filament/filament_build.cmake
+--- a/3rdparty/filament/filament_build.cmake
++++ b/3rdparty/filament/filament_build.cmake
+@@ -41,6 +41,12 @@ if(APPLE)
+     else()
+         set(lib_dir lib/x86_64)
+     endif()
++elseif(UNIX)
++    if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
++        set(lib_dir lib/aarch64)
++    else()
++        set(lib_dir lib/x86_64)
++    endif()
+ endif()
+ 
+ set(lib_byproducts ${filament_LIBRARIES})
+@@ -53,12 +59,19 @@ if(NOT WIN32)
+     set(filament_cxx_flags "${filament_cxx_flags} -fno-builtin")
+ endif()
+ 
++if(FILAMENT_PATCH_FILE)
++    set(FILAMENT_PATCH_COMMAND patch --forward -p1 -i ${FILAMENT_PATCH_FILE})
++else()
++    set(FILAMENT_PATCH_COMMAND "")
++endif()
++
+ ExternalProject_Add(
+     ext_filament
+     PREFIX filament
+     URL https://github.com/google/filament/archive/refs/tags/${FILAMENT_VER}.tar.gz
+     DOWNLOAD_DIR "${OPEN3D_THIRD_PARTY_DOWNLOAD_DIR}/filament"
+     UPDATE_COMMAND ""
++    PATCH_COMMAND ${FILAMENT_PATCH_COMMAND}
+     CMAKE_ARGS
+         ${ExternalProject_CMAKE_ARGS}
+         -DCMAKE_BUILD_TYPE=${FILAMENT_BUILD_TYPE}
+@@ -74,6 +87,7 @@ ExternalProject_Add(
+         -DUSE_STATIC_LIBCXX=ON
+         -DFILAMENT_SKIP_SDL2=ON
+         -DFILAMENT_SKIP_SAMPLES=ON
++        -DFILAMENT_SUPPORTS_EGL_ON_LINUX=ON
+         -DFILAMENT_OPENGL_HANDLE_ARENA_SIZE_IN_MB=20 # to support many small entities
+         -DSPIRV_WERROR=OFF
+         BUILD_BYPRODUCTS ${lib_byproducts}

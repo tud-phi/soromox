@@ -25,7 +25,9 @@
     - **NumPy**
 
 !!! warning "Python Version Compatibility"
-    - **Open3D Rendering**: Open3D development builds support Python 3.12, 3.13 and 3.14; rendering is tested on Apple Silicon with a patched source build.
+    - **Open3D Rendering**: Patched Open3D development source builds are tested
+      with Python 3.11–3.14 on Ubuntu x86-64. Python 3.12–3.14 are also tested
+      on Apple Silicon.
     - **Python 3.14 on Windows**: There may currently exist an incompatibility of Python 3.14 on Windows with the package
 
 ---
@@ -100,19 +102,20 @@ pip install soromox[rendering]
     encoding when FFmpeg is unavailable.
 
 !!! note "Open3D Compatibility"
-    This checkout follows Open3D `main`. The lockfile records the resolved build.
-    On macOS, `uv sync --extra rendering` builds the source with a Metal image
-    readback fix. Install Xcode with its Metal Toolchain and Homebrew `cmake`, `ninja`,
-    `openblas`, `glslang` and `spirv-cross` first; the first
-    build takes time and disk space. See the
+    This checkout follows an immutable, regularly checked Open3D `main`
+    revision. On Ubuntu x86-64 and macOS, `uv sync --extra rendering` builds the
+    patched source locally; the first build takes time and disk space. Ubuntu
+    needs the documented compiler, graphics, Xvfb, and FFmpeg packages. macOS
+    needs Xcode with its Metal Toolchain and Homebrew `cmake`, `ninja`,
+    `openblas`, `glslang`, and `spirv-cross`. See the
     [build instructions](https://github.com/tud-phi/soromox/tree/main/tools/open3d)
-    for macOS, Linux and Windows installation, graphics drivers and optional source
-    builds. Image export, video recording and modern static windows are tested on
-    Apple Silicon with Python 3.12, 3.13 and 3.14. Linux and Windows use official
-    development wheels; native rendering on those platforms has not been verified
-    in this checkout. For a source checkout, use `uv sync --extra rendering` to
-    select these dependencies; plain `pip install soromox[rendering]` uses PyPI.
-    The build instructions include explicit `pip` commands for development wheels.
+    for prerequisites, environment variables, cache controls, validation commands,
+    and other platforms. On Ubuntu 26.04 x86-64, Python 3.11–3.14 pass real
+    surfaceless image and MP4 export plus modern and animated viewers under Xvfb.
+    Apple Silicon image, video, and modern-window checks pass with Python
+    3.12–3.14. Native Windows rendering remains unverified. Plain
+    `pip install soromox[rendering]` uses PyPI; use the source-checkout instructions
+    when following Open3D `main`.
 
 ### 📚 Examples Dependencies
 

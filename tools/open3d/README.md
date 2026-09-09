@@ -1,103 +1,60 @@
 # Open3D development build
 
-The macOS dependency builds the current `main` branch of
-[Open3D](https://github.com/isl-org/Open3D). Other platforms use the official
-`main-devel` wheel channel. `uv.lock` records the version resolved for the checkout.
+SoRoMoX builds an immutable, checked-in revision of Open3D `main` on macOS and
+Linux x86-64. The cross-platform PEP 517 adapter is
+[`build_backend.py`](build_backend.py); it applies the temporary renderer fixes
+in this directory and caches one native wheel per revision, patch set, Python
+ABI, operating system, and CPU architecture. Other platforms use the official
+[Open3D main-devel](https://github.com/isl-org/Open3D/releases/tag/main-devel)
+wheel channel.
 
-## Installation on Linux and Windows
+`OPEN3D_REVISION` makes a lock reproducible. The scheduled
+`Check Open3D upstream revision` workflow compares that pin with upstream
+`main` each day and fails when upstream advances. Maintainers can then update
+the pin and rerun the native validation deliberately, keeping each build
+immutable without leaving the project on an old development snapshot.
 
-From the SoRoMoX checkout, install the rendering extra:
+## Ubuntu installation
+
+The Ubuntu source build needs the following packages. This is the exact package
+set used for the native validation described below:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y \
+  git build-essential cmake ninja-build glslang-tools \
+  xorg-dev libxcb-shm0 libglu1-mesa-dev libssl-dev \
+  libc++-dev libc++abi-dev libsdl2-dev libxi-dev libtbb-dev \
+  libegl1-mesa-dev libudev-dev libusb-1.0-0-dev \
+  autoconf libtool clang xvfb xauth ffmpeg
+```
+
+Then build the rendering environment from the SoRoMoX checkout:
 
 ```bash
 uv sync --extra rendering
-uv run --no-sync python examples/rendering/open3d_studio.py --count 1
 ```
 
-The repository's `find-links` setting selects official development wheels from
-[Open3D main-devel](https://github.com/isl-org/Open3D/releases/tag/main-devel).
-No C++ compiler or local readback patch is needed for wheel installations.
-Available wheels depend on the Python version and CPU architecture; the channel
-currently includes CPython 3.12, 3.13 and 3.14 for Linux x86-64 and Windows x64.
-For `pip`, use a virtual environment and select the development wheel explicitly
-before installing the rendering extra:
+The first sync compiles Open3D and Filament and can take several minutes and
+multiple gigabytes. Later syncs reuse `~/.cache/soromox/open3d` when the upstream
+revision, adapter recipe, patches, Python ABI, and architecture are unchanged.
+
+Offscreen rendering needs an OpenGL/EGL implementation but not an X display.
+Select the surfaceless backend before importing Open3D:
 
 ```bash
-python -m pip install --upgrade --pre --only-binary=:all: --no-index --find-links https://github.com/isl-org/Open3D/releases/expanded_assets/main-devel --no-deps open3d
-python -m pip install -e ".[rendering]"
+env -u DISPLAY EGL_PLATFORM=surfaceless \
+  uv run --no-sync python examples/rendering/open3d_studio.py \
+  --count 1 --output open3d.png --video-output open3d.mp4
 ```
 
-The second command installs Open3D's runtime dependencies as well as SoRoMoX.
-Run these commands again to update a `pip` environment. If no wheel matches the
-platform, use a supported interpreter/architecture or the source build below.
+Interactive `show()` and trajectory playback use GLX and need a desktop display.
+Do not set `EGL_PLATFORM=surfaceless` for them. A headless CI machine can use
+`xvfb-run`; the integration tests demonstrate the supported setup.
 
-### Graphics and video requirements
+## macOS installation
 
-Linux needs a working OpenGL/EGL driver for modern exports. A desktop display
-session is needed for `show()` and interactive trajectory playback. On
-Debian/Ubuntu, the base runtime libraries and video encoder can be installed with:
-
-```bash
-sudo apt install libegl1 libgl1 libgomp1 ffmpeg
-```
-
-Use the GPU vendor's driver for hardware rendering. For machines without a GPU,
-see Open3D's [CPU rendering instructions](https://www.open3d.org/docs/latest/tutorial/visualization/cpu_rendering.html).
-An absent display and an absent graphics driver are separate requirements:
-offscreen export does not remove the need for a rendering driver.
-
-On Windows, install a current graphics driver from the GPU vendor and the
-[Microsoft Visual C++ Redistributable](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist).
-For MP4 export, install FFmpeg and put its `bin` directory on `PATH`.
-`ffmpeg -version` checks that the executable is available on either platform.
-
-### Optional source build on Linux or Windows
-
-A source build is useful when no matching development wheel is available or
-when testing upstream changes before wheels are published. The
-[upstream build instructions](https://www.open3d.org/docs/latest/compilation.html)
-describe supported toolchain versions and additional platform requirements.
-Build outside the SoRoMoX checkout and activate the target Python environment
-before configuring CMake.
-
-On Ubuntu, install Git, a C++ compiler, CMake (at least 3.24), Ninja and the GLSL
-shader compiler, then run upstream's dependency installer:
-
-```bash
-sudo apt install git build-essential cmake ninja-build glslang-tools
-git clone --depth 1 --branch main https://github.com/isl-org/Open3D.git
-cd Open3D
-bash util/install_deps_ubuntu.sh
-python -m pip install "setuptools>=77" wheel
-cmake -S . -B build -G Ninja -DPython3_EXECUTABLE="$(command -v python)" -DBUILD_GUI=ON -DBUILD_CUDA_MODULE=OFF -DBUILD_PYTORCH_OPS=OFF -DBUILD_TENSORFLOW_OPS=OFF -DBUILD_WEBRTC=OFF -DBUILD_JUPYTER_EXTENSION=OFF -DBUNDLE_OPEN3D_ML=OFF -DBUILD_EXAMPLES=OFF -DBUILD_UNIT_TESTS=OFF
-cmake --build build --target pip-package --parallel 8
-python -m pip install build/lib/python_package/pip_package/open3d-*.whl
-```
-
-On Windows, install Git, CMake, Visual Studio 2022 with **Desktop development
-with C++** and a Windows SDK. Install the
-[Vulkan SDK](https://vulkan.lunarg.com/sdk/home#windows) for `glslangValidator`,
-and check that `glslangValidator --version` works in the build terminal.
-Run the following in PowerShell with the target Python environment activated:
-
-```powershell
-git clone --depth 1 --branch main https://github.com/isl-org/Open3D.git
-Set-Location Open3D
-python -m pip install "setuptools>=77" wheel
-$open3dPython = python -c "import sys; print(sys.executable)"
-cmake -S . -B build -G "Visual Studio 17 2022" -A x64 "-DPython3_EXECUTABLE=$open3dPython" -DBUILD_GUI=ON -DBUILD_CUDA_MODULE=OFF -DBUILD_PYTORCH_OPS=OFF -DBUILD_TENSORFLOW_OPS=OFF -DBUILD_WEBRTC=OFF -DBUILD_JUPYTER_EXTENSION=OFF -DBUNDLE_OPEN3D_ML=OFF -DBUILD_EXAMPLES=OFF -DBUILD_UNIT_TESTS=OFF
-cmake --build build --config Release --target pip-package --parallel 8
-Get-ChildItem build/lib/python_package/pip_package/open3d-*.whl | ForEach-Object { python -m pip install $_.FullName }
-```
-
-After installing the wheel, return to SoRoMoX, run `python -m pip install -e
-".[rendering]"`, and run the studio example with that environment's `python`.
-Use `uv run --no-sync` if launching through uv; an ordinary sync restores the
-Open3D version selected by `uv.lock`. These source-build recipes follow upstream
-instructions; native Linux and Windows builds have not been run on this Mac.
-
-## Installation on macOS
-
-Install Xcode and its required components, then install the Metal Toolchain:
+Install Xcode and its Metal Toolchain, then the native build dependencies:
 
 ```bash
 sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer
@@ -108,76 +65,131 @@ brew install cmake ninja openblas glslang spirv-cross
 uv sync --extra rendering
 ```
 
-The graphical installation path is **Xcode → Settings → Components → Metal
-Toolchain → Get**.
-If `xcodebuild` reports that a required plugin or framework cannot load, open
-Xcode and complete its component installation. Update or reinstall Xcode if it
-cannot launch. Administrator authentication takes place on your Mac.
-See [Apple's component installation instructions](https://developer.apple.com/documentation/xcode/downloading-and-installing-additional-xcode-components).
+The graphical route for the optional compiler is **Xcode → Settings →
+Components → Metal Toolchain → Get**. The adapter compiles the C++ library,
+Python bindings, Metal shaders, and a Python-specific wheel. The wheel links to
+Homebrew OpenBLAS.
 
-The macOS-only `macos_build_backend.py` PEP 517 adapter downloads `main`, compiles the C++ library, Python
-bindings and Metal shaders, and produces a Python-specific wheel. The first
-build takes several minutes and several gigabytes of disk. The wheel links
-against Homebrew OpenBLAS, which must be installed when using it.
+## Windows and other platforms
+
+The local adapter currently supports macOS and Linux x86-64. On other platforms,
+`uv` resolves a matching official development wheel when one is published. With
+`pip`, install that wheel before SoRoMoX:
+
+```bash
+python -m pip install --upgrade --pre --only-binary=:all: --no-index \
+  --find-links https://github.com/isl-org/Open3D/releases/expanded_assets/main-devel \
+  --no-deps open3d
+python -m pip install -e ".[rendering]"
+```
+
+Available wheel ABIs and architectures are controlled by upstream. On Windows,
+also install a current GPU driver, the Microsoft Visual C++ Redistributable, and
+FFmpeg on `PATH` for MP4 export. Native Windows rendering has not been validated
+for this checkout.
 
 ## Validation
 
-On Apple Silicon (M4 Max, macOS 26.6.2, Xcode 26.6 with the Metal Toolchain),
-source builds at `1a9eb99` with the RGB readback fix passed these native checks:
+The current revision, `1a9eb99`, was source-built on Ubuntu 26.04.1 x86-64 with
+GCC 15.2 and tested using Mesa software OpenGL/EGL:
 
-| Python | Metal shaders | PNG export | MP4 export | Modern `show()` and capture |
+| Python | Source wheel | Native surfaceless render | SoRoMoX PNG + MP4 | Xvfb `show()` + playback |
 | --- | --- | --- | --- | --- |
-| 3.12.11 | Compiled locally | Passed | Passed | Passed |
-| 3.13.15 | Compiled locally | Passed | Passed | Passed |
-| 3.14.7 | Compiled locally | Passed | Passed | Passed |
+| 3.11.15 | Passed | Passed | Passed | Passed |
+| 3.12.13 | Passed | Passed | Passed | Passed |
+| 3.13.15 | Passed | Passed | Passed | Passed |
+| 3.14.7 | Passed | Passed | Passed | Passed |
 
-The window checks open and close two successive views and export an image after
-each closure. Video checks encode six frames at 30 FPS. All 149 rendering tests pass under each
-Python version; the Python 3.14 suite uses `MPLBACKEND=Agg` for Matplotlib tests.
-These results establish
-Python compatibility on the tested Mac; they do not validate native Linux or
-Windows rendering. The commit identifies the source used for these checks.
-
-## Updating Open3D
-
-To resolve the latest development version and rebuild when needed:
+The Ubuntu integration checks render non-uniform RGB pixels, encode and probe a
+three-frame H.264 MP4, open and close a real modern GUI window under Xvfb, and
+advance all frames in real legacy interactive playback. They are opt-in and
+guarded at module scope so they skip on non-Ubuntu and non-Linux hosts:
 
 ```bash
+env -u DISPLAY EGL_PLATFORM=surfaceless LIBGL_ALWAYS_SOFTWARE=true \
+  SOROMOX_RUN_RENDERING_INTEGRATION=1 python -m pytest -q \
+  tests/rendering/test_open3d_linux_integration.py::test_open3d_surfaceless_frame_and_mp4_export
+
+xvfb-run -a env -u EGL_PLATFORM LIBGL_ALWAYS_SOFTWARE=true \
+  SOROMOX_RUN_RENDERING_INTEGRATION=1 python -m pytest -q \
+  tests/rendering/test_open3d_linux_integration.py::test_open3d_show_opens_and_closes_real_xvfb_window \
+  tests/rendering/test_open3d_linux_integration.py::test_open3d_interactive_sequence_advances_in_real_xvfb_window
+```
+
+Xvfb's software GLX exposes Filament feature level 1, so the modern window smoke
+test disables VSM shadows and SSAO. Full default lighting and shadows passed in
+the surfaceless image and video checks.
+
+Open3D can abort during interpreter finalization if its modern GUI and legacy
+visualizer are both initialized sequentially in one process. The integration
+tests run those two otherwise-successful viewer checks in fresh subprocesses.
+Applications should likewise avoid mixing the two Open3D GUI systems in one
+process until upstream fixes their teardown interaction.
+
+The same Open3D revision was previously source-built and validated on Apple
+Silicon (M4 Max, macOS 26.6.2, Xcode 26.6) with Python 3.12.11, 3.13.15, and
+3.14.7. PNG export, MP4 export, compiled Metal shaders, and modern `show()` all
+passed.
+
+## Updating Open3D main
+
+Check whether the pin still matches upstream:
+
+```bash
+python tools/open3d/update_revision.py
+```
+
+When the scheduled check reports a new commit, update deliberately and rebuild:
+
+```bash
+python tools/open3d/update_revision.py --update
 uv lock --upgrade-package open3d --refresh-package open3d
 uv sync --extra rendering
 ```
 
-A normal sync uses the lockfile and installed/build caches. Resolving a branch
-requires a network connection. If upstream changes make the temporary readback
-patch inapplicable, the build reports an error so the patch can be reviewed.
-The official development release can also remove older wheel assets; refreshing
-the dependency selects the current channel contents.
+Re-run the Ubuntu integration tests and the supported-Python source-build matrix
+before merging the new pin. If a patch no longer applies, the adapter stops
+instead of silently producing a wheel with unreviewed behavior. This process is
+intended to follow Open3D `main` rapidly until the next stable release contains
+the required fixes.
 
-## Temporary Metal readback fix
+## Temporary patches and upstreaming
 
-The current upstream image capture path can abort when it requests RGB8
-readback from Metal. `metal_rgb_readback.patch` requests RGBA and strips alpha
-before returning the usual RGB image. Patched builds have a version suffix such
-as `+<commit>.soromox1`. This suffix identifies the capture fix, independently of
-the selected upstream commit.
+`metal_rgb_readback.patch` requests RGBA readback on Metal and strips alpha
+before returning the normal RGB image. Open3D
+[PR #7550](https://github.com/isl-org/Open3D/pull/7550) contains equivalent
+handling.
 
-[Upstream PR #7550](https://github.com/isl-org/Open3D/pull/7550) contains equivalent
-handling in the Filament backend. The local patch and build adapter can be
-removed when a validated official development wheel includes that fix.
+The Linux patches make the source package retain the `open3d` distribution name,
+fix current static-curl linking and Filament build integration, avoid creating
+the optional Gaussian-splat sharing context in surfaceless mode, and build both
+GLX and EGL-headless Filament platforms. The Filament changes also re-bind the
+EGL API on worker threads, use a pbuffer-compatible configuration, and avoid a
+desktop-GL extension query that can return null.
 
-## macOS build configuration
+The cross-version matrix is green, so these changes should now be proposed
+upstream. The dual GLX/EGL selection, worker-thread API binding, pbuffer choice,
+and desktop-GL extension guard belong in a focused Filament issue and PR. The
+surfaceless Gaussian-splat-context guard and Filament patch hook belong in a
+focused Open3D issue and PR. Distribution naming, static-curl linking, and
+toolchain compatibility should be proposed separately so each change has a
+small regression test and can be reviewed independently. The mixed modern/legacy
+GUI finalization abort should also be reported as its own Open3D issue. No
+upstream issue or PR has been opened from this checkout.
 
-The build enables the GUI and CPU geometry operations; CUDA, ML integrations,
-WebRTC and the Jupyter extension are disabled. Builds are cached under
-`~/.cache/soromox/open3d`, keyed by the resolved commit, patch, Python and CPU
-architecture. A build manifest records that shaders were compiled locally.
+## Build configuration and overrides
+
+The native builds enable GUI and CPU geometry operations. CUDA, ML framework
+integrations, WebRTC, the Jupyter extension, examples, and upstream unit tests
+are disabled. Linux builds Filament from source so the GLX/EGL selection fix is
+present; macOS builds Metal shaders locally.
+
 Set `SOROMOX_OPEN3D_CACHE` to relocate the cache and
 `CMAKE_BUILD_PARALLEL_LEVEL` to change compilation parallelism (default 8).
 `SOROMOX_OPEN3D_SOURCE_DIR` and `SOROMOX_OPEN3D_BUILD_DIR` select existing
-source/build directories for incremental development. The source checkout must
-match current `main` when those overrides are used.
+source/build directories for incremental development. Override source checkouts
+must exactly match `OPEN3D_REVISION`.
 
-`uv` reads the repository's local source mapping. For `pip` on macOS, install
-`tools/open3d` first, then install SoRoMoX's rendering extra. Elsewhere, pass
-`--find-links https://github.com/isl-org/Open3D/releases/expanded_assets/main-devel`.
-The custom macOS build is not published on PyPI.
+The adapter's metadata hook is static and platform-neutral. Dependency solvers
+can therefore inspect the local source mapping while resolving a universal lock
+without launching a native macOS or Linux build.

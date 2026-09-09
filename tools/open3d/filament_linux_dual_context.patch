@@ -1,0 +1,111 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -132,12 +132,12 @@ else()
+ endif()
+ 
+ if (LINUX)
++    if (FILAMENT_SUPPORTS_EGL_ON_LINUX)
++        add_definitions(-DFILAMENT_SUPPORTS_EGL_ON_LINUX)
++    endif()
+     if (FILAMENT_SUPPORTS_WAYLAND)
+         add_definitions(-DFILAMENT_SUPPORTS_WAYLAND)
+         set(FILAMENT_SUPPORTS_X11 FALSE)
+-    elseif (FILAMENT_SUPPORTS_EGL_ON_LINUX)
+-        add_definitions(-DFILAMENT_SUPPORTS_EGL_ON_LINUX)
+-        set(FILAMENT_SUPPORTS_X11 FALSE)
+     else ()
+         if (FILAMENT_SUPPORTS_XCB)
+             add_definitions(-DFILAMENT_SUPPORTS_XCB)
+diff --git a/filament/backend/CMakeLists.txt b/filament/backend/CMakeLists.txt
+--- a/filament/backend/CMakeLists.txt
++++ b/filament/backend/CMakeLists.txt
+@@ -112,7 +112,8 @@ if (FILAMENT_SUPPORTS_OPENGL)
+     elseif (LINUX)
+         if (FILAMENT_SUPPORTS_X11)
+             list(APPEND SRCS src/opengl/platforms/PlatformGLX.cpp)
+-        elseif (FILAMENT_SUPPORTS_EGL_ON_LINUX)
++        endif()
++        if (FILAMENT_SUPPORTS_EGL_ON_LINUX)
+             list(APPEND SRCS src/opengl/platforms/PlatformEGLHeadless.cpp)
+         endif()
+     elseif (WIN32)
+diff --git a/filament/backend/src/PlatformFactory.cpp b/filament/backend/src/PlatformFactory.cpp
+--- a/filament/backend/src/PlatformFactory.cpp
++++ b/filament/backend/src/PlatformFactory.cpp
+@@ -15,6 +15,9 @@
+  */
+ 
+ #include <private/backend/PlatformFactory.h>
++
++#include <cstdlib>
++#include <cstring>
+ 
+ #include <utils/Systrace.h>
+ #include <utils/debug.h>
+@@ -37,7 +40,8 @@
+         #if defined(FILAMENT_SUPPORTS_OPENGL) && !defined(FILAMENT_USE_EXTERNAL_GLES3)
+             #include "backend/platforms/PlatformGLX.h"
+         #endif
+-    #elif defined(FILAMENT_SUPPORTS_EGL_ON_LINUX)
++    #endif
++    #if defined(FILAMENT_SUPPORTS_EGL_ON_LINUX)
+         #if defined(FILAMENT_SUPPORTS_OPENGL) && !defined(FILAMENT_USE_EXTERNAL_GLES3)
+             #include "backend/platforms/PlatformEGLHeadless.h"
+         #endif
+@@ -120,9 +124,15 @@ Platform* PlatformFactory::create(Backend* backend) noexcept {
+         #elif defined(__APPLE__)
+             return new PlatformCocoaGL();
+         #elif defined(__linux__)
++            #if defined(FILAMENT_SUPPORTS_EGL_ON_LINUX)
++                const char* eglPlatform = std::getenv("EGL_PLATFORM");
++                if (eglPlatform && std::strcmp(eglPlatform, "surfaceless") == 0) {
++                    return new PlatformEGLHeadless();
++                }
++            #endif
+             #if defined(FILAMENT_SUPPORTS_X11)
+                 return new PlatformGLX();
+-            #elif defined(FILAMENT_SUPPORTS_EGL_ON_LINUX)
++            #elif defined(FILAMENT_SUPPORTS_EGL_ON_LINUX)
+                 return new PlatformEGLHeadless();
+             #else
+                 return nullptr;
+diff --git a/filament/backend/src/opengl/platforms/PlatformEGL.cpp b/filament/backend/src/opengl/platforms/PlatformEGL.cpp
+--- a/filament/backend/src/opengl/platforms/PlatformEGL.cpp
++++ b/filament/backend/src/opengl/platforms/PlatformEGL.cpp
+@@ -334,6 +334,14 @@ bool PlatformEGL::isProtectedContextSupported() const noexcept {
+ void PlatformEGL::createContext(bool shared) {
+     EGLConfig config = ext.egl.KHR_no_config_context ? EGL_NO_CONFIG_KHR : mEGLConfig;
+ 
++    // eglBindAPI is thread-local. The driver thread binds OpenGL in
++    // PlatformEGLHeadless::createDriver(), but compiler contexts are created
++    // on worker threads whose default API is OpenGL ES.
++    if (isOpenGL() && UTILS_UNLIKELY(!eglBindAPI(EGL_OPENGL_API))) {
++        logEglError("eglBindAPI EGL_OPENGL_API");
++        return;
++    }
++
+     EGLContext context = eglCreateContext(mEGLDisplay, config,
+             shared ? mEGLContext : EGL_NO_CONTEXT, mContextAttribs.data());
+ 
+@@ -526,7 +534,7 @@ Platform::SwapChain* PlatformEGL::createSwapChain(
+ 
+     EGLConfig config = EGL_NO_CONFIG_KHR;
+     if (UTILS_LIKELY(ext.egl.KHR_no_config_context)) {
+-        config = findSwapChainConfig(flags, true, false);
++        config = findSwapChainConfig(flags, false, true);
+     } else {
+         config = mEGLConfig;
+     }
+@@ -731,6 +739,11 @@ bool PlatformEGL::setExternalImagePlane(void* image, size_t plane, Texture* textu
+ // -----------------------------------------------------------------------------------------------
+ 
+ void PlatformEGL::initializeGlExtensions() noexcept {
++    // GL_EXTENSIONS is not a valid glGetString() query in a desktop core
++    // profile. These flags are GLES-only, so there is nothing to initialize
++    // for PlatformEGLHeadless's desktop OpenGL context.
++    if (isOpenGL()) return;
++
+     // We're guaranteed to be on an ES platform, since we're using EGL
+     GLUtils::unordered_string_set glExtensions;
+     const char* const extensions = (const char*)glGetString(GL_EXTENSIONS);

@@ -1,0 +1,50 @@
+diff --git a/3rdparty/find_dependencies.cmake b/3rdparty/find_dependencies.cmake
+--- a/3rdparty/find_dependencies.cmake
++++ b/3rdparty/find_dependencies.cmake
+@@ -1000,20 +1000,32 @@ if(NOT USE_SYSTEM_CURL)
+     endif()
+     target_link_libraries(3rdparty_curl INTERFACE 3rdparty_openssl)
+ endif()
+-# curl and openssl (BoringSSL) are mutually-referential static archives, so a
+-# single left-to-right ld scan can fail depending on final link order. Wrap
+-# them in a GNU ld archive group (UNIX non-Apple) to force rescanning. Use the
+-# short "-Wl,-(" / "-Wl,-)" alias, not "--start-group"/"--end-group", since
+-# CMake's link-line deduplication would otherwise collapse those with MKL's
+-# identical GROUPED markers below, breaking both groups. Parens are escaped
+-# because the link command runs via "/bin/sh -c" and "(" / ")" are shell
+-# metacharacters.
+-if(UNIX AND NOT APPLE)
+-    list(APPEND Open3D_3RDPARTY_PRIVATE_TARGETS_FROM_CUSTOM
+-        "-Wl,-\\("
+-        Open3D::3rdparty_curl
+-        Open3D::3rdparty_openssl
+-        "-Wl,-\\)")
++# The bundled curl and BoringSSL archives require rescanning. Group their
++# concrete archive paths rather than their INTERFACE targets; CMake ignores the
++# LINK_GROUP feature for INTERFACE libraries and otherwise emits an empty group.
++if(UNIX AND NOT APPLE AND NOT USE_SYSTEM_CURL AND NOT USE_SYSTEM_OPENSSL)
++    set(_curl_openssl_archives
++        "${CURL_LIB_DIR}/${CMAKE_STATIC_LIBRARY_PREFIX}${CURL_LIBRARIES}${CMAKE_STATIC_LIBRARY_SUFFIX}")
++    foreach(_library IN LISTS BORINGSSL_LIBRARIES)
++        list(APPEND _curl_openssl_archives
++            "${BORINGSSL_LIB_DIR}/${CMAKE_STATIC_LIBRARY_PREFIX}${_library}${CMAKE_STATIC_LIBRARY_SUFFIX}")
++    endforeach()
++    set(_curl_iface_libs
++        "$<BUILD_INTERFACE:$<LINK_GROUP:RESCAN,${_curl_openssl_archives}>>")
++    get_target_property(_curl_existing_libs 3rdparty_curl INTERFACE_LINK_LIBRARIES)
++    if(_curl_existing_libs)
++        foreach(_item IN LISTS _curl_existing_libs)
++            if(_item MATCHES "INSTALL_INTERFACE")
++                list(APPEND _curl_iface_libs "${_item}")
++            endif()
++        endforeach()
++    endif()
++    set_property(TARGET 3rdparty_curl PROPERTY INTERFACE_LINK_LIBRARIES
++        "${_curl_iface_libs}")
++    if(LIBIDN2)
++        target_link_libraries(3rdparty_curl INTERFACE ${LIBIDN2})
++    endif()
++    list(APPEND Open3D_3RDPARTY_PRIVATE_TARGETS_FROM_CUSTOM Open3D::3rdparty_curl)
+ else()
+     list(APPEND Open3D_3RDPARTY_PRIVATE_TARGETS_FROM_CUSTOM Open3D::3rdparty_curl Open3D::3rdparty_openssl)
+ endif()

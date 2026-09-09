@@ -1,0 +1,50 @@
+diff --git a/cpp/open3d/visualization/rendering/filament/FilamentEngine.cpp b/cpp/open3d/visualization/rendering/filament/FilamentEngine.cpp
+index dd46a33..514550d 100644
+--- a/cpp/open3d/visualization/rendering/filament/FilamentEngine.cpp
++++ b/cpp/open3d/visualization/rendering/filament/FilamentEngine.cpp
+@@ -22,6 +22,8 @@
+ #endif  // _MSC_VER
+ 
+ #include <cstddef>  // <filament/Engine> recursive includes needs this, std::size_t especially
++#include <cstdlib>
++#include <cstring>
+ #include <cstdint>
+ 
+ #include "open3d/utility/FileSystem.h"
+@@ -128,6 +130,18 @@ EngineInstance::EngineInstance() {
+         backend = filament::backend::Backend::OPENGL;
+     }
+ 
++#if !defined(_WIN32)
++    // The Gaussian-splat sharing context below uses GLX and therefore needs
++    // X11.  Do not create it when the caller explicitly selects Mesa's
++    // surfaceless EGL platform; Filament can then create its normal headless
++    // EGL context.  Gaussian splats remain available in display-backed runs.
++    const char* egl_platform = std::getenv("EGL_PLATFORM");
++    const bool use_surfaceless_egl =
++            egl_platform && std::strcmp(egl_platform, "surfaceless") == 0;
++#else
++    constexpr bool use_surfaceless_egl = false;
++#endif
++
+     // Vulkan selects its physical device first (discrete-GPU-preferred,
+     // emulated/software devices down-weighted — see ScoreDevice()), honoring
+     // any loader-level device reordering (e.g. VK_LOADER_DEVICE_SELECT on
+@@ -136,14 +150,15 @@ EngineInstance::EngineInstance() {
+     // not supported and silently fails (GL_OUT_OF_MEMORY) on multi-GPU
+     // (hybrid graphics) systems if Vulkan and GL end up on different GPUs.
+     auto& vk_ctx = GaussianSplatVulkanInteropContext::GetInstance();
+-    if (!vk_ctx.IsValid() && !vk_ctx.Initialize()) {
++    if (!use_surfaceless_egl && !vk_ctx.IsValid() && !vk_ctx.Initialize()) {
+         utility::LogWarning(
+                 "EngineInstance: Vulkan interop context init failed: {}",
+                 vk_ctx.GetLastError());
+     }
+ 
+     auto& gl_ctx = GaussianSplatOpenGLContext::GetInstance();
+-    if ((backend == filament::backend::Backend::OPENGL ||
++    if (!use_surfaceless_egl &&
++        (backend == filament::backend::Backend::OPENGL ||
+          backend == filament::backend::Backend::DEFAULT) &&
+         !shared_context_) {
+         if (!gl_ctx.IsValid()) {
