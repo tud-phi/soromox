@@ -40,7 +40,7 @@ def make_rl_camera_config(
 ) -> CameraConfig:
     """Return the camera used for the Section Vf paper renderings."""
     return CameraConfig(
-        position=(0.0, float(-2.2 * arm_length), float(1.5 * arm_length)),
+        position=(0.0, float(-1.87 * arm_length), float(1.3275 * arm_length)),
         look_at=(0.0, 0.0, float(0.35 * arm_length)),
         up=up,
         fov=fov,

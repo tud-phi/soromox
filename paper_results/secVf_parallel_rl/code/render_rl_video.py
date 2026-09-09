@@ -442,7 +442,7 @@ def make_render_camera_config(
     if num_envs > 1 and not manual_auto_camera:
         # Face the rear wall squarely and fit the robot grid, excluding scenery.
         span = grid_span + 2.0 * arm_length
-        distance = 0.75 * span / np.tan(np.deg2rad(fov / 2.0))
+        distance = 0.6375 * span / np.tan(np.deg2rad(fov / 2.0))
         return CameraConfig(
             position=(0.0, -0.67 * distance, 0.35 * arm_length + 0.74 * distance),
             look_at=(0.0, 0.0, 0.35 * arm_length),
