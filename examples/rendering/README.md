@@ -54,11 +54,12 @@ The technical preset displays a world grid without a filled ground slab. Set
 `config.scene.ground.surface = True` to add the surface. Grid spacing is in
 metres, with major lines every five cells by default. Studio presets use a curved
 backdrop, one directional key and point-light fills. Viser uses hemisphere
-illumination to approximate Open3D's environment lighting. The neutral studio
-uses a low, eased sweep (`radius=0.40`, `vertical_radius=0.23`,
-`wall_offset=0.02`, `curvature_easing=0.80`) with lighting that keeps the
-floor-to-wall transition soft and visible. Both example commands resolve these
-settings through `SceneConfig.studio()`; no manual scene setup is needed.
+illumination to approximate Open3D's environment lighting. The studio and clay presets
+use a low, eased sweep (`radius=0.40`, `vertical_radius=0.23`,
+`wall_offset=0.02`, `curvature_easing=0.80`). Bright and dark retain their
+distinct lighting; clay uses neutral lighting with an extra cool rim light.
+Both example commands resolve the selected preset settings through the shared
+configuration factories; no manual scene setup is needed.
 
 Static Viser capture supplies the camera pose explicitly and waits for stable
 images while the browser loads its meshes. The patched Open3D build uses Filmic

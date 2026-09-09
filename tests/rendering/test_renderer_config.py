@@ -499,7 +499,7 @@ def test_backdrop_rejects_invalid_eased_dimensions(kwargs):
         BackdropConfig(**kwargs)
 
 
-def test_neutral_studio_and_clay_have_independent_lighting_and_backdrops():
+def test_clay_shares_studio_settings_with_independent_configuration_objects():
     neutral, clay = SceneConfig.studio(), RendererConfig.clay().scene
     assert neutral.backdrop.vertical_radius == 0.23
     assert neutral.backdrop.curvature_easing == 0.8
@@ -507,7 +507,33 @@ def test_neutral_studio_and_clay_have_independent_lighting_and_backdrops():
     assert_allclose(neutral.lights[0].direction, [-0.25, 0.55, -1])
     assert neutral.lights[1].intensity_candela == pytest.approx(212500 / (4 * np.pi))
     assert neutral.lights[2].intensity_candela == pytest.approx(112500 / (4 * np.pi))
-    assert clay.backdrop.radius == 0.7
-    assert clay.backdrop.vertical_radius is None
-    assert clay.ambient.strength == 0.8
-    assert clay.lights[1].intensity_candela == pytest.approx(250000 / (4 * np.pi))
+    assert clay.backdrop == neutral.backdrop
+    assert clay.ambient == neutral.ambient
+    assert clay.lights[:3] == neutral.lights
+    assert len(clay.lights) == 4
+    assert clay.lights[3].intensity_candela == pytest.approx(100000 / (4 * np.pi))
+    assert clay.material.roughness == 0.9
+    clay.backdrop.radius = 0.6
+    clay.lights[0].illuminance_lux = 10
+    assert neutral.backdrop.radius == 0.4
+    assert neutral.lights[0].illuminance_lux == 70000
+
+
+@pytest.mark.parametrize(
+    "style,key,ambient,front,rear,direction",
+    [
+        ("bright", 85000, 1.2, 400000, 250000, (-0.25, 0.15, -1)),
+        ("dark", 100000, 0.4, 300000, 250000, (-0.25, 0.9, -0.55)),
+    ],
+)
+def test_studio_variants_share_backdrop_and_retain_distinct_lighting(
+    style, key, ambient, front, rear, direction
+):
+    """Changing the studio sweep preserves bright and dark lighting identities."""
+    scene = SceneConfig.studio(style)
+    assert scene.backdrop == SceneConfig.studio().backdrop
+    assert scene.ambient.strength == ambient
+    assert scene.lights[0].illuminance_lux == key
+    assert_allclose(scene.lights[0].direction, direction)
+    assert scene.lights[1].intensity_candela == pytest.approx(front / (4 * np.pi))
+    assert scene.lights[2].intensity_candela == pytest.approx(rear / (4 * np.pi))

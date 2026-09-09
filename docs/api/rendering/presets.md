@@ -68,7 +68,7 @@ A low sweep with gradually changing curvature creates a soft, visible floor-to-w
 
 </div>
 
-Bright backgrounds and subtle grounding shadows follow the stool-and-blocks reference. Both backgrounds are neutral, with a broader floor-to-wall brightness gradient in Open3D. Robot highlights retain color and shape. The reference's reflective floor is intentionally outside this matte preset.
+A low curved sweep adds subtle floor-to-wall separation to the bright background; gentle grounding shadows follow the stool-and-blocks reference. Both backgrounds are neutral, with a broader floor-to-wall brightness gradient in Open3D. Robot highlights retain color and shape. The reference's reflective floor is intentionally outside this matte preset.
 
 ## Dark
 
@@ -84,7 +84,7 @@ Bright backgrounds and subtle grounding shadows follow the stool-and-blocks refe
 
 </div>
 
-A stronger frontal key and fill illuminate the colored tentacle surfaces against the charcoal sweep; a cool rim separates their edges. Both keep the colored tentacles readable; Open3D has softer surface gradients and more visible cast shadows. The lower key angle casts longer shadows toward the backdrop. The reference's glossy, concentrated highlight strips are broader and weaker on these matte robots.
+A low charcoal sweep provides floor-to-wall separation. A frontal key and fill illuminate the colored tentacle surfaces; a cool rim separates their edges. Both keep the colored tentacles readable; Open3D has softer surface gradients and more visible cast shadows. The lower key angle casts longer shadows toward the backdrop. The reference's glossy, concentrated highlight strips are broader and weaker on these matte robots.
 
 ## Flat
 
@@ -116,7 +116,7 @@ Both renders remove surface-light gradients, shadows and floor context, as in th
 
 </div>
 
-Backbones and mounts share one warm-grey matte material. Directional gradients and contact shadows describe form, following the clay character reference. Open3D has stronger contact definition; Viser looks smoother and lighter. Skin scattering, fine sculpted detail and compositing are not simulated.
+Backbones and mounts share one warm-grey matte material. The low sweep uses neutral studio lighting and an additional cool rim light, which also creates a brighter patch on the upper-right backdrop. Directional gradients and contact shadows describe form, following the clay character reference. Open3D has stronger contact definition; Viser looks smoother and lighter. Skin scattering, fine sculpted detail and compositing are not simulated.
 
 All comparisons concern visual properties of different objects, not pixel similarity. Modern Open3D smooths matching link contours to avoid artificial shading seams; real changes in cross-section remain visible. Directional shadow maps can show bias and edge artifacts; the references often use area lights or more elaborate material and compositing treatments.
 

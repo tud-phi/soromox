@@ -12,7 +12,7 @@ from jax import Array
 from matplotlib.animation import FuncAnimation
 from matplotlib.collections import LineCollection
 from matplotlib.widgets import Slider
-from mpl_toolkits.mplot3d.art3d import Line3DCollection
+from mpl_toolkits.mplot3d.art3d import Line3DCollection, Poly3DCollection
 
 from soromox.rendering.config.output import VideoEncodingConfig
 from soromox.rendering.video_encoding import FFmpegVideoWriter
@@ -42,6 +42,8 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
     The dimensionality is auto-detected from the robot's forward kinematics output.
     Figures use a white background and standard Matplotlib axes. Scene appearance
     presets are ignored; camera, robot colors, geometry and output settings apply.
+    Bases use a filled disk in 3D or a transverse marker in 2D, independently of
+    the mesh mount style selected for Open3D and Viser.
 
     Example:
         ```python
@@ -902,24 +904,31 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
         curves: np.ndarray,
         base_plate_color: tuple[float, float, float],
     ) -> list:
-        """Draw compact base markers at the configured base positions."""
+        """Draw schematic disks in 3D and transverse base markers in 2D.
+
+        Args:
+            ax: Matplotlib axes receiving the markers.
+            curves: Backbone positions, shape (robots, points, 2 or 3), in metres.
+            base_plate_color: Base marker sRGB color.
+
+        Returns:
+            Mutable artists, one per robot. Disk diameter is 8% of robot length
+            (at least 1 mm); detailed mesh mount styles are ignored.
+        """
         artists = []
         if curves.size == 0:
             return artists
         dim = int(curves.shape[-1])
         axis = self._base_tangent_axis(dim=dim)
-        marker_len = max(0.04 * self.L_max, 1e-3)
+        marker_len = max((0.08 if dim == 3 else 0.04) * self.L_max, 1e-3)
         for curve in curves:
             base = np.asarray(curve[0], dtype=np.float64)
             marker = self._base_plate_marker_points(base, axis, marker_len, dim)
             if dim == 3:
-                (artist,) = ax.plot(
-                    marker[:, 0],
-                    marker[:, 1],
-                    marker[:, 2],
-                    color=base_plate_color,
-                    linewidth=max(self.line_width, 2.0),
+                artist = Poly3DCollection(
+                    [marker[:-1]], facecolors=[base_plate_color], edgecolors="none"
                 )
+                ax.add_collection3d(artist)
             else:
                 (artist,) = ax.plot(
                     marker[:, 0],
@@ -931,21 +940,26 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
         return artists
 
     def _update_base_markers(self, artists: list, curves: np.ndarray) -> None:
-        """Update animated Matplotlib base markers."""
+        """Move schematic base markers to the current robot positions.
+
+        Args:
+            artists: Base artists returned by ``_plot_base_markers``.
+            curves: Current backbone positions, shape (robots, points, 2 or 3),
+                in metres.
+
+        Returns:
+            None. Updates disk vertices or planar marker endpoints in place.
+        """
         if not artists:
             return
         dim = int(curves.shape[-1])
         axis = self._base_tangent_axis(dim=dim)
-        marker_len = max(0.04 * self.L_max, 1e-3)
+        marker_len = max((0.08 if dim == 3 else 0.04) * self.L_max, 1e-3)
         for artist, curve in zip(artists, curves):
             base = np.asarray(curve[0], dtype=np.float64)
             marker = self._base_plate_marker_points(base, axis, marker_len, dim)
             if dim == 3:
-                artist.set_data(
-                    marker[:, 0],
-                    marker[:, 1],
-                )
-                artist.set_3d_properties(marker[:, 2])
+                artist.set_verts([marker[:-1]])
             else:
                 artist.set_data(
                     marker[:, 0],

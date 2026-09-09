@@ -269,8 +269,10 @@ def test_slider_ignores_studio_background_and_floor(monkeypatch):
         fig = plt.gcf()
         assert_allclose(fig.get_facecolor(), [1, 1, 1, 1])
         assert_allclose(fig.axes[0].get_facecolor(), [1, 1, 1, 1])
-        assert not any(
-            isinstance(item, Poly3DCollection) for item in fig.axes[0].collections
+        # One filled base disk, with no ground or backdrop surfaces.
+        assert (
+            sum(isinstance(item, Poly3DCollection) for item in fig.axes[0].collections)
+            == 1
         )
         inspected.append(True)
 
@@ -278,3 +280,36 @@ def test_slider_ignores_studio_background_and_floor(monkeypatch):
     with pytest.warns(UserWarning, match="white background"):
         renderer.animate(jnp.array([0.0, 0.1]), jnp.empty((2, 0)), mode="slider")
     assert inspected == [True]
+
+
+@pytest.mark.parametrize(
+    "style", ["disk", "beveled_disk", "truncated_cone", "flared_collar"]
+)
+def test_spatial_base_is_a_filled_disk_and_updates_in_place(style):
+    """Detailed mount styles all use a simple disk, including during playback."""
+    import matplotlib.pyplot as plt
+    from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+
+    renderer = MatplotlibRenderer(
+        DummySpatialRobot(jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0])),
+        config=RendererConfig(geometry=GeometryConfig(base_plate_style=style)),
+    )
+    fig = plt.figure()
+    try:
+        ax = fig.add_subplot(projection="3d")
+        curves = np.array([[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]])
+        artists = renderer._plot_base_markers(ax, curves, (0.2, 0.2, 0.2))
+        assert len(artists) == 1
+        disk = artists[0]
+        assert isinstance(disk, Poly3DCollection)
+        assert disk.get_edgecolor().size == 0
+        captured = []
+        disk.set_verts = lambda vertices: captured.append(np.asarray(vertices))
+        renderer._update_base_markers(artists, curves + [0.0, 2.0, 3.0])
+        points = captured[0][0]
+        assert points.shape == (64, 3)
+        assert_allclose(points.mean(axis=0), [0.0, 2.0, 3.0], atol=1e-12)
+        assert_allclose(np.linalg.norm(points - [0.0, 2.0, 3.0], axis=1), 0.04)
+        assert_allclose(points[:, 0], 0.0)
+    finally:
+        plt.close(fig)

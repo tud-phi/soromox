@@ -16,11 +16,6 @@ from soromox.rendering.config.colors import (
 )
 from soromox.rendering.config.output import RenderOutputConfig
 from soromox.rendering.config.scene import (
-    AmbientLightConfig,
-    BackdropConfig,
-    DirectionalLightConfig,
-    GroundPlaneConfig,
-    MaterialConfig,
     PointLightConfig,
     SceneConfig,
 )
@@ -142,34 +137,14 @@ class RendererConfig:
         if not np.isfinite(scene_extent) or scene_extent <= 0:
             raise ValueError("scene_extent must be finite and positive")
         scale = scene_extent / 1.2
-        # Clay owns its lighting and scenery independently of the neutral studio.
-        scene = SceneConfig(
-            background=(0.58, 0.58, 0.58),
-            ground=GroundPlaneConfig(color=(0.58, 0.58, 0.58), grid=False),
-            backdrop=BackdropConfig(enabled=True, radius=0.7, wall_offset=0.15),
-            ambient=AmbientLightConfig(strength=0.8),
-            material=MaterialConfig(roughness=0.9),
-            shadows=True,
-            ambient_occlusion=True,
-            lights=(
-                DirectionalLightConfig(illuminance_lux=70000, color=(1.0, 1.0, 1.0)),
-                PointLightConfig.from_lumens(
-                    250000 * scale**2,
-                    position=tuple(np.array([0.0, -0.8, 0.8]) * scale),
-                    range_m=6.0 * scale,
-                ),
-                PointLightConfig.from_lumens(
-                    150000 * scale**2,
-                    position=tuple(np.array([0.0, 0.4, 0.75]) * scale),
-                    range_m=6.0 * scale,
-                    color=(1.0, 1.0, 1.0),
-                ),
-                PointLightConfig.from_lumens(
-                    100000 * scale**2,
-                    position=tuple(np.array([0.7, 0.4, 0.6]) * scale),
-                    range_m=6.0 * scale,
-                    color=(0.85, 0.92, 1.0),
-                ),
+        scene = SceneConfig.studio(scene_extent=scene_extent)
+        scene.material.roughness = 0.9
+        scene.lights += (
+            PointLightConfig.from_lumens(
+                100000 * scale**2,
+                position=tuple(np.array([0.7, 0.4, 0.6]) * scale),
+                range_m=6.0 * scale,
+                color=(0.85, 0.92, 1.0),
             ),
         )
         colors = RendererColorConfig(

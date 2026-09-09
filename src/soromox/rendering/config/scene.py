@@ -468,9 +468,7 @@ class SceneConfig:
                     vertical_radius=0.23,
                     wall_offset=0.02,
                     curvature_easing=0.80,
-                )
-                if style == "neutral"
-                else BackdropConfig(enabled=True, wall_offset=0.15, radius=0.7),
+                ),
                 ambient=AmbientLightConfig(strength=ambient),
                 lights=tuple(lights),
                 shadows=True,

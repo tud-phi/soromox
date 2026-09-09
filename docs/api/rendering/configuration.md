@@ -70,7 +70,8 @@ Open3D and Viser support four circular mounting shapes through
 `config.geometry.base_plate_style`: `"disk"`, `"beveled_disk"`,
 `"truncated_cone"` and `"flared_collar"` (the default). The flared collar has
 a lower flange, tapered body and upper rim; the beveled disk provides a smaller
-visual accent. Matplotlib and OpenCV use their existing base markers.
+visual accent. Matplotlib uses a simple filled disk in 3D and a transverse marker in 2D,
+independently of the selected mount style. OpenCV uses its planar base marker.
 
 `base_plate_radius_scale` multiplies the proximal cross-section's maximum radial
 extent: the circle radius, larger ellipse semi-axis, or rectangle half-diagonal.
@@ -122,7 +123,7 @@ initial bounds. A curved backdrop replaces the separate flat floor and grid.
 flattens into the floor and wall). `wall_offset` places the start of the bend
 behind the scene center. These dimensions are multiples of the fitted scene extent.
 
-The neutral studio uses a lower, softly shaded transition:
+The studio and clay presets use a low, gradually curved transition:
 
 ```python
 scene = SceneConfig.studio()
@@ -133,8 +134,9 @@ scene.backdrop.curvature_easing = 0.80
 ```
 
 Its key light illuminates both the floor and wall, with ambient illumination and
-point fills reducing the contrast across the bend. Bright, dark and clay use
-circular backdrop curves and their own lighting settings.
+point fills reducing the contrast across the bend. Bright and dark retain their
+distinct lighting settings. Clay uses neutral studio lighting with an additional
+cool rim light and a uniform matte robot material.
 
 ## Camera configuration
 
