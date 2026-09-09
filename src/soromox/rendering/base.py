@@ -67,7 +67,6 @@ class BaseSoftRobotRenderer(ABC):
         base_transform: Homogeneous base transform. Shape ``(3, 3)`` for
             planar robots and ``(4, 4)`` for spatial robots.
         show_ground_plane: Whether supported backends render a ground reference
-        ground_plane_size: Optional ground-plane side length in meters
     """
 
     def __init__(
@@ -89,7 +88,6 @@ class BaseSoftRobotRenderer(ABC):
         background_color = self.config.scene.background
         color_config = self.config.colors
         show_ground_plane = self.config.scene.ground.visible
-        ground_plane_size = self.config.scene.ground.size
         self.robot: SoftRobot = robot
         self.width = width
         self.height = height
@@ -97,11 +95,6 @@ class BaseSoftRobotRenderer(ABC):
         self.background_color = background_color
         self.color_config = color_config or RendererColorConfig()
         self.show_ground_plane = bool(show_ground_plane)
-        self.ground_plane_size = (
-            None if ground_plane_size is None else float(ground_plane_size)
-        )
-        if self.ground_plane_size is not None and self.ground_plane_size <= 0.0:
-            raise ValueError("ground_plane_size must be positive when provided")
         self._is_planar = bool(robot.is_planar)
         floating_base = robot.floating_base
         initial_base_pose = (
@@ -282,12 +275,6 @@ class BaseSoftRobotRenderer(ABC):
             centers + (cfg.height - self.config.geometry.base_plate_thickness) * normals
         )
         return list(zip(centers, normals, np.full(count, size)))
-
-    def _resolve_ground_plane_size(self, *minimum_sizes: float) -> float:
-        """Return the configured size or a robot-scaled backend default."""
-        if self.ground_plane_size is not None:
-            return self.ground_plane_size
-        return max(1.35 * self.L_max, 0.1, *minimum_sizes)
 
     def _base_position(self, dim: int | None = None) -> np.ndarray:
         """Return the configured base translation in renderer coordinates.

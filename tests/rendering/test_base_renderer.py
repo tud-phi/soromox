@@ -255,16 +255,21 @@ def test_renderer_centralizes_ground_plane_configuration():
     )
 
     assert renderer.show_ground_plane is True
-    assert renderer.ground_plane_size == pytest.approx(0.4)
-    assert renderer._resolve_ground_plane_size() == pytest.approx(0.4)
+    curves = np.array([[[0.0, 0.0, 0.0], [3.0, 0.0, 0.0]]])
+    assert renderer.config.scene.ground.size == pytest.approx(0.4)
+    assert renderer._resolve_ground_planes(curves)[0][2] == pytest.approx(0.4)
 
 
-def test_renderer_resolves_robot_scaled_ground_plane_size():
+@pytest.mark.parametrize(
+    "extent,expected_size", [(0.01, 0.1), (1.0, 1.35), (3.0, 4.05)]
+)
+def test_renderer_resolves_scene_scaled_ground_plane_size(extent, expected_size):
     robot = DummySpatialRobot(jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]))
     renderer = DummyRenderer(robot)
+    curves = np.array([[[0.0, 0.0, 0.0], [extent, 0.0, 0.0]]])
+    renderer._fit_scene_bounds(curves, padding=0.0)
 
-    assert renderer._resolve_ground_plane_size() == pytest.approx(1.35)
-    assert renderer._resolve_ground_plane_size(2.0) == pytest.approx(2.0)
+    assert renderer._resolve_ground_planes(curves)[0][2] == pytest.approx(expected_size)
 
 
 @pytest.mark.parametrize("ground_plane_size", [0.0, -0.1])
