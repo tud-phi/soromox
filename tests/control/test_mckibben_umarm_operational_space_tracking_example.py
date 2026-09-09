@@ -5,8 +5,8 @@ from numpy.testing import assert_allclose
 from examples.control.operational_space import track_mckibben_umarm as example
 from examples.control.operational_space.track_mckibben_umarm import (
     CIRCLE_PERIOD,
-    DEFAULT_CIRCLE_RADIUS,
     DEFAULT_INITIAL_CONFIGURATION,
+    DEFAULT_MAX_DELTA_PRESSURE,
     DEFAULT_NOMINAL_PRESSURE,
     POSITION_TASK_SELECTOR,
     antagonistic_pressure_map,
@@ -30,11 +30,16 @@ def default_result(robot):
 
 
 def test_reference_is_position_only_two_second_circle():
-    initial_position = jnp.array([0.12, -0.05, 0.37])
-    position_des_fn = create_circle_position_reference(initial_position)
+    initial_position = jnp.array([0.4, 0.0, 0.37])
+    center = jnp.array([0.0, 0.0, 0.37])
+    normal = jnp.array([0.0, 0.0, 1.0])
+    position_des_fn = create_circle_position_reference(
+        initial_position,
+        center,
+        normal,
+    )
     sample_times = jnp.linspace(0.0, CIRCLE_PERIOD, 101)
     positions = jnp.stack([position_des_fn(t) for t in sample_times])
-    center = initial_position - jnp.array([DEFAULT_CIRCLE_RADIUS, 0.0, 0.0])
 
     assert CIRCLE_PERIOD == 2.0
     assert_allclose(position_des_fn(jnp.array(0.0)), initial_position, atol=1.0e-12)
@@ -43,18 +48,18 @@ def test_reference_is_position_only_two_second_circle():
         initial_position,
         atol=1.0e-12,
     )
-    assert_allclose(positions[:, 2], initial_position[2], atol=1.0e-12)
+    assert_allclose((positions - center) @ normal, 0.0, atol=1.0e-12)
     assert_allclose(
-        jnp.linalg.norm(positions[:, :2] - center[:2], axis=1),
-        DEFAULT_CIRCLE_RADIUS,
+        jnp.linalg.norm(positions - center, axis=1),
+        0.4,
         atol=1.0e-12,
     )
 
 
 def test_operational_space_selects_position_without_orientation(robot):
-    _, _, operational_space, reference, _, _ = create_controller(robot)
-    pose_at_start = reference.x_des_fn(jnp.array(0.0))
-    pose_after_quarter_lap = reference.x_des_fn(jnp.array(0.5))
+    _, _, operational_space, circle_reference, _ = create_controller(robot)
+    pose_at_start = circle_reference.trajectory.x_des_fn(jnp.array(0.0))
+    pose_after_quarter_lap = circle_reference.trajectory.x_des_fn(jnp.array(0.5))
 
     assert operational_space.n_operational_space == 3
     assert_allclose(operational_space.task_selector, POSITION_TASK_SELECTOR)
@@ -62,8 +67,24 @@ def test_operational_space_selects_position_without_orientation(robot):
     assert not bool(jnp.allclose(pose_after_quarter_lap[3:], pose_at_start[3:]))
 
 
+def test_default_circle_is_base_parallel_and_nearly_robot_length(robot):
+    _, _, _, circle_reference, _ = create_controller(robot)
+    base_transform = robot.base_transform
+    base_axis = base_transform[:3, 0]
+    center_from_base = circle_reference.center - base_transform[:3, 3]
+
+    assert_allclose(
+        jnp.abs(circle_reference.normal @ base_axis),
+        1.0,
+        atol=1.0e-12,
+    )
+    assert_allclose(jnp.cross(center_from_base, base_axis), 0.0, atol=1.0e-12)
+    diameter_ratio = 2.0 * float(circle_reference.radius) / float(robot.length)
+    assert 0.75 < diameter_ratio < 1.0
+
+
 def test_antagonistic_coordinates_make_actuation_square_and_invertible(robot):
-    _, control_model, _, _, _, nominal_pressures = create_controller(robot)
+    _, control_model, _, _, nominal_pressures = create_controller(robot)
     pressure_map = antagonistic_pressure_map(robot)
     q = DEFAULT_INITIAL_CONFIGURATION
     virtual_actuation = control_model.actuation_matrix(q)
@@ -82,7 +103,7 @@ def test_antagonistic_coordinates_make_actuation_square_and_invertible(robot):
 
 
 def test_reduced_dynamics_match_expanded_physical_pressures(robot):
-    _, control_model, _, _, _, nominal_pressures = create_controller(robot)
+    _, control_model, _, _, nominal_pressures = create_controller(robot)
     q = jnp.linspace(-0.12, 0.16, robot.num_internal_dofs)
     qd = jnp.linspace(0.07, -0.05, robot.num_internal_dofs)
     delta_pressure = jnp.linspace(-2.0e4, 2.0e4, control_model.num_actuators)
@@ -102,10 +123,12 @@ def test_default_rollout_tracks_circle_without_pressure_saturation(default_resul
     assert bool(jnp.all(jnp.isfinite(default_result.q)))
     assert bool(jnp.all(jnp.isfinite(default_result.qd)))
     assert bool(jnp.all(jnp.isfinite(default_result.position)))
-    assert float(metrics["position_rmse"]) < 1.5e-3
-    assert float(metrics["maximum_position_error"]) < 5.0e-3
+    assert float(metrics["position_rmse"]) < 1.0e-4
+    assert float(metrics["maximum_position_error"]) < 2.0e-4
     assert float(jnp.min(default_result.pressures)) > 0.0
-    assert float(jnp.max(default_result.pressures)) < 110.0e3
+    assert float(jnp.max(default_result.pressures)) < (
+        DEFAULT_NOMINAL_PRESSURE + DEFAULT_MAX_DELTA_PRESSURE
+    )
     assert_allclose(
         pressure_groups[:, :, 1] + pressure_groups[:, :, 3],
         2.0 * DEFAULT_NOMINAL_PRESSURE,
@@ -144,5 +167,10 @@ def test_render_motion_passes_pressures_to_umarm_viser(
     assert_allclose(
         captured["sequence_kwargs"]["pressures"],
         default_result.pressures,
+    )
+    assert captured["sequence_kwargs"]["static_spheres_positions"].shape[0] > 40
+    assert_allclose(
+        captured["sequence_kwargs"]["dynamic_spheres_positions"][0],
+        default_result.position_des,
     )
     assert captured["sequence_kwargs"]["actuator_color_mode"] == "pressure"

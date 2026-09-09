@@ -13,8 +13,9 @@ and include benchmark baseline and measurement context for performance claims.
 
 ### Added
 
-- Added position-only circular operational-space impedance tracking for the
-  McKibben-actuated UMArm using balanced antagonistic pressure inputs.
+- Added position-only, base-parallel circular operational-space impedance
+  tracking for the McKibben-actuated UMArm using balanced antagonistic
+  pressure inputs.
 
 ### Changed
 

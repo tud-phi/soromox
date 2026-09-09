@@ -9,8 +9,9 @@ provides co-contraction, while the controller commands equal and opposite
 pressure changes within every antagonist pair.
 
 Only the end-effector position is selected as the operational-space task.  Its
-reference traces a horizontal circle with a period of two seconds; orientation
-is unconstrained.
+reference traces a circle parallel to the mounting base with a period of two
+seconds and a default diameter close to the robot length; orientation is
+unconstrained.
 """
 
 from __future__ import annotations
@@ -42,10 +43,9 @@ from soromox.utils.geometry import poses
 DEFAULT_DURATION = 4.0
 DEFAULT_SOLVER_DT = 5.0e-4
 DEFAULT_SAVE_DT = 1.0e-2
-DEFAULT_CIRCLE_RADIUS = 0.06
 CIRCLE_PERIOD = 2.0
-DEFAULT_NOMINAL_PRESSURE = 55.0e3
-DEFAULT_MAX_DELTA_PRESSURE = 55.0e3
+DEFAULT_NOMINAL_PRESSURE = 100.0e3
+DEFAULT_MAX_DELTA_PRESSURE = 100.0e3
 DEFAULT_NATURAL_FREQUENCY = 16.0
 DEFAULT_DAMPING_RATIO = 1.0
 DEFAULT_RECORDING_FPS = 30.0
@@ -72,6 +72,17 @@ UMARM_Z_DOWN_BASE_POSE = poses.spatial_mounting_pose(
 
 
 @dataclass(frozen=True)
+class CircleReference:
+    """Position-only circle and its geometry in the world frame."""
+
+    trajectory: ReferenceTrajectory
+    position_fn: Callable[[Array], Array]
+    center: Array
+    normal: Array
+    radius: Array
+
+
+@dataclass(frozen=True)
 class TrackingResult:
     """Saved closed-loop states and end-effector position reference."""
 
@@ -81,6 +92,9 @@ class TrackingResult:
     position: Array
     position_des: Array
     pressures: Array
+    circle_center: Array
+    circle_normal: Array
+    circle_radius: Array
 
 
 class DifferentialPressureUMArmModel(McKibbenActuatedUMArm):
@@ -258,25 +272,44 @@ def create_operational_space(
 
 def create_circle_position_reference(
     initial_position: Array,
+    center: Array,
+    normal: Array,
     *,
-    radius: float = DEFAULT_CIRCLE_RADIUS,
     period: float = CIRCLE_PERIOD,
 ) -> Callable[[Array], Array]:
-    """Create a horizontal circular position reference starting at the robot tip."""
-    if radius <= 0.0:
-        raise ValueError("radius must be positive.")
+    """Create a base-parallel circular reference starting at the robot tip."""
     if period <= 0.0:
         raise ValueError("period must be positive.")
     initial_position = jnp.asarray(initial_position)
+    center = jnp.asarray(center)
+    normal = jnp.asarray(normal)
     if initial_position.shape != (3,):
         raise ValueError("initial_position must have shape (3,).")
+    if center.shape != (3,):
+        raise ValueError("center must have shape (3,).")
+    if normal.shape != (3,):
+        raise ValueError("normal must have shape (3,).")
+
+    normal_norm = jnp.linalg.norm(normal)
+    if float(normal_norm) <= 0.0:
+        raise ValueError("normal must be nonzero.")
+    normal = normal / normal_norm
+    radial = initial_position - center
+    if not bool(jnp.isclose(radial @ normal, 0.0, atol=1.0e-10)):
+        raise ValueError("initial_position and center must lie in the circle plane.")
+    radius = jnp.linalg.norm(radial)
+    if float(radius) <= 0.0:
+        raise ValueError("initial_position must differ from center.")
+    first_axis = radial / radius
+    second_axis = jnp.cross(normal, first_axis)
 
     angular_frequency = 2.0 * jnp.pi / period
 
     def position_des_fn(t: Array) -> Array:
         phase = angular_frequency * t
-        offset = radius * jnp.array([jnp.cos(phase) - 1.0, jnp.sin(phase), 0.0])
-        return initial_position + offset
+        return center + radius * (
+            jnp.cos(phase) * first_axis + jnp.sin(phase) * second_axis
+        )
 
     return position_des_fn
 
@@ -286,9 +319,9 @@ def create_reference_trajectory(
     q0: Array,
     *,
     duration: float = DEFAULT_DURATION,
-    radius: float = DEFAULT_CIRCLE_RADIUS,
+    radius: float | None = None,
     num_samples: int = 401,
-) -> tuple[ReferenceTrajectory, Callable[[Array], Array]]:
+) -> CircleReference:
     """Create the position-only two-second circular tip trajectory."""
     if duration <= 0.0:
         raise ValueError("duration must be positive.")
@@ -296,9 +329,31 @@ def create_reference_trajectory(
         raise ValueError("num_samples must be at least two.")
 
     initial_pose = operational_space.operational_space_poses(q0)
+    initial_position = initial_pose[3:]
+    base_transform = operational_space.robot.base_transform
+    base_position = base_transform[:3, 3]
+    circle_normal = base_transform[:3, 0]
+    circle_normal = circle_normal / jnp.linalg.norm(circle_normal)
+    axis_center = base_position + circle_normal * (
+        circle_normal @ (initial_position - base_position)
+    )
+    radial = initial_position - axis_center
+    radial_norm = jnp.linalg.norm(radial)
+    if float(radial_norm) <= 0.0:
+        raise ValueError(
+            "q0 must place the tip away from the base axis to define the circle."
+        )
+    if radius is None:
+        circle_center = axis_center
+    else:
+        if radius <= 0.0:
+            raise ValueError("radius must be positive.")
+        circle_center = initial_position - radius * radial / radial_norm
+
     position_des_fn = create_circle_position_reference(
-        initial_pose[3:],
-        radius=radius,
+        initial_position,
+        circle_center,
+        circle_normal,
         period=CIRCLE_PERIOD,
     )
 
@@ -308,14 +363,19 @@ def create_reference_trajectory(
     def pose_container_fn(t: Array) -> Array:
         return initial_pose.at[3:].set(position_des_fn(t))
 
-    reference = ReferenceTrajectory(
-        ts=jnp.linspace(0.0, duration, num_samples),
-        x_des_fn=pose_container_fn,
-        rotation_representation=operational_space.rotation_representation,
-        n_points=operational_space.n_points,
-        is_planar=operational_space.is_planar,
+    return CircleReference(
+        trajectory=ReferenceTrajectory(
+            ts=jnp.linspace(0.0, duration, num_samples),
+            x_des_fn=pose_container_fn,
+            rotation_representation=operational_space.rotation_representation,
+            n_points=operational_space.n_points,
+            is_planar=operational_space.is_planar,
+        ),
+        position_fn=position_des_fn,
+        center=circle_center,
+        normal=circle_normal,
+        radius=jnp.linalg.norm(initial_position - circle_center),
     )
-    return reference, position_des_fn
 
 
 def create_controller(
@@ -323,7 +383,7 @@ def create_controller(
     *,
     q0: Array = DEFAULT_INITIAL_CONFIGURATION,
     duration: float = DEFAULT_DURATION,
-    circle_radius: float = DEFAULT_CIRCLE_RADIUS,
+    circle_radius: float | None = None,
     nominal_pressure: float = DEFAULT_NOMINAL_PRESSURE,
     max_delta_pressure: float = DEFAULT_MAX_DELTA_PRESSURE,
     natural_frequency: float = DEFAULT_NATURAL_FREQUENCY,
@@ -332,8 +392,7 @@ def create_controller(
     BalancedAntagonisticPressureController,
     DifferentialPressureUMArmModel,
     OperationalSpaceDynamics,
-    ReferenceTrajectory,
-    Callable[[Array], Array],
+    CircleReference,
     Array,
 ]:
     """Build the position impedance tracker and physical pressure wrapper."""
@@ -364,7 +423,7 @@ def create_controller(
     )
     operational_space = create_operational_space(control_model)
     num_reference_samples = max(2, int(round(duration / DEFAULT_SAVE_DT)) + 1)
-    reference, position_des_fn = create_reference_trajectory(
+    circle_reference = create_reference_trajectory(
         operational_space,
         q0,
         duration=duration,
@@ -383,7 +442,7 @@ def create_controller(
         )
         tracker = OperationalSpaceImpedanceControlTracker(
             operational_space_dynamics=operational_space,
-            reference_trajectory=reference,
+            reference_trajectory=circle_reference.trajectory,
             K_x=stiffness,
             D_x=damping,
             feedback_linearization="full",
@@ -398,8 +457,7 @@ def create_controller(
         controller,
         control_model,
         operational_space,
-        reference,
-        position_des_fn,
+        circle_reference,
         nominal_pressures,
     )
 
@@ -410,7 +468,7 @@ def simulate(
     duration: float = DEFAULT_DURATION,
     solver_dt: float = DEFAULT_SOLVER_DT,
     save_dt: float = DEFAULT_SAVE_DT,
-    circle_radius: float = DEFAULT_CIRCLE_RADIUS,
+    circle_radius: float | None = None,
     nominal_pressure: float = DEFAULT_NOMINAL_PRESSURE,
     max_delta_pressure: float = DEFAULT_MAX_DELTA_PRESSURE,
     natural_frequency: float = DEFAULT_NATURAL_FREQUENCY,
@@ -425,8 +483,7 @@ def simulate(
         controller,
         _,
         operational_space,
-        _,
-        position_des_fn,
+        circle_reference,
         nominal_pressures,
     ) = create_controller(
         robot,
@@ -439,9 +496,18 @@ def simulate(
         damping_ratio=damping_ratio,
     )
     q0 = jnp.asarray(q0)
+    assert circle_reference.trajectory.xd_des_fn is not None
+    desired_task_velocity = (
+        operational_space.B_task.T
+        @ circle_reference.trajectory.xd_des_fn(jnp.array(0.0, dtype=q0.dtype))
+    )
+    qd0 = (
+        operational_space.dynamically_consistent_pseudoinverse(q0)
+        @ desired_task_velocity
+    )
     initial_state = SystemState(
         t=jnp.array(0.0),
-        y=jnp.concatenate([q0, jnp.zeros_like(q0)]),
+        y=jnp.concatenate([q0, qd0]),
         u=nominal_pressures,
     )
     trajectory = robot.rollout_closed_loop_to(
@@ -459,8 +525,11 @@ def simulate(
         q=q,
         qd=qd,
         position=jax.vmap(operational_space.operational_space_coordinates)(q),
-        position_des=jax.vmap(position_des_fn)(trajectory.t),
+        position_des=jax.vmap(circle_reference.position_fn)(trajectory.t),
         pressures=trajectory.u,
+        circle_center=circle_reference.center,
+        circle_normal=circle_reference.normal,
+        circle_radius=circle_reference.radius,
     )
 
 
@@ -508,24 +577,41 @@ def plot_results(
     axes[0].legend(ncol=3)
     axes[0].grid(True, alpha=0.3)
 
+    first_circle_axis = (
+        result.position_des[0] - result.circle_center
+    ) / result.circle_radius
+    second_circle_axis = jnp.cross(result.circle_normal, first_circle_axis)
+    desired_relative = result.position_des - result.circle_center
+    actual_relative = result.position - result.circle_center
+    desired_in_plane = jnp.stack(
+        [desired_relative @ first_circle_axis, desired_relative @ second_circle_axis],
+        axis=1,
+    )
+    actual_in_plane = jnp.stack(
+        [actual_relative @ first_circle_axis, actual_relative @ second_circle_axis],
+        axis=1,
+    )
     axes[1].plot(
-        result.position_des[:, 0],
-        result.position_des[:, 1],
+        desired_in_plane[:, 0],
+        desired_in_plane[:, 1],
         "--",
         color="#E24A33",
         linewidth=2.4,
         label="reference",
     )
     axes[1].plot(
-        result.position[:, 0],
-        result.position[:, 1],
+        actual_in_plane[:, 0],
+        actual_in_plane[:, 1],
         color="#348ABD",
         linewidth=1.8,
         label="actual",
     )
-    axes[1].set_xlabel("x [m]")
-    axes[1].set_ylabel("y [m]")
-    axes[1].set_title(f"Horizontal circle (period {CIRCLE_PERIOD:g} s)")
+    axes[1].set_xlabel("Base-plane axis 1 [m]")
+    axes[1].set_ylabel("Base-plane axis 2 [m]")
+    axes[1].set_title(
+        f"Base-parallel circle (diameter {2.0 * float(result.circle_radius):.2f} m, "
+        f"period {CIRCLE_PERIOD:g} s)"
+    )
     axes[1].axis("equal")
     axes[1].legend()
     axes[1].grid(True, alpha=0.3)
@@ -577,8 +663,16 @@ def render_motion(
     render_t = result.t
     render_q = result.q
     render_pressures = result.pressures
+    render_position_des = result.position_des
+    sample_period = (
+        float(jnp.mean(jnp.diff(result.t))) if result.t.shape[0] > 1 else CIRCLE_PERIOD
+    )
+    samples_per_circle = max(1, int(round(CIRCLE_PERIOD / sample_period)))
+    circle_path_stride = max(1, samples_per_circle // 48)
+    circle_path = result.position_des[
+        : min(result.t.shape[0], samples_per_circle + 1) : circle_path_stride
+    ]
     if record_path is not None and result.t.shape[0] > 1:
-        sample_period = float(jnp.mean(jnp.diff(result.t)))
         frame_stride = max(
             1,
             int(round(1.0 / (DEFAULT_RECORDING_FPS * sample_period))),
@@ -590,6 +684,7 @@ def render_motion(
         render_t = result.t[indices]
         render_q = result.q[indices]
         render_pressures = result.pressures[indices]
+        render_position_des = result.position_des[indices]
 
     renderer = UMArmViserRenderer(
         robot,
@@ -610,6 +705,15 @@ def render_motion(
         record_path=None if record_path is None else str(record_path),
         stop_when_recording_done=record_path is not None,
         record_client_timeout=120.0 if record_path is not None else 10.0,
+        static_spheres_positions=circle_path,
+        static_spheres_radii=jnp.full((circle_path.shape[0],), 0.008),
+        static_spheres_colors=jnp.tile(
+            jnp.array([[0.85, 0.12, 0.08, 0.45]]),
+            (circle_path.shape[0], 1),
+        ),
+        dynamic_spheres_positions=render_position_des[None, :, :],
+        dynamic_spheres_radii=jnp.array([0.022]),
+        dynamic_spheres_colors=jnp.array([[0.9, 0.05, 0.02]]),
         plot_configurations=True,
         robot_name="UMArm operational-space impedance tracking",
     )
@@ -625,8 +729,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--circle-radius",
         type=float,
-        default=DEFAULT_CIRCLE_RADIUS,
-        help="End-effector circle radius [m].",
+        default=None,
+        help=(
+            "End-effector circle radius [m]. By default, use the initial tip's "
+            "distance from the base axis."
+        ),
     )
     parser.add_argument(
         "--nominal-pressure-kpa",
@@ -692,6 +799,12 @@ def main() -> None:
     )
     print(f"Saved samples: {result.t.shape[0]}")
     print(f"Circle period: {CIRCLE_PERIOD:.2f} s")
+    print(
+        "Circle diameter: "
+        f"{2.0 * float(result.circle_radius):.3f} m "
+        f"({2.0 * float(result.circle_radius) / float(robot.length):.1%} "
+        "of robot length)"
+    )
     print(
         "Virtual actuation matrix: "
         f"{virtual_actuation.shape[0]} x {virtual_actuation.shape[1]} "
