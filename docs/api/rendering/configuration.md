@@ -116,6 +116,26 @@ with its tangent. Automatic sizing fits the whole robot trajectory and helper
 bounds. Scenery is excluded from camera fitting. Live visualization retains its
 initial bounds. A curved backdrop replaces the separate flat floor and grid.
 
+`BackdropConfig.radius` controls the bend's horizontal reach;
+`vertical_radius` controls its height and defaults to the same value.
+`curvature_easing` ranges from 0 (an elliptical arc) to 1 (a curve that gradually
+flattens into the floor and wall). `wall_offset` places the start of the bend
+behind the scene center. These dimensions are multiples of the fitted scene extent.
+
+The neutral studio uses a lower, softly shaded transition:
+
+```python
+scene = SceneConfig.studio()
+scene.backdrop.radius = 0.40
+scene.backdrop.vertical_radius = 0.23
+scene.backdrop.wall_offset = 0.02
+scene.backdrop.curvature_easing = 0.80
+```
+
+Its key light illuminates both the floor and wall, with ambient illumination and
+point fills reducing the contrast across the bend. Bright, dark and clay use
+circular backdrop curves and their own lighting settings.
+
 ## Camera configuration
 
 The `CameraConfig` class provides unified camera configuration across renderers (Matplotlib, Open3D, Viser).

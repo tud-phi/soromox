@@ -52,6 +52,54 @@ def plane_basis(normal):
     return np.column_stack((u, np.cross(n, u), n))
 
 
+def _eased_backdrop_profile(config) -> np.ndarray:
+    """Sample a bend with independent reach, height and curvature easing.
+
+    Args:
+        config: Validated BackdropConfig. All lengths are in scene extents.
+
+    Returns:
+        Array of (depth, height) coordinates, including a flat floor and wall.
+        Tangents meet the floor and wall continuously. Flat sections use similar
+        spacing near the bend to avoid bias in computed vertex normals.
+    """
+    vertical = (
+        config.radius if config.vertical_radius is None else config.vertical_radius
+    )
+    t = np.linspace(0, 1, 257)
+    theta = (
+        np.pi / 2 * (t - config.curvature_easing * np.sin(2 * np.pi * t) / (2 * np.pi))
+    )
+    tangent = np.stack((np.cos(theta), np.sin(theta)), axis=-1)
+    curve = np.vstack(
+        (np.zeros(2), np.cumsum((tangent[:-1] + tangent[1:]) / 2, axis=0))
+    )
+    curve *= np.array([config.radius, vertical]) / curve[-1]
+    curve[:, 0] += config.wall_offset
+    step = np.linalg.norm(np.diff(curve, axis=0), axis=1).mean()
+    # Bound scenery memory for unusually large floor/wall dimensions.
+    floor_steps = int(
+        np.clip(np.ceil((config.depth + config.wall_offset) / step), 1, 4096)
+    )
+    wall_steps = int(np.clip(np.ceil((config.height - vertical) / step), 1, 4096))
+    floor_y = np.linspace(-config.depth, config.wall_offset, floor_steps + 1)
+    wall_z = np.linspace(vertical, config.height, wall_steps + 1)
+    wall = (
+        np.column_stack(
+            (np.full(wall_steps, config.wall_offset + config.radius), wall_z[1:])
+        )
+        if config.height > vertical
+        else np.empty((0, 2))
+    )
+    return np.vstack(
+        (
+            np.column_stack((floor_y[:-1], np.zeros(floor_steps))),
+            curve,
+            wall,
+        )
+    )
+
+
 def backdrop_mesh(scene: SceneConfig, center, extent, normal):
     """Build a curved floor/wall from shared dimensions and floor orientation.
 
@@ -68,15 +116,18 @@ def backdrop_mesh(scene: SceneConfig, center, extent, normal):
     basis = plane_basis(normal)
     n = basis[:, 2]
     origin = np.asarray(center) - np.dot(center, n) * n + scene.ground.height * n
-    angles = np.linspace(0, np.pi / 2, 80)
-    profile = [(-cfg.depth, 0), (cfg.wall_offset, 0)]
-    profile.extend(
-        zip(
-            cfg.wall_offset + cfg.radius * np.sin(angles[1:]),
-            cfg.radius * (1 - np.cos(angles[1:])),
+    if cfg.vertical_radius is None and cfg.curvature_easing == 0:
+        angles = np.linspace(0, np.pi / 2, 80)
+        profile = [(-cfg.depth, 0), (cfg.wall_offset, 0)]
+        profile.extend(
+            zip(
+                cfg.wall_offset + cfg.radius * np.sin(angles[1:]),
+                cfg.radius * (1 - np.cos(angles[1:])),
+            )
         )
-    )
-    profile.append((cfg.wall_offset + cfg.radius, cfg.height))
+        profile.append((cfg.wall_offset + cfg.radius, cfg.height))
+    else:
+        profile = _eased_backdrop_profile(cfg)
     vertices = np.array(
         [[x, y, z] for y, z in profile for x in (-cfg.width / 2, cfg.width / 2)]
     )

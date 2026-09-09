@@ -237,7 +237,12 @@ class BackdropConfig:
         width: Width as a multiple of scene extent.
         depth: Forward floor reach as a multiple of scene extent.
         height: Wall height as a multiple of scene extent.
-        radius: Floor-to-wall bend radius as a multiple of scene extent.
+        radius: Horizontal bend reach as a multiple of scene extent. With
+            vertical_radius=None and curvature_easing=0, this is a circular radius.
+        vertical_radius: Bend height in scene extents; None uses radius.
+        curvature_easing: Gradual change of tangent angle near the floor/wall
+            joins, in [0, 1]. Zero gives an elliptical arc; one gives zero
+            curvature at both joins. Intermediate values blend these profiles.
         wall_offset: Distance behind scene center before the bend, in scene extents.
     """
 
@@ -247,6 +252,8 @@ class BackdropConfig:
     height: float = 2.5
     radius: float = 0.5
     wall_offset: float = 0.42
+    vertical_radius: float | None = None
+    curvature_easing: float = 0.0
 
     def __post_init__(self) -> None:
         """Validate positive backdrop dimensions.
@@ -261,6 +268,25 @@ class BackdropConfig:
             value = getattr(self, name)
             if not np.isfinite(value) or value <= 0:
                 raise ValueError(f"{name} must be finite and positive")
+
+        if self.vertical_radius is not None and (
+            not np.isfinite(self.vertical_radius)
+            or not 0 < self.vertical_radius <= self.height
+        ):
+            raise ValueError(
+                "vertical_radius must be positive and no greater than height"
+            )
+        if (
+            not np.isfinite(self.curvature_easing)
+            or not 0 <= self.curvature_easing <= 1
+        ):
+            raise ValueError("curvature_easing must lie in [0, 1]")
+        if (
+            self.curvature_easing > 0
+            and self.vertical_radius is None
+            and self.radius > self.height
+        ):
+            raise ValueError("The eased bend height must not exceed the wall height")
 
 
 @dataclass
@@ -406,22 +432,24 @@ class SceneConfig:
             "dark": (0.045, 0.05, 0.065),
         }[style]
         key = {"neutral": 70000, "bright": 85000, "dark": 100000}[style]
-        ambient = {"neutral": 0.8, "bright": 1.2, "dark": 0.4}[style]
+        ambient = {"neutral": 1.05, "bright": 1.2, "dark": 0.4}[style]
         lights = [
             DirectionalLightConfig(
                 illuminance_lux=key,
                 color=(1.0, 1.0, 1.0),
-                direction=(-0.25, 0.9, -0.55)
-                if style == "dark"
-                else (-0.25, 0.15, -1.0),
+                direction={
+                    "neutral": (-0.25, 0.55, -1.0),
+                    "bright": (-0.25, 0.15, -1.0),
+                    "dark": (-0.25, 0.9, -0.55),
+                }[style],
             ),
             PointLightConfig.from_lumens(
-                {"neutral": 250000, "bright": 400000, "dark": 300000}[style] * scale**2,
+                {"neutral": 212500, "bright": 400000, "dark": 300000}[style] * scale**2,
                 position=tuple(np.array([0.0, -0.8, 0.8]) * scale),
                 range_m=6.0 * scale,
             ),
             PointLightConfig.from_lumens(
-                {"neutral": 150000, "bright": 250000, "dark": 250000}[style] * scale**2,
+                {"neutral": 112500, "bright": 250000, "dark": 250000}[style] * scale**2,
                 position=tuple(
                     np.array([0.0, 0.4, 0.75] if style != "dark" else [0.8, 0.35, 0.75])
                     * scale
@@ -434,7 +462,15 @@ class SceneConfig:
             cls(
                 background=color,
                 ground=GroundPlaneConfig(color=color, grid=False, surface=True),
-                backdrop=BackdropConfig(enabled=True, wall_offset=0.15, radius=0.7),
+                backdrop=BackdropConfig(
+                    enabled=True,
+                    radius=0.40,
+                    vertical_radius=0.23,
+                    wall_offset=0.02,
+                    curvature_easing=0.80,
+                )
+                if style == "neutral"
+                else BackdropConfig(enabled=True, wall_offset=0.15, radius=0.7),
                 ambient=AmbientLightConfig(strength=ambient),
                 lights=tuple(lights),
                 shadows=True,

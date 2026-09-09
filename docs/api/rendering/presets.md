@@ -52,7 +52,7 @@ Both use a grid without a filled slab, anchored to world coordinates with major/
 
 </div>
 
-A broader curved sweep, neutral key light and point fills give both scenes a light grey floor and darker wall. Viser approximates environment illumination with a hemisphere light, improving the wall/floor transition. Open3D still has a stronger gradient and sharper contact/cast shadows. The reference's reflective bands and area-light reflections are outside the matte target.
+A low sweep with gradually changing curvature creates a soft, visible floor-to-wall transition. The key light illuminates both surfaces, reducing the contrast of the horizontal band. Open3D retains stronger cast shadows; Viser has a subtler background transition. The reference's reflective bands and area-light reflections are outside the matte target.
 
 ## Bright
 

@@ -17,9 +17,10 @@ and include benchmark baseline and measurement context for performance claims.
   `OperationalSpaceImpedanceControlTracker` and balanced antagonistic pressure
   inputs to track a base-parallel circle.
 - Added shared scene settings for lighting, materials, shadows, ground planes and
-  curved backdrops, with technical, neutral/bright/dark studio, flat and clay
-  presets and an Open3D/Viser tentacle gallery. Shared robot mounts include disk,
-  beveled disk, truncated cone and flared collar shapes, selected with
+  curved backdrops with adjustable bend height and curvature easing. Technical,
+  neutral/bright/dark studio, flat and clay presets include an Open3D/Viser
+  tentacle gallery. Shared robot mounts include disk, beveled disk, truncated
+  cone and flared collar shapes, selected with
   `config.geometry.base_plate_style`.
 - Added reproducible Open3D development builds for macOS and Linux x86-64,
   including Metal image capture, neutral color grading and selectable linear/ACES

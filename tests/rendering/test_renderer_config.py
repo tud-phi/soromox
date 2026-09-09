@@ -10,6 +10,7 @@ from numpy.testing import assert_allclose
 from test_base_renderer import DummyPlanarRobot
 
 from soromox.rendering import (
+    BackdropConfig,
     CameraConfig,
     GeometryConfig,
     GroundPlaneConfig,
@@ -445,3 +446,68 @@ def test_technical_tone_mapping_preserves_white_without_changing_studio_defaults
     assert SceneConfig.technical().tone_mapping == "linear"
     assert SceneConfig.technical(tone_mapping="aces").tone_mapping == "aces"
     assert SceneConfig.studio().tone_mapping == "backend-default"
+
+
+@pytest.mark.parametrize("normal", [[0, 0, 1], [0, 1, 0], [1, 2, 3]])
+def test_eased_backdrop_dimensions_orientation_and_smooth_joins(normal):
+    """Preserve world floor height, bend dimensions and continuous join tangents."""
+    scene = SceneConfig.studio()
+    scene.ground.height = 0.17
+    center, extent = np.array([0.4, -0.2, 0.3]), 2.0
+    vertices, faces = backdrop_mesh(scene, center, extent, normal)
+    basis = plane_basis(normal)
+    origin = center - (center @ basis[:, 2]) * basis[:, 2] + 0.17 * basis[:, 2]
+    local = (vertices - origin) @ basis / extent
+    profile = local[::2, 1:]
+    assert_allclose([local[:, 0].min(), local[:, 0].max()], [-2.5, 2.5])
+    assert_allclose(profile[0], [-2.5, 0], atol=1e-14)
+    assert_allclose(profile[-1], [0.42, 2.5])
+    assert np.all(np.diff(profile, axis=0) >= -1e-14)
+    start = np.argmin(np.linalg.norm(profile - [0.02, 0], axis=1))
+    end = start + 256
+    assert_allclose(profile[end], [0.42, 0.23])
+    slope_start = profile[start + 1] - profile[start]
+    slope_end = profile[end] - profile[end - 1]
+    assert abs(slope_start[1] / slope_start[0]) < 0.002
+    assert abs(slope_end[0] / slope_end[1]) < 0.002
+    triangles = vertices[faces]
+    assert np.all(
+        np.linalg.norm(
+            np.cross(
+                triangles[:, 1] - triangles[:, 0], triangles[:, 2] - triangles[:, 0]
+            ),
+            axis=1,
+        )
+        > 0
+    )
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"vertical_radius": 0},
+        {"vertical_radius": float("nan")},
+        {"vertical_radius": 3},
+        {"curvature_easing": -0.1},
+        {"curvature_easing": 1.1},
+        {"curvature_easing": float("nan")},
+        {"radius": 3, "curvature_easing": 1},
+    ],
+)
+def test_backdrop_rejects_invalid_eased_dimensions(kwargs):
+    with pytest.raises(ValueError):
+        BackdropConfig(**kwargs)
+
+
+def test_neutral_studio_and_clay_have_independent_lighting_and_backdrops():
+    neutral, clay = SceneConfig.studio(), RendererConfig.clay().scene
+    assert neutral.backdrop.vertical_radius == 0.23
+    assert neutral.backdrop.curvature_easing == 0.8
+    assert neutral.ambient.strength == 1.05
+    assert_allclose(neutral.lights[0].direction, [-0.25, 0.55, -1])
+    assert neutral.lights[1].intensity_candela == pytest.approx(212500 / (4 * np.pi))
+    assert neutral.lights[2].intensity_candela == pytest.approx(112500 / (4 * np.pi))
+    assert clay.backdrop.radius == 0.7
+    assert clay.backdrop.vertical_radius is None
+    assert clay.ambient.strength == 0.8
+    assert clay.lights[1].intensity_candela == pytest.approx(250000 / (4 * np.pi))
