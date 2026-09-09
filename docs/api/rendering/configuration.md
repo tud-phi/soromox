@@ -316,7 +316,7 @@ Unsupported requested features produce one warning per renderer and mode.
 | Legacy Open3D animation | Efficient geometry updates, colors, floor/backdrop, basic lit/unlit shading | PBR lighting, opacity, shadows, AO and exposure differ from modern output |
 | Viser static | PBR GLB meshes, unlit materials, explicit lights, floor/backdrop, cast shadows | Lux/candela calibrated to browser intensity; fixed browser tone mapping can shift unlit colors; no AO or custom dielectric reflectance |
 | Viser playback/live | Efficient mesh updates, colors, lights, floor/backdrop, shadows | Roughness/metallicity and unlit materials approximated by the editable mesh shader |
-| Matplotlib | Colors, background, ground, line geometry, viewing direction | Surface lighting, shadows, AO and backdrop curvature omitted |
+| Matplotlib | Robot colors, line geometry, viewing direction, white background and standard axes | Scene appearance, ground planes, backdrops, materials, lighting, shadows, AO and exposure ignored |
 | OpenCV planar/HSA | BGR output, sRGB color inputs, background, ground reference, line geometry | 3D camera, surface lighting, shadows, AO, backdrop curvature and transparency approximated or ignored |
 
 On the tested macOS development build, opening a legacy OpenGL preview after a

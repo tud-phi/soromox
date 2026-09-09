@@ -90,6 +90,9 @@ corresponding `dynamic_spheres_*` arguments.
 `MatplotlibRenderer` provides static figures, notebook-friendly inspection,
 slider-based playback, and ordinary animations for planar and spatial robots.
 Spatial configurations use a 3D axes view controlled by `CameraConfig`.
+Figures use a white background and standard Matplotlib axes and grid. Scene
+backgrounds, ground planes, backdrops, lighting, materials and effects are ignored.
+Robot colors, geometry, camera direction and output settings apply.
 
 ::: soromox.rendering.matplotlib_renderer.MatplotlibRenderer
     options:

@@ -30,7 +30,8 @@ and include benchmark baseline and measurement context for performance claims.
 
 - Open3D static `show()` and image exports use the modern renderer. Animated
   previews retain efficient legacy geometry updates and warn about appearance
-  differences; other backends apply or approximate shared scene settings.
+  differences. Viser and OpenCV apply or approximate shared scene settings;
+  Matplotlib uses a white background and standard axes, ignoring scene appearance.
 
 ### Performance
 

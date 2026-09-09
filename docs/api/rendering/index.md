@@ -9,9 +9,10 @@ The rendering module provides a class-based architecture for visualizing soft ro
 The Matplotlib, Open3D, and Viser samples show the same upright tapered GVS
 tentacle with `SceneConfig.studio()` (the neutral studio variant), a pastel
 purple backbone and a dark base. OpenCV shows a two-link planar PCS counterpart
-with the same lengths and prescribed bending coordinates. Matplotlib and OpenCV
-apply background, ground and color settings while approximating studio lighting
-and backdrop geometry.
+with the same lengths and prescribed bending coordinates. Matplotlib uses a
+white background and its standard axes, ignoring scene appearance presets.
+OpenCV applies background, ground and color settings while approximating studio
+lighting and backdrop geometry.
 
 The [preset gallery](presets.md) compares all six scene presets in Open3D and
 Viser. These examples select neutral studio explicitly; the renderer-wide default

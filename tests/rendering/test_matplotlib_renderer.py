@@ -8,7 +8,6 @@ from numpy.testing import assert_allclose
 from soromox.rendering.actuators import ActuatorVisualLayer
 from soromox.rendering.config import (
     GeometryConfig,
-    GroundPlaneConfig,
     RendererConfig,
     RenderOutputConfig,
     SceneConfig,
@@ -194,27 +193,37 @@ def test_actuator_overlay_changes_rendered_frame():
     assert np.any(without_actuators != with_actuators)
 
 
-def test_ground_plane_changes_spatial_rendered_frame():
+@pytest.mark.parametrize(
+    "scene",
+    [
+        SceneConfig.technical(),
+        SceneConfig.studio(),
+        SceneConfig.studio("bright"),
+        SceneConfig.studio("dark"),
+        SceneConfig.flat(),
+        RendererConfig.clay().scene,
+    ],
+)
+def test_scene_presets_keep_white_matplotlib_background_and_standard_axes(scene):
+    """Scene presets cannot add a floor, recolor the plot, or change its bounds."""
     robot = DummySpatialRobot(jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]))
-    with_ground = MatplotlibRenderer(
-        robot,
-        config=RendererConfig(
-            output=RenderOutputConfig(width=240, height=180),
-            geometry=GeometryConfig(num_points=8),
-            scene=SceneConfig(ground=GroundPlaneConfig(visible=True)),
-        ),
-    ).render_frame(jnp.array([]))
-    without_ground = MatplotlibRenderer(
-        robot,
-        config=RendererConfig(
-            output=RenderOutputConfig(width=240, height=180),
-            geometry=GeometryConfig(num_points=8),
-            scene=SceneConfig(ground=GroundPlaneConfig(visible=False)),
-        ),
-    ).render_frame(jnp.array([]))
 
-    assert with_ground.shape == without_ground.shape
-    assert np.any(with_ground != without_ground)
+    def render(scene):
+        renderer = MatplotlibRenderer(
+            robot,
+            config=RendererConfig(
+                scene=scene,
+                output=RenderOutputConfig(width=240, height=180),
+                geometry=GeometryConfig(num_points=8),
+            ),
+        )
+        with pytest.warns(UserWarning, match="white background"):
+            return renderer.render_frame(jnp.array([]))
+
+    pixels = render(scene)
+    baseline = render(SceneConfig.flat())
+    np.testing.assert_array_equal(pixels, baseline)
+    np.testing.assert_array_equal(pixels[0, 0], [255, 255, 255])
 
 
 def test_2d_base_marker_is_perpendicular_to_base_tangent():
@@ -245,26 +254,27 @@ def test_3d_base_marker_lies_in_plate_face_plane():
     assert_allclose(np.linalg.norm(marker - base, axis=1), 0.2, atol=1e-12)
 
 
-def test_ground_grid_uses_one_collection_without_changing_view_limits():
+def test_slider_ignores_studio_background_and_floor(monkeypatch):
+    """Playback uses the same white plotting style as still images."""
     import matplotlib.pyplot as plt
-    from mpl_toolkits.mplot3d.art3d import Line3DCollection
+    from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
-    renderer = MatplotlibRenderer(DummySpatialRobot(jnp.array([0, 0, 0, 0, 0, 0, 1])))
-    fig = plt.figure()
-    try:
-        ax = fig.add_subplot(projection="3d")
-        ax.set(xlim=(-1, 1), ylim=(-1, 1), zlim=(-1, 1))
-        limits = (ax.get_xlim(), ax.get_ylim(), ax.get_zlim())
-        renderer.config.scene.ground.size = 10
-        renderer.config.scene.ground.grid_spacing = 0.1
-        artists = renderer._plot_ground_plane(
-            ax, np.array([[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]]), renderer.color_config
+    renderer = MatplotlibRenderer(
+        DummySpatialRobot(jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0])),
+        config=RendererConfig(scene=SceneConfig.studio("dark")),
+    )
+    inspected = []
+
+    def inspect_figure():
+        fig = plt.gcf()
+        assert_allclose(fig.get_facecolor(), [1, 1, 1, 1])
+        assert_allclose(fig.axes[0].get_facecolor(), [1, 1, 1, 1])
+        assert not any(
+            isinstance(item, Poly3DCollection) for item in fig.axes[0].collections
         )
-        assert len(artists) == 1
-        assert isinstance(artists[0], Line3DCollection)
-        assert len(artists[0]._segments3d) > 100
-        assert not ax.lines
-        assert (ax.get_xlim(), ax.get_ylim(), ax.get_zlim()) == limits
-        fig.canvas.draw()
-    finally:
-        plt.close(fig)
+        inspected.append(True)
+
+    monkeypatch.setattr(plt, "show", inspect_figure)
+    with pytest.warns(UserWarning, match="white background"):
+        renderer.animate(jnp.array([0.0, 0.1]), jnp.empty((2, 0)), mode="slider")
+    assert inspected == [True]
