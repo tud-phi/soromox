@@ -21,6 +21,7 @@ Controls:
 from __future__ import annotations
 
 import copy
+import subprocess
 import sys
 import time
 import warnings
@@ -2001,6 +2002,72 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         )
         self._run_modern_viewer(scene_data, camera_config, color_config)
 
+    def _check_modern_window_support(self) -> None:
+        """Probe Linux GUI creation in a child process before using native handles.
+
+        Open3D's GLFW backend can abort inside ``create_window`` when it cannot
+        create a window surface. A child process contains that failure and
+        preserves its diagnostic output. Each check uses the current display
+        environment; a successful probe does not guarantee that a display will
+        remain available afterward.
+
+        Returns:
+            None. Other platforms do not need this Linux display probe.
+
+        Raises:
+            RuntimeError: The probe fails, crashes, or exceeds 30 seconds. Its
+                captured native output is included when available.
+        """
+        if not sys.platform.startswith("linux"):
+            return
+        script = "\n".join(
+            (
+                "import open3d as o3d",
+                "app = o3d.visualization.gui.Application.instance",
+                "app.initialize()",
+                f"window = app.create_window('Open3D display check', {self.width}, {self.height})",
+                "if window is None:",
+                "    raise RuntimeError('Open3D returned no window')",
+                "scene = o3d.visualization.rendering.Open3DScene(window.renderer)",
+                "app.run_one_tick()",
+                "del scene",
+                "window.close()",
+                "app.run_one_tick()",
+            )
+        )
+        advice = (
+            "Open3D failed to create a usable GUI window. "
+            "Check the display connection and graphics driver; on Linux, use "
+            "an X11/XWayland session or Xvfb with GLX support. "
+            "For headless rendering, use render_frame() or render_sequence() "
+            "with record_path instead."
+        )
+        try:
+            result = subprocess.run(
+                [sys.executable, "-c", script],
+                capture_output=True,
+                text=True,
+                errors="replace",
+                timeout=30,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            # TimeoutExpired keeps captured streams as bytes even in text mode.
+            output = b"\n".join(
+                part for part in (exc.stdout, exc.stderr) if part
+            ).decode(errors="replace")
+            raise RuntimeError(
+                f"{advice}\nDisplay check timed out after 30 seconds.\n{output}"
+            ) from exc
+        if result.returncode != 0:
+            output = "\n".join(
+                part.strip() for part in (result.stdout, result.stderr) if part
+            )
+            raise RuntimeError(
+                f"{advice}\nDisplay check exit status: {result.returncode}.\n"
+                f"{output or 'The native process produced no diagnostic output.'}"
+            )
+
     def _create_modern_window(self, scene_data, camera_config, color_config):
         """Create a modern window for one fixed robot configuration.
 
@@ -2017,12 +2084,19 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         Returns:
             Tuple of the GUI application, window and scene widget. The caller
             runs the event loop and owns window cleanup. Call on the main thread.
+
+        Raises:
+            RuntimeError: Capture support or the Linux GUI display check fails,
+                or native window creation reports a failure.
         """
         self._require_modern_capture_support()
+        self._check_modern_window_support()
         gui = o3d.visualization.gui
         app = gui.Application.instance
         app.initialize()
         window = app.create_window("Robot (Open3D)", self.width, self.height)
+        if window is None:
+            raise RuntimeError("Open3D failed to create the visualization window")
         widget = gui.SceneWidget()
         widget.scene = o3d.visualization.rendering.Open3DScene(window.renderer)
         widget.frame = window.content_rect

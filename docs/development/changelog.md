@@ -56,6 +56,8 @@ and include benchmark baseline and measurement context for performance claims.
 
 ### Fixed
 
+- Open3D static viewing checks Linux window creation in a separate process and
+  reports native display failures with their logs before initializing the viewer.
 - Matplotlib video exports respect configured pixel dimensions regardless of the
   global figure DPI setting.
 - Matplotlib static ground surfaces no longer cover robot lines above the floor;

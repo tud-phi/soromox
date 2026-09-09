@@ -119,6 +119,11 @@ whole trajectory.
 materials, lighting and backdrop as exports. It supports mouse camera controls,
 R to reset the camera, C/L to save/restore it, S to save a modern snapshot, V to
 print the camera, and Q/Esc to close the window.
+On Linux, a separate process checks native window creation first. A failed
+display connection raises `RuntimeError` with the native log. This check adds
+GUI startup time and may briefly display a test window. Use an X11/XWayland
+session or Xvfb with GLX support for interactive viewing; headless workflows
+can use image or video export.
 
 Sequences without `record_path` use the legacy viewer for efficient geometry
 updates. A warning explains that materials, lighting, transparency, shadows and

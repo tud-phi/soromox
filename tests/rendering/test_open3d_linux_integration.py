@@ -178,6 +178,21 @@ def test_open3d_surfaceless_frame_and_mp4_export(tmp_path):
     assert int(stream["nb_frames"]) == 3
 
 
+def test_open3d_unavailable_display_raises_with_native_log(monkeypatch, tmp_path):
+    """An unusable native display must fail in the child and preserve its log."""
+    monkeypatch.setenv("DISPLAY", ":65535")
+    monkeypatch.setenv("WAYLAND_DISPLAY", "soromox-nonexistent-display")
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    monkeypatch.delenv("EGL_PLATFORM", raising=False)
+    with pytest.raises(
+        RuntimeError, match="failed to create a usable GUI window"
+    ) as caught:
+        _renderer()._check_modern_window_support()
+    message = str(caught.value)
+    assert "Display check exit status:" in message
+    assert "GLFW" in message or "Failed to open X display" in message
+
+
 def test_open3d_show_opens_and_closes_real_xvfb_window(monkeypatch):
     """Exercise the public modern interactive viewer with a real X display."""
     assert os.environ.get("DISPLAY")

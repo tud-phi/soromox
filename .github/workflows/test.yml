@@ -74,6 +74,7 @@ jobs:
             SOROMOX_RUN_RENDERING_INTEGRATION=1 \
             python -m pytest -q \
             tests/rendering/test_open3d_linux_integration.py::test_open3d_show_opens_and_closes_real_xvfb_window \
+            tests/rendering/test_open3d_linux_integration.py::test_open3d_unavailable_display_raises_with_native_log \
             tests/rendering/test_open3d_linux_integration.py::test_open3d_interactive_sequence_advances_in_real_xvfb_window
 
   test:

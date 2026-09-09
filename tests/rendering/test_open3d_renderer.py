@@ -1,3 +1,5 @@
+import subprocess
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import numpy as np
@@ -741,6 +743,78 @@ def test_open3d_visualizer_reports_window_creation_failure(monkeypatch):
         renderer._create_visualizer("test")
 
     visualizer.get_render_option.assert_not_called()
+
+
+@pytest.mark.parametrize("status", [1, -6, -11])
+def test_modern_window_probe_contains_native_failure(monkeypatch, status):
+    """A failed or crashed child must prevent GUI initialization in the parent."""
+    renderer = Open3DRenderer(_AnimatingSpatialRobot())
+    monkeypatch.setattr(open3d_renderer_module.sys, "platform", "linux")
+    probe = Mock(
+        return_value=subprocess.CompletedProcess(
+            [], status, "GLFW initialization", "GLFW: Failed to create window"
+        )
+    )
+    monkeypatch.setattr(open3d_renderer_module.subprocess, "run", probe)
+    app = Mock()
+    monkeypatch.setattr(
+        open3d_renderer_module.o3d.visualization,
+        "gui",
+        SimpleNamespace(Application=SimpleNamespace(instance=app)),
+    )
+
+    with pytest.raises(RuntimeError, match="GLFW: Failed to create window") as caught:
+        renderer._create_modern_window(Mock(), None, None)
+
+    assert f"exit status: {status}" in str(caught.value)
+    assert "GLFW initialization" in str(caught.value)
+    app.initialize.assert_not_called()
+    app.create_window.assert_not_called()
+
+
+def test_modern_window_probe_reports_timeout_output(monkeypatch):
+    renderer = Open3DRenderer(_AnimatingSpatialRobot())
+    monkeypatch.setattr(open3d_renderer_module.sys, "platform", "linux")
+    monkeypatch.setattr(
+        open3d_renderer_module.subprocess,
+        "run",
+        Mock(
+            side_effect=subprocess.TimeoutExpired(
+                [], 30, b"native log", b"display stalled"
+            )
+        ),
+    )
+    with pytest.raises(RuntimeError, match="timed out") as caught:
+        renderer._check_modern_window_support()
+    assert "native log" in str(caught.value)
+    assert "display stalled" in str(caught.value)
+
+
+@pytest.mark.parametrize("platform", ["linux", "darwin", "win32"])
+def test_modern_window_probe_platform_and_success(monkeypatch, platform):
+    renderer = Open3DRenderer(_AnimatingSpatialRobot())
+    monkeypatch.setattr(open3d_renderer_module.sys, "platform", platform)
+    probe = Mock(return_value=subprocess.CompletedProcess([], 0, "", ""))
+    monkeypatch.setattr(open3d_renderer_module.subprocess, "run", probe)
+    renderer._check_modern_window_support()
+    assert probe.call_count == (1 if platform == "linux" else 0)
+
+
+def test_modern_window_rejects_missing_window_before_renderer_access(monkeypatch):
+    renderer = Open3DRenderer(_AnimatingSpatialRobot())
+    monkeypatch.setattr(renderer, "_require_modern_capture_support", Mock())
+    monkeypatch.setattr(renderer, "_check_modern_window_support", Mock())
+    app = Mock()
+    app.create_window.return_value = None
+    widget = Mock()
+    monkeypatch.setattr(
+        open3d_renderer_module.o3d.visualization,
+        "gui",
+        SimpleNamespace(Application=SimpleNamespace(instance=app), SceneWidget=widget),
+    )
+    with pytest.raises(RuntimeError, match="failed to create the visualization window"):
+        renderer._create_modern_window(Mock(), None, None)
+    widget.assert_not_called()
 
 
 def test_open3d_defaults_to_swept_backbone():
