@@ -98,6 +98,11 @@ jobs:
           python-version: ${{ matrix.python }}
           cache: pip
 
+      - name: Install video decoding dependency for paper figure tests
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+
       - name: Install project with test extras
         run: |
           python -m pip install --upgrade pip
@@ -160,6 +165,11 @@ jobs:
         with:
           python-version: '3.11'
           cache: pip
+
+      - name: Install video decoding dependency for paper figure tests
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
 
       - name: Install project with minimum numerical dependencies
         run: |
