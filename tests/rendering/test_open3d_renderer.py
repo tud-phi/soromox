@@ -382,6 +382,38 @@ def test_modern_swept_normals_only_join_matching_contours(continuous):
     assert_allclose(np.asarray(right.vertex_colors)[0], (0, 0, 1))
 
 
+@pytest.mark.parametrize("count", [0, 1, 3])
+def test_swept_normal_batch_preserves_exterior_caps(count):
+    """Join a chain in one batch without removing its two exterior caps."""
+    resolution = 12
+    section = CrossSection(CrossSectionGeometry.CIRCULAR, np.array([0.1]))
+    meshes = [
+        _make_swept_cross_section_segment(
+            np.array([i * 0.5, 0, 0]),
+            np.array([(i + 1) * 0.5, 0, 0]),
+            np.eye(3),
+            np.eye(3),
+            section,
+            section,
+            (1, 0, 0),
+            resolution,
+            cap_start=True,
+            cap_end=True,
+        )
+        for i in range(count)
+    ]
+    _smooth_swept_meshes(meshes, resolution, tolerance=2e-7)
+    for i, mesh in enumerate(meshes):
+        caps = int(i == 0) + int(i == count - 1)
+        assert len(mesh.triangles) == (2 + caps) * resolution
+        assert np.isfinite(np.asarray(mesh.vertex_normals)).all()
+    for left, right in zip(meshes[:-1], meshes[1:]):
+        assert_allclose(
+            np.asarray(left.vertex_normals)[resolution : 2 * resolution],
+            np.asarray(right.vertex_normals)[:resolution],
+        )
+
+
 def test_swept_segment_applies_each_endpoint_material_frame():
     section0 = CrossSection(CrossSectionGeometry.RECTANGULAR, np.array([0.4, 0.2]))
     section1 = CrossSection(CrossSectionGeometry.RECTANGULAR, np.array([0.2, 0.1]))

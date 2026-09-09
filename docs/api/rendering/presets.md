@@ -4,7 +4,8 @@ A rendering preset combines scene settings such as the background, lighting,
 materials and shadows to create a consistent visual style. Presets provide
 editable starting points for technical views, studio scenes and other
 appearances. The images below compare these styles in Open3D and Viser using
-identical soft tentacle geometry, poses and camera settings.
+identical soft tentacle geometry, poses and camera settings. All presets use the
+default flared collar mounts; clay also applies its uniform color to the mounts.
 
 The neutral studio is the default studio variant, selected with
 `SceneConfig.studio()`. The renderer-wide default is `SceneConfig.technical()`.

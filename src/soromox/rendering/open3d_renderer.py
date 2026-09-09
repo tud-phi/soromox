@@ -170,7 +170,8 @@ def _make_base_plate(
     apply_color: bool = True,
     apply_translation: bool = True,
     normal_xyz: np.ndarray | None = None,
-    style: str = "disk",
+    *,
+    style: str,
 ) -> o3d.geometry.TriangleMesh:
     """Create a circular mount aligned with the proximal robot frame.
 
@@ -430,38 +431,38 @@ def _smooth_swept_meshes(
         normals, snaps them to their mean position and removes their buried caps.
         Exterior caps, colors and mismatched contours are preserved.
     """
-    side_normals = []
-    for mesh in meshes:
-        vertices = np.asarray(mesh.vertices)
-        faces = np.asarray(mesh.triangles)[: 2 * resolution]
-        triangles = vertices[faces]
-        face_normals = np.cross(
-            triangles[:, 1] - triangles[:, 0], triangles[:, 2] - triangles[:, 0]
-        )
-        normals = np.zeros((2 * resolution, 3))
-        np.add.at(normals, faces.reshape(-1), np.repeat(face_normals, 3, axis=0))
-        side_normals.append(normals)
-    for index, (left, right) in enumerate(zip(meshes[:-1], meshes[1:])):
-        end = slice(resolution, 2 * resolution)
-        if not np.allclose(
-            np.asarray(left.vertices)[end],
-            np.asarray(right.vertices)[:resolution],
-            rtol=0,
-            atol=tolerance,
-        ):
-            continue
-        normals = side_normals[index][end] + side_normals[index + 1][:resolution]
-        lengths = np.linalg.norm(normals, axis=1, keepdims=True)
-        normals = np.divide(
-            normals, lengths, out=np.zeros_like(normals), where=lengths > 0
-        )
-        shared_ring = (
-            np.asarray(left.vertices)[end] + np.asarray(right.vertices)[:resolution]
-        ) / 2
-        np.asarray(left.vertices)[end] = shared_ring
-        np.asarray(right.vertices)[:resolution] = shared_ring
-        np.asarray(left.vertex_normals)[end] = normals
-        np.asarray(right.vertex_normals)[:resolution] = normals
+    if len(meshes) < 2:
+        return
+    # Side rings have identical topology; optional caps can have different sizes.
+    rings = np.stack([np.asarray(mesh.vertices)[: 2 * resolution] for mesh in meshes])
+    faces = np.stack([np.asarray(mesh.triangles)[: 2 * resolution] for mesh in meshes])
+    mesh_indices = np.arange(len(meshes))[:, None, None]
+    triangles = rings[mesh_indices, faces]
+    face_normals = np.cross(
+        triangles[:, :, 1] - triangles[:, :, 0],
+        triangles[:, :, 2] - triangles[:, :, 0],
+    )
+    side_normals = np.zeros_like(rings)
+    np.add.at(
+        side_normals,
+        (mesh_indices, faces),
+        face_normals[:, :, None, :],
+    )
+    end = slice(resolution, 2 * resolution)
+    matching = np.all(
+        np.abs(rings[:-1, end] - rings[1:, :resolution]) <= tolerance, axis=(1, 2)
+    )
+    shared_normals = side_normals[:-1, end] + side_normals[1:, :resolution]
+    lengths = np.linalg.norm(shared_normals, axis=2, keepdims=True)
+    np.divide(shared_normals, lengths, out=shared_normals, where=lengths > 0)
+    shared_rings = (rings[:-1, end] + rings[1:, :resolution]) / 2
+    # Open3D owns separate mesh buffers, so write each matching interface back.
+    for index in np.flatnonzero(matching):
+        left, right = meshes[index], meshes[index + 1]
+        np.asarray(left.vertices)[end] = shared_rings[index]
+        np.asarray(right.vertices)[:resolution] = shared_rings[index]
+        np.asarray(left.vertex_normals)[end] = shared_normals[index]
+        np.asarray(right.vertex_normals)[:resolution] = shared_normals[index]
         left_faces = np.asarray(left.triangles)
         right_faces = np.asarray(right.triangles)
         left_cap = (left_faces >= 2 * resolution).any(axis=1) & (
