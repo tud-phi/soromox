@@ -32,6 +32,7 @@ from soromox.rendering.open3d_renderer import (  # noqa: E402
     _make_swept_cross_section_segment,
     _merge_triangle_meshes,
     _refresh_merged_triangle_mesh,
+    _smooth_swept_meshes,
     _update_polylines_lineset,
 )
 from soromox.systems.components import CrossSectionGeometry  # noqa: E402
@@ -321,13 +322,64 @@ def test_open3d_swept_backbone_keeps_link_interfaces_discontinuous():
     assert {
         name for name in rendering_scene.geometry_names if name.startswith("body_")
     } == {
-        "body_0_0_0",
-        "body_0_0_1",
-        "body_0_0_2",
-        "body_0_1_4",
-        "body_0_1_5",
-        "body_0_1_6",
+        "body_0_0",
     }
+
+
+@pytest.mark.parametrize("continuous", [True, False])
+def test_modern_swept_normals_only_join_matching_contours(continuous):
+    """Smooth sampling seams while retaining caps at a real radius step."""
+    resolution = 12
+    section = CrossSection(CrossSectionGeometry.CIRCULAR, np.array([0.1]))
+    other = CrossSection(
+        CrossSectionGeometry.CIRCULAR, np.array([0.1 if continuous else 0.05])
+    )
+    left = _make_swept_cross_section_segment(
+        np.zeros(3),
+        np.array([0.5, 0, 0]),
+        np.eye(3),
+        np.eye(3),
+        section,
+        section,
+        (1, 0, 0),
+        resolution,
+        cap_end=True,
+    )
+    right = _make_swept_cross_section_segment(
+        np.array([0.5 + 1e-7, 0, 0]),
+        np.array([1.0, 0, 0]),
+        np.eye(3),
+        np.eye(3),
+        other,
+        other,
+        (0, 0, 1),
+        resolution,
+        cap_start=True,
+        cap_end=True,
+    )
+    original = [np.asarray(mesh.triangles).copy() for mesh in (left, right)]
+    _smooth_swept_meshes([left, right], resolution, tolerance=2e-7)
+    if continuous:
+        assert_allclose(
+            np.asarray(left.vertex_normals)[resolution : 2 * resolution],
+            np.asarray(right.vertex_normals)[:resolution],
+        )
+        assert_allclose(
+            np.asarray(left.vertex_normals)[resolution : 2 * resolution, 0],
+            0,
+            atol=1e-10,
+        )
+        assert_array_equal(
+            np.asarray(left.vertices)[resolution : 2 * resolution],
+            np.asarray(right.vertices)[:resolution],
+        )
+        assert len(left.triangles) == 2 * resolution
+        assert len(right.triangles) == 3 * resolution
+    else:
+        for mesh, triangles in zip((left, right), original):
+            assert_array_equal(mesh.triangles, triangles)
+    assert_allclose(np.asarray(left.vertex_colors)[0], (1, 0, 0))
+    assert_allclose(np.asarray(right.vertex_colors)[0], (0, 0, 1))
 
 
 def test_swept_segment_applies_each_endpoint_material_frame():

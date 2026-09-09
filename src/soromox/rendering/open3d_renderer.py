@@ -46,6 +46,7 @@ from soromox.rendering.actuators import (
     resolve_actuator_rgba,
 )
 from soromox.rendering.base import BaseSoftRobotRenderer
+from soromox.rendering.base_geometry import base_plate_mesh
 from soromox.rendering.config import DirectionalLightConfig, RendererConfig
 from soromox.rendering.config.camera import CameraConfig
 from soromox.rendering.config.colors import RendererColorConfig, ensure_rgba
@@ -169,10 +170,30 @@ def _make_base_plate(
     apply_color: bool = True,
     apply_translation: bool = True,
     normal_xyz: np.ndarray | None = None,
+    style: str = "disk",
 ) -> o3d.geometry.TriangleMesh:
-    """Create a base plate cylinder mesh."""
-    mesh = o3d.geometry.TriangleMesh.create_cylinder(
-        radius=float(radius), height=float(thickness), resolution=resolution, split=1
+    """Create a circular mount aligned with the proximal robot frame.
+
+    Args:
+        center_xyz: Mount center in world metres.
+        radius: Maximum footprint radius in metres.
+        thickness: Total mount height in metres.
+        color: Surface RGB color.
+        resolution: Angular samples around the mount.
+        apply_color: Assign vertex colors when true.
+        apply_translation: Move the mount to ``center_xyz`` when true.
+        normal_xyz: Mount axis; None selects +Z.
+        style: Shared mounting shape accepted by ``base_plate_mesh``.
+
+    Returns:
+        Open3D mesh with smooth sides and crisp profile corners.
+
+    Raises:
+        ValueError: The mount dimensions, style or resolution are invalid.
+    """
+    vertices, faces = base_plate_mesh(radius, thickness, style, resolution)
+    mesh = o3d.geometry.TriangleMesh(
+        o3d.utility.Vector3dVector(vertices), o3d.utility.Vector3iVector(faces)
     )
     if normal_xyz is not None:
         R = _axis_alignment_rotation(normal_xyz)
@@ -183,7 +204,7 @@ def _make_base_plate(
     if apply_color:
         mesh.paint_uniform_color(np.array(color, dtype=np.float64))
     if apply_translation:
-        mesh.translate(np.array(center_xyz, dtype=np.float64), relative=False)
+        mesh.translate(np.array(center_xyz, dtype=np.float64))
     return mesh
 
 
@@ -387,6 +408,70 @@ def _merge_triangle_meshes(
             np.concatenate([np.asarray(mesh.vertex_colors) for mesh in meshes], axis=0)
         )
     return merged
+
+
+def _smooth_swept_meshes(
+    meshes: list[o3d.geometry.TriangleMesh],
+    resolution: int,
+    tolerance: float,
+) -> None:
+    """Join swept pieces with smooth side normals at matching end contours.
+
+    Args:
+        meshes: Ordered adjacent loft pieces. Each starts with two rings
+            of ``resolution`` vertices and ``2 * resolution`` side triangles;
+            optional cap vertices and triangles follow those entries.
+        resolution: Number of vertices in each cross-section contour.
+        tolerance: Absolute contour-matching tolerance in metres. This accounts
+            for the float32 sampling offsets on opposite sides of a link boundary.
+
+    Returns:
+        None. Updates matching adjacent rings with shared area-weighted side
+        normals, snaps them to their mean position and removes their buried caps.
+        Exterior caps, colors and mismatched contours are preserved.
+    """
+    side_normals = []
+    for mesh in meshes:
+        vertices = np.asarray(mesh.vertices)
+        faces = np.asarray(mesh.triangles)[: 2 * resolution]
+        triangles = vertices[faces]
+        face_normals = np.cross(
+            triangles[:, 1] - triangles[:, 0], triangles[:, 2] - triangles[:, 0]
+        )
+        normals = np.zeros((2 * resolution, 3))
+        np.add.at(normals, faces.reshape(-1), np.repeat(face_normals, 3, axis=0))
+        side_normals.append(normals)
+    for index, (left, right) in enumerate(zip(meshes[:-1], meshes[1:])):
+        end = slice(resolution, 2 * resolution)
+        if not np.allclose(
+            np.asarray(left.vertices)[end],
+            np.asarray(right.vertices)[:resolution],
+            rtol=0,
+            atol=tolerance,
+        ):
+            continue
+        normals = side_normals[index][end] + side_normals[index + 1][:resolution]
+        lengths = np.linalg.norm(normals, axis=1, keepdims=True)
+        normals = np.divide(
+            normals, lengths, out=np.zeros_like(normals), where=lengths > 0
+        )
+        shared_ring = (
+            np.asarray(left.vertices)[end] + np.asarray(right.vertices)[:resolution]
+        ) / 2
+        np.asarray(left.vertices)[end] = shared_ring
+        np.asarray(right.vertices)[:resolution] = shared_ring
+        np.asarray(left.vertex_normals)[end] = normals
+        np.asarray(right.vertex_normals)[:resolution] = normals
+        left_faces = np.asarray(left.triangles)
+        right_faces = np.asarray(right.triangles)
+        left_cap = (left_faces >= 2 * resolution).any(axis=1) & (
+            left_faces >= resolution
+        ).all(axis=1)
+        right_cap = (right_faces >= 2 * resolution).any(axis=1) & (
+            (right_faces < resolution) | (right_faces >= 2 * resolution)
+        ).all(axis=1)
+        left.triangles = o3d.utility.Vector3iVector(left_faces[~left_cap])
+        right.triangles = o3d.utility.Vector3iVector(right_faces[~right_cap])
 
 
 def _refresh_merged_triangle_mesh(
@@ -1376,9 +1461,12 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                 apply_color=False,
                 apply_translation=True,
                 normal_xyz=base_axis,
+                style=self.config.geometry.base_plate_style,
             )
             add_geometry(f"base_{robot_idx}", base_mesh, mat_for(base_color_rgba))
 
+            swept_groups: dict[tuple[float, ...], list] = {}
+            swept_pieces = []
             for s in range(layout.segments):
                 c0, c1 = int(layout.starts[s]), int(layout.ends[s])
                 raw_color_rgba = scene_data.segment_colors_rgba[robot_idx, s]
@@ -1398,11 +1486,9 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                             cap_start=self._swept_edge_caps[p][0],
                             cap_end=self._swept_edge_caps[p][1],
                         )
-                        add_geometry(
-                            f"body_{robot_idx}_{s}_{p}",
-                            body,
-                            mat_for(raw_color_rgba),
-                        )
+                        color_key = tuple(np.asarray(raw_color_rgba).reshape(-1))
+                        swept_groups.setdefault(color_key, []).append(body)
+                        swept_pieces.append(body)
                 else:
                     for p in range(c0, c1):
                         section = sections[p]
@@ -1463,6 +1549,15 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                                 ell,
                                 mat_for(raw_color_rgba),
                             )
+
+            _smooth_swept_meshes(
+                swept_pieces,
+                self.cross_section_resolution,
+                4 * np.finfo(np.float32).eps * self.L_max,
+            )
+            for group_idx, (color, pieces) in enumerate(swept_groups.items()):
+                body = _merge_triangle_meshes(pieces)
+                add_geometry(f"body_{robot_idx}_{group_idx}", body, mat_for(color))
 
             for layer_idx, layer in enumerate(scene_data.actuator_layers):
                 colors = resolve_actuator_rgba(
@@ -2587,6 +2682,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             thickness=self.base_plate_thickness,
             color=base_color,
             normal_xyz=base_axis,
+            style=self.config.geometry.base_plate_style,
         )
         vis.add_geometry(base_mesh)
 

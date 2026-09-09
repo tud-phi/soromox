@@ -25,7 +25,7 @@ BaseSoftRobotRenderer (abstract base)
 | --- | --- | --- |
 | `BaseSoftRobotRenderer` | Backbone sampling, cached forward kinematics, batched layouts, color resolution, and the common rendering interface | All renderers |
 | Robot base | `fixed_base_pose` mounts fixed robots; floating renderers follow the base coordinates in each runtime configuration | All renderers |
-| Base plate | `config.geometry.base_plate_radius_scale` and `base_plate_thickness` configure the base geometry | Open3D and Viser; Matplotlib draws a lightweight base marker |
+| Base plate | `config.geometry.base_plate_style`, `base_plate_radius_scale` and `base_plate_thickness` configure the mount | Open3D and Viser; Matplotlib draws a lightweight base marker |
 | Ground plane | `config.scene.ground` configures a world floor or base-aligned planes, including colors, size, grid and opacity | All renderers, with backend approximations |
 
 ### Cross-Section Geometry
@@ -36,7 +36,7 @@ constant or abscissa-varying dimensions.
 
 | `backbone_style` | Representation | Resolution controls |
 | --- | --- | --- |
-| `"swept"` | Link-local surfaces lofted from ordered material-frame contours; link interfaces remain separate and capped | `num_points` is the longitudinal station count; `cross_section_resolution` is the transverse contour resolution |
+| `"swept"` | Surfaces lofted from ordered material-frame contours; modern Open3D joins matching link ends with smooth normals and retains caps at cross-section discontinuities | `num_points` is the longitudinal station count; `cross_section_resolution` is the transverse contour resolution |
 | `"discrete"` | Independent spheres, boxes, or ellipsoids aligned with the local material frame | `num_points` is the marker count; `cross_section_resolution` is ignored |
 
 Swept rendering assigns at least two stations to every positive-length link;

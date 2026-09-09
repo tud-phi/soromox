@@ -117,7 +117,7 @@ Both renders remove surface-light gradients, shadows and floor context, as in th
 
 Backbones and mounts share one warm-grey matte material. Directional gradients and contact shadows describe form, following the clay character reference. Open3D has stronger contact definition; Viser looks smoother and lighter. Skin scattering, fine sculpted detail and compositing are not simulated.
 
-All comparisons concern visual properties of different objects, not pixel similarity. Narrow rings at link transitions come from the two-link surface geometry. Directional shadow maps can show bias and edge artifacts; the references often use area lights or more elaborate material and compositing treatments.
+All comparisons concern visual properties of different objects, not pixel similarity. Modern Open3D smooths matching link contours to avoid artificial shading seams; real changes in cross-section remain visible. Directional shadow maps can show bias and edge artifacts; the references often use area lights or more elaborate material and compositing treatments.
 
 ## Visual references
 

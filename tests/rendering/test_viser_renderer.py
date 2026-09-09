@@ -1,6 +1,7 @@
 """Tests for the generic Viser soft-robot renderer."""
 
 from contextlib import contextmanager
+from unittest.mock import Mock
 
 import jax.numpy as jnp
 import numpy as np
@@ -9,6 +10,7 @@ from numpy.testing import assert_allclose, assert_array_equal
 from PIL import Image
 
 from soromox.rendering.actuators import ActuatorVisualLayer
+from soromox.rendering.base_geometry import base_plate_mesh
 from soromox.rendering.config import (
     GeometryConfig,
     GroundPlaneConfig,
@@ -1263,3 +1265,30 @@ def test_viser_paused_frame_slider_seeks_rendered_frame():
     assert sought_frames == [2, 3]
     assert renderer._gui_handles["frame_slider"].value == 3
     assert renderer._gui_handles["time_text"].value == "t = 0.30 s"
+
+
+@pytest.mark.parametrize(
+    "style", ["disk", "beveled_disk", "truncated_cone", "flared_collar"]
+)
+def test_viser_registers_shared_mount_geometry(monkeypatch, style):
+    """Every mount style uses the shared shape, radius scaling and material color."""
+    pytest.importorskip("viser")
+    from soromox.rendering.viser_renderer import ViserRenderer
+
+    robot = DummySpatialRobot(jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]))
+    renderer = ViserRenderer(
+        robot,
+        auto_start=False,
+        config=RendererConfig(
+            geometry=GeometryConfig(base_plate_style=style, base_plate_thickness=0.024)
+        ),
+    )
+    add = Mock()
+    monkeypatch.setattr(renderer, "_add_trimesh", add)
+    renderer._add_base_plate(0, np.array([0.4, 0.2, 0.3]), (0.2, 0.3, 0.4))
+    mesh = add.call_args.kwargs["mesh"]
+    vertices, faces = base_plate_mesh(0.04, 0.024, style)
+    assert_allclose(mesh.vertices, vertices, atol=1e-8)
+    assert_array_equal(mesh.faces, faces)
+    assert add.call_args.kwargs["surface_color"] == (0.2, 0.3, 0.4)
+    assert_allclose(add.call_args.kwargs["position"], [0.388, 0.2, 0.3])

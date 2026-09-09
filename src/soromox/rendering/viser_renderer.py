@@ -46,6 +46,7 @@ except ImportError:
 
 from soromox.rendering.actuators import resolve_actuator_rgba
 from soromox.rendering.base import BaseSoftRobotRenderer
+from soromox.rendering.base_geometry import base_plate_mesh
 from soromox.rendering.config import DirectionalLightConfig, RendererConfig
 from soromox.rendering.config.camera import CameraConfig
 from soromox.rendering.config.colors import RendererColorConfig, ensure_rgba
@@ -865,18 +866,26 @@ class ViserRenderer(BaseSoftRobotRenderer):
         base_point: np.ndarray,
         base_plate_color: tuple[float, float, float],
     ):
-        """Add a base plate using the standard renderer base transform convention."""
+        """Add the configured mount at the robot's proximal frame.
+
+        Args:
+            robot_idx: Robot index used in the scene path.
+            base_point: Proximal backbone position in world metres.
+            base_plate_color: Mount sRGB color.
+
+        Returns:
+            Viser mesh handle with the configured surface material.
+        """
         base_pos, base_wxyz = self._base_plate_pose(base_point)
+        vertices, faces = base_plate_mesh(
+            self._backbone_marker_scales[0] * self._base_plate_radius_scale,
+            self._base_plate_thickness,
+            self.config.geometry.base_plate_style,
+        )
         return self._add_trimesh(
             name=f"/robots/robot_{robot_idx}/base_plate",
-            mesh=self._make_cylinder_trimesh(
-                length=self._base_plate_thickness,
-                radius=(
-                    self._backbone_marker_scales[0] * self._base_plate_radius_scale
-                ),
-                color=base_plate_color,
-                direction=None,  # Already Z-aligned
-            ),
+            mesh=trimesh.Trimesh(vertices, faces, process=False),
+            surface_color=base_plate_color,
             position=tuple(base_pos),
             wxyz=base_wxyz,
         )

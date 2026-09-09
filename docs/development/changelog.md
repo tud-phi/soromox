@@ -19,6 +19,8 @@ and include benchmark baseline and measurement context for performance claims.
 - Added shared scene settings for lighting, materials, shadows, ground planes and
   curved backdrops, with technical, neutral/bright/dark studio, flat and clay
   presets and an Open3D/Viser tentacle gallery.
+- Added disk, beveled disk, truncated cone and flared collar robot mounts shared
+  by Open3D and Viser, selected with `config.geometry.base_plate_style`.
 - Added reproducible Open3D development builds for macOS and Linux x86-64,
   including Metal image capture, neutral color grading and selectable linear/ACES
   tone mapping, and surfaceless EGL exports alongside GLX interactive viewing.
@@ -50,12 +52,16 @@ and include benchmark baseline and measurement context for performance claims.
   The automatic camera distance factor is 1.5 instead of 10.0. Ground
   planes use world alignment (+Z spatial, +Y planar); base alignment is optional.
   OpenCV sequence options are keyword-only, with a required recording path.
+  Open3D and Viser use flared collar mounts by default; `base_plate_style="disk"`
+  selects a cylindrical mount.
 - Open3D sequences with `record_path` synchronously export through the modern
   renderer and return without interactive playback. `record_every_n` reduces both
   frame count and FPS; playback controls do not affect exported frames.
 
 ### Fixed
 
+- Modern Open3D swept surfaces share smooth normals at matching link ends,
+  removing artificial inter-segment seams while preserving cross-section steps.
 - Open3D static viewing checks Linux window creation in a separate process and
   reports native display failures with their logs before initializing the viewer.
 - Matplotlib video exports respect configured pixel dimensions regardless of the

@@ -29,6 +29,8 @@ class GeometryConfig:
         num_points: Backbone samples, at least two.
         cross_section_resolution: Contour samples, at least three.
         backbone_style: Swept surface or discrete cross-section markers.
+        base_plate_style: Circular mounting shape for Open3D and Viser. The
+            default flared collar has a flange, tapered body and upper rim.
         base_plate_radius_scale: Base plate radius relative to cross-section size.
         base_plate_thickness: Plate thickness in metres.
         line_width: Backbone width in pixels for line-based renderers; None selects
@@ -40,6 +42,9 @@ class GeometryConfig:
     num_points: int = 80
     cross_section_resolution: int = 48
     backbone_style: Literal["swept", "discrete"] = "swept"
+    base_plate_style: Literal[
+        "disk", "beveled_disk", "truncated_cone", "flared_collar"
+    ] = "flared_collar"
     base_plate_radius_scale: float = 2.0
     base_plate_thickness: float = 0.06
     line_width: float | None = 4.0
@@ -65,6 +70,13 @@ class GeometryConfig:
                 raise ValueError(f"{name} must be an integer >= {minimum}")
         if self.backbone_style not in ("swept", "discrete"):
             raise ValueError("backbone_style must be swept or discrete")
+        if self.base_plate_style not in (
+            "disk",
+            "beveled_disk",
+            "truncated_cone",
+            "flared_collar",
+        ):
+            raise ValueError("Unknown base_plate_style")
         for name in (
             "base_plate_radius_scale",
             "base_plate_thickness",

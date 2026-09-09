@@ -63,11 +63,35 @@ during camera fitting or playback. Public colors are sRGB.
 reflectance, opacity, face normals and wireframe. `config.scene.shadows` and
 `config.scene.ambient_occlusion` enable shadow and occlusion effects where supported.
 
-### Ground plane and backdrop
+### Robot base
 
 Robot poses come from the model's fixed base or floating runtime coordinates.
-`config.geometry.base_plate_radius_scale` and `base_plate_thickness` control
-base geometry. The independent `config.scene.ground` describes the floor:
+Open3D and Viser support four circular mounting shapes through
+`config.geometry.base_plate_style`: `"disk"`, `"beveled_disk"`,
+`"truncated_cone"` and `"flared_collar"` (the default). The flared collar has
+a lower flange, tapered body and upper rim; the beveled disk provides a smaller
+visual accent. Matplotlib and OpenCV use their existing base markers.
+
+`base_plate_radius_scale` multiplies the proximal cross-section's maximum radial
+extent: the circle radius, larger ellipse semi-axis, or rectangle half-diagonal.
+The default multiplier is 2.0. `base_plate_thickness` specifies the total mount
+height in metres (default 0.06), independently of the radius. The mount extends
+behind the robot's proximal point along its base axis.
+
+```python
+config.geometry.base_plate_style = "flared_collar"
+config.geometry.base_plate_radius_scale = 2.0
+config.geometry.base_plate_thickness = 0.024
+```
+
+![Four base shapes in Open3D (left) and Viser (right)](../../assets/rendering/base-shapes.jpg)
+
+The disk and beveled disk above use a 28 mm radius and 12 mm height; the cone
+and collar use a 32 mm radius and 24 mm height. Each style can use either size.
+
+### Ground plane and backdrop
+
+The independent `config.scene.ground` describes the floor:
 
 ```python
 from soromox.rendering import GroundPlaneConfig
