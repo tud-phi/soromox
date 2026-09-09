@@ -31,13 +31,17 @@ PALETTE = [
     (0.27, 0.48, 0.85),
     (0.78, 0.28, 0.43),
 ]
+BASE_PLATE_THICKNESS = 0.012
 
 
-def make_tentacle():
+def make_tentacle(mounting="upright"):
     """Construct two tapered GVS links with the Section Va external dimensions.
 
+    Args:
+        mounting: Upright or hanging spatial mounting.
+
     Returns:
-        Upright GVS tentacle with two fixed joints and constant six-component
+        GVS tentacle with two fixed joints and constant six-component
         strain coordinates per link. Lengths and radii are specified in metres.
     """
     links = [
@@ -68,7 +72,7 @@ def make_tentacle():
             )
             for link in links
         ],
-        base_pose=spatial_mounting_pose("upright"),
+        base_pose=spatial_mounting_pose(mounting),
     )
 
 
@@ -85,11 +89,14 @@ POSES = np.array(
 PRESETS = ("technical", "neutral", "bright", "dark", "flat", "clay")
 
 
-def make_comparison(preset="neutral", *, count=5, width=1920, height=1080):
+def make_comparison(
+    preset="neutral", *, count=5, width=1920, height=1080, mounting="upright"
+):
     """Prepare one preset with identical robot geometry and camera framing.
 
     Args:
         preset: Name from PRESETS.
+        mounting: Upright or hanging; rotates scenery and camera together.
         count: One central tentacle or all five prescribed tentacles.
         width: Export width in pixels.
         height: Export height in pixels.
@@ -100,11 +107,13 @@ def make_comparison(preset="neutral", *, count=5, width=1920, height=1080):
     Raises:
         ValueError: Preset name or robot count is invalid.
     """
+    if mounting not in ("upright", "hanging"):
+        raise ValueError("mounting must be upright or hanging")
     if preset not in PRESETS or count not in (1, 5):
         raise ValueError("Choose a known preset and a robot count of one or five")
     indices = np.arange(5) if count == 5 else np.array([2])
     offsets = np.array(
-        [[(i - 2) * 0.23 if count == 5 else 0, 0.015 * (i % 2), 0.012] for i in indices]
+        [[(i - 2) * 0.23 if count == 5 else 0, 0.015 * (i % 2), 0.0] for i in indices]
     )
     distance = 1.15 if count == 5 else 0.70
     config = (
@@ -118,16 +127,17 @@ def make_comparison(preset="neutral", *, count=5, width=1920, height=1080):
             else SceneConfig.studio(style=preset)
         )
     )
+    config.scene.ground.height_reference = "base_mounting_face"
     config.camera = CameraConfig(
         fov=35,
-        position=(0.12 * distance, -distance, 0.16 + 0.4 * distance),
+        position=(0.0, -distance, 0.16 + 0.4 * distance),
         look_at=(0, 0, 0.16),
     )
     config.geometry = GeometryConfig(
         num_points=155,
         cross_section_resolution=48,
         base_plate_radius_scale=0.028 / 0.01541,
-        base_plate_thickness=0.012,
+        base_plate_thickness=BASE_PLATE_THICKNESS,
     )
     config.output = RenderOutputConfig(width=width, height=height)
     if preset != "clay":
@@ -137,4 +147,10 @@ def make_comparison(preset="neutral", *, count=5, width=1920, height=1080):
             ),
             base_plate_color=(0.16, 0.18, 0.18),
         )
+    if mounting == "hanging":
+        rotation = np.diag([-1.0, 1.0, -1.0])
+        config.scene.ground.normal = (0.0, 0.0, -1.0)
+        config.camera.position = tuple(rotation @ config.camera.position)
+        config.camera.look_at = tuple(rotation @ config.camera.look_at)
+        offsets = offsets @ rotation.T
     return config, POSES[indices], offsets

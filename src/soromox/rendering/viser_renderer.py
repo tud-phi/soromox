@@ -60,6 +60,7 @@ from soromox.rendering.scenery import (
     backdrop_mesh,
     ground_grid,
     plane_basis,
+    resolved_lights,
     srgb_to_linear,
 )
 from soromox.rendering.video_encoding import FFmpegVideoWriter
@@ -483,7 +484,13 @@ class ViserRenderer(BaseSoftRobotRenderer):
             raise ValueError("base_positions must have shape (N, 3)")
         if cfg.backdrop.enabled:
             vertices, faces = backdrop_mesh(
-                cfg, self._appearance_center, self._appearance_extent, self._world_up()
+                cfg,
+                self._appearance_center,
+                self._appearance_extent,
+                self._world_up(),
+                ground_height=self._resolve_ground_height(
+                    bases, getattr(self, "_ground_base_axes", None)
+                ),
             )
             mesh = trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
             handle = self._add_trimesh(
@@ -1402,7 +1409,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
         # Viser derives directional-light rays from world position toward the
         # origin; rotating a light at the origin leaves its direction undefined.
         # Filament's reference EV15 maps a 60000 lux key to a browser intensity of 1.2.
-        for i, light in enumerate(cfg.lights):
+        for i, light in enumerate(resolved_lights(cfg, self._world_up())):
             params = {
                 "name": f"/lights/configured_{i}",
                 "color": _rgb_to_viser_color(np.array(light.color)),

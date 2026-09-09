@@ -25,8 +25,10 @@ import jax
 
 from soromox.rendering.config import (
     GeometryConfig,
+    GroundPlaneConfig,
     RendererConfig,
     RenderOutputConfig,
+    SceneConfig,
 )
 
 jax.config.update("jax_enable_x64", True)
@@ -591,6 +593,11 @@ def render_motion(
         config=RendererConfig(
             output=RenderOutputConfig(width=1280, height=720),
             geometry=GeometryConfig(num_points=80, backbone_style="discrete"),
+            scene=SceneConfig.technical(
+                ground=GroundPlaneConfig(
+                    surface=False, height_reference="base_mounting_face"
+                )
+            ),
         ),
     )
     renderer.render_sequence(

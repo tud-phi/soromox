@@ -38,8 +38,9 @@ def main():
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path(__file__).resolve().parent / "figures" / "presets",
+        default=None,
     )
+    parser.add_argument("--mounting", choices=("upright", "hanging"), default="upright")
     parser.add_argument("--count", type=int, choices=(1, 5), default=5)
     parser.add_argument("--port", type=int, default=8091)
     parser.add_argument("--width", type=int, default=1920)
@@ -68,8 +69,12 @@ def main():
     if renderer_type is None:
         parser.error(f"Install the {args.backend} rendering dependency first")
     selected = PRESETS if args.preset == "all" else (args.preset,)
+    if args.output_dir is None:
+        args.output_dir = Path(__file__).resolve().parent / "figures" / "presets"
+        if args.mounting == "hanging":
+            args.output_dir /= "hanging"
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    robot = make_tentacle()
+    robot = make_tentacle(args.mounting)
     metadata = []
     server_owner = None
     try:
@@ -85,7 +90,11 @@ def main():
                 time.sleep(0.2)
         for preset in selected:
             config, q, offsets = make_comparison(
-                preset, count=args.count, width=args.width, height=args.height
+                preset,
+                count=args.count,
+                width=args.width,
+                height=args.height,
+                mounting=args.mounting,
             )
             if server_owner is None:
                 renderer = renderer_type(robot, config=config)

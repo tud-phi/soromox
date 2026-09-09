@@ -9,12 +9,11 @@ import os
 import shutil
 import subprocess
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from soromox.rendering.config import (
     GeometryConfig,
-    GroundPlaneConfig,
     RendererConfig,
     RenderOutputConfig,
     SceneConfig,
@@ -37,7 +36,6 @@ from soromox.systems import PCS, LinkSpec
 if __package__:
     from .rl_render_style import (
         BACKBONE_NUM_POINTS,
-        BACKGROUND_COLOR,
         RENDER_HEIGHT,
         RENDER_WIDTH,
         TARGET_COLOR,
@@ -49,7 +47,6 @@ if __package__:
 else:
     from rl_render_style import (
         BACKBONE_NUM_POINTS,
-        BACKGROUND_COLOR,
         RENDER_HEIGHT,
         RENDER_WIDTH,
         TARGET_COLOR,
@@ -574,10 +571,13 @@ def render_rollout_to_mp4(
                 grid_spacing=(args.grid_spacing, args.grid_spacing),
             ),
             colors=make_rl_color_config(color_label),
-            scene=SceneConfig(
-                background=BACKGROUND_COLOR,
-                ground=GroundPlaneConfig(
-                    size=args.grid_spacing if rollout.num_envs > 1 else None
+            scene=SceneConfig.studio(
+                "neutral",
+                ground=replace(
+                    SceneConfig.studio().ground,
+                    height=-0.06,
+                    height_reference="world",
+                    size=args.grid_spacing if rollout.num_envs > 1 else None,
                 ),
             ),
         ),

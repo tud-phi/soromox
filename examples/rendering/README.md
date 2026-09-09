@@ -15,6 +15,23 @@ The [preset gallery](../../docs/api/rendering/presets.md) compares the two backe
 The model, five prescribed poses, placement, palette and camera are shared in
 `tentacle_scene.py`.
 
+
+Use `--mounting hanging` to compare every preset with a robot extending along
+−z and an overhead mounting surface:
+
+```bash
+python examples/rendering/preset_gallery.py --backend open3d --mounting hanging
+python examples/rendering/preset_gallery.py --backend viser --mounting hanging
+```
+
+The default is `--mounting upright`. Both orientations use a centered frontal
+view, with no sideways camera offset; the vertical viewing angle reveals the
+mounting surface. Hanging captures default to
+`figures/presets/hanging/`. The mode rotates the robot, placement, ground basis,
+preset lights and camera position together, while retaining camera up at +z to
+present the composition upside down. It also works with `--count 1`,
+`--interactive`, and Open3D `--video-output`.
+
 To inspect one preset or export a prescribed two-second motion:
 
 ```bash
@@ -60,6 +77,10 @@ use a low, eased sweep (`radius=0.40`, `vertical_radius=0.23`,
 distinct lighting; clay uses neutral lighting with an extra cool rim light.
 Both example commands resolve the selected preset settings through the shared
 configuration factories; no manual scene setup is needed.
+
+The gallery selects `GroundPlaneConfig(height_reference="base_mounting_face")` so
+the floor meets the mounting face of the configured base plate. The default remains
+`height_reference="world"`, which places the world floor at `height=0`.
 
 Static Viser capture supplies the camera pose explicitly and waits for stable
 images while the browser loads its meshes. The patched Open3D build uses Filmic

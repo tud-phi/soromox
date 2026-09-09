@@ -13,6 +13,10 @@ and include benchmark baseline and measurement context for performance claims.
 
 ### Added
 
+- Added `--mounting hanging` to the preset gallery for all six presets in Open3D
+  and Viser, with separate output paths for hanging captures and a centered
+  frontal camera for both mounting orientations.
+
 - Added a UMArm operational-space example using
   `OperationalSpaceImpedanceControlTracker` and balanced antagonistic pressure
   inputs to track a base-parallel circle.
@@ -22,6 +26,9 @@ and include benchmark baseline and measurement context for performance claims.
   tentacle gallery. Shared robot mounts include disk, beveled disk, truncated
   cone and flared collar shapes, selected with
   `config.geometry.base_plate_style`.
+- Added opt-in `GroundPlaneConfig(height_reference="base_mounting_face")` for
+  placing world floors and curved studio backdrops at the mounting face of the
+  configured robot base plate; the default world-origin height is unchanged.
 - Added reproducible Open3D development builds for macOS and Linux x86-64,
   including Metal image capture, neutral color grading and selectable linear/ACES
   tone mapping, and surfaceless EGL exports alongside GLX interactive viewing.
@@ -30,6 +37,9 @@ and include benchmark baseline and measurement context for performance claims.
 
 ### Changed
 
+- Regenerated the backend and preset galleries, including hanging views, and
+  Section V paper videos, snapshots and website media with neutral studio styling.
+  Hanging studio scenes retain the curved wall-to-ceiling backdrop.
 - Open3D static `show()` and image exports use the modern renderer. Animated
   previews use the same camera projection, retain efficient legacy geometry
   updates and warn about appearance differences. Viser applies or approximates
@@ -60,6 +70,10 @@ and include benchmark baseline and measurement context for performance claims.
   frame count and FPS; playback controls do not affect exported frames.
 
 ### Fixed
+
+- Preset lights now follow the ground normal, and the −z backdrop keeps its wall
+  behind the scene. Explicit world lights retain their coordinates. Gallery
+  mounting-height selection preserves each preset's ground color and visibility.
 
 - Modern Open3D swept surfaces share smooth normals at matching link ends,
   removing artificial inter-segment seams while preserving cross-section steps.

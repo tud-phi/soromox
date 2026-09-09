@@ -410,7 +410,7 @@ def test_initial_median_requires_a_finite_initial_loss():
         renderer.initial_median_batch(data)
 
 
-def test_shared_camera_is_level_framed_and_gravity_down():
+def test_shared_camera_is_centered_framed_and_gravity_down():
     total_length = 0.1
     camera = renderer.make_camera_config(total_length)
     position = np.asarray(camera.position)
@@ -421,9 +421,10 @@ def test_shared_camera_is_level_framed_and_gravity_down():
     )
 
     assert camera.up == (0.0, 0.0, -1.0)
-    assert view_offset[2] == pytest.approx(0.0)
-    assert look_at[2] == pytest.approx(0.55 * total_length)
-    assert 1.8 * total_length < vertical_span < 2.4 * total_length
+    assert position[0] == look_at[0] == 0.0
+    assert view_offset[2] > 0.0  # Reveal the overhead mounting surface.
+    assert look_at[2] == pytest.approx(0.25 * total_length)
+    assert 2.4 * total_length < vertical_span < 3.0 * total_length
 
 
 def test_recording_client_flushes_camera_before_the_first_frame(monkeypatch):
