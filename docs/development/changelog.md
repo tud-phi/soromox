@@ -334,8 +334,7 @@ and include benchmark baseline and measurement context for performance claims.
 - Differentiable unit-response mappings from Young's modulus with either shear
   modulus or Poisson's ratio, plus optional material damping, to canonical
   generalized link matrices.
-- Continuum-component, parameter-update, material-optimization, and
-  [parameter-API migration](../user-guide/parameter-api-migration.md)
+- Continuum-component, parameter-update, and material-optimization
   documentation with complete PCS and GVS examples.
 
 - Compiled parameter-update examples and regression coverage for every public
@@ -532,9 +531,7 @@ and include benchmark baseline and measurement context for performance claims.
   arguments.
 - Moved `reference_strain` from `StrainBasisSpec` to `LinkSpec`; basis specs now
   describe only the selected strains and basis order.
-- No compatibility aliases are provided. See the compact
-  [PCS/GVS parameter migration guide](../user-guide/parameter-api-migration.md)
-  for direct replacements.
+- No compatibility aliases are provided.
 
 ## [0.2.2] - 2026-08-11
 

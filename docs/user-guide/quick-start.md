@@ -189,9 +189,6 @@ performance settings.
 - **Type Safety**: Clear interfaces with static type checking
 - **Performance**: Optimized computation graphs compiled at runtime
 
-!!! note "Migration from Factory Pattern"
-    SoRoMoX previously used a factory pattern, but has migrated to object-oriented classes for better extensibility and maintainability. All systems now inherit from `DynamicalSystem` or `SoftRobot` base classes. See the [API Reference](../api/overview.md) for details.
-
 ### 📋 Typed Parameters
 
 Each robot system expects a typed Equinox PyTree params object. Numeric fields are

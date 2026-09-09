@@ -2,20 +2,6 @@
 
 **Get started with SoRoMoX in minutes!** Choose from multiple installation methods to get Soft Robot Models in jaX (SoRoMoX) running on your system.
 
-!!! warning "📢 Migration from JSRM"
-    
-    If you're migrating from the [JSRM package](https://github.com/tud-phi/jax-soft-robot-modeling), please note that SoRoMoX introduces breaking changes:
-    
-    - **Package Name**: `import jsrm` → `import soromox`
-    - **Architecture**: Functional approach → Object-oriented Equinox dataclasses
-    - **Performance**: Symbolic derivations → Numerical implementations
-    - **New Soft Robot Models**: Support for Spatial PCS, GVS, and articulated soft robot systems
-    - **Actuation**: Popular soft robot actuation modalities such as tendon and pressure actuation are implemented into the models (instead of just direct-torque actuation like in JSRM)
-    - **Renderers**: SoRoMoX includes built-in renderers for visualization
-    - **Control**: Model-based control implementations are included
-
----
-
 ## 🔧 Requirements
 
 !!! note "System Requirements"

@@ -97,7 +97,6 @@ nav:
           - Overview: api/rendering/index.md
           - Renderer API: api/rendering/renderers.md
           - Shared Configuration: api/rendering/configuration.md
-          - Migration Guide: api/rendering/migration.md
       - Actuation:
           - Actuation Model: api/actuation/index.md
           - Generalized-Coordinate Actuation: api/actuation/generalized-coordinate.md
