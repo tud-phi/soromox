@@ -274,7 +274,7 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
             render_actuators=render_actuators,
             actuator_inputs=actuator_inputs,
         )
-        plt.figure(figsize=(self.width / 100, self.height / 100))
+        plt.figure(figsize=(self.width / 100, self.height / 100), dpi=100)
         plt.imshow(img)
         plt.axis("off")
         plt.tight_layout()
@@ -580,7 +580,7 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
         max_extent = float(np.max(np.abs(all_curves))) if all_curves.size else 0.0
         width_m = max(self.L_max * 3, 2.0 * max_extent * 1.1)
 
-        fig = plt.figure(figsize=(self.width / 100, self.height / 100))
+        fig = plt.figure(figsize=(self.width / 100, self.height / 100), dpi=100)
         fig.patch.set_facecolor(self.background_color)
 
         if self.is_3d:

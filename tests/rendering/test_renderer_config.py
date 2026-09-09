@@ -225,6 +225,7 @@ def test_srgb_conversion_round_trip():
 
 
 def test_open3d_converts_point_flux_and_applies_exposure_without_mutating(monkeypatch):
+    pytest.importorskip("open3d")
     from test_viser_renderer import DummySpatialRobot
 
     from soromox.rendering import Open3DRenderer
@@ -256,7 +257,10 @@ def test_open3d_converts_point_flux_and_applies_exposure_without_mutating(monkey
     assert renderer.config.camera.exposure_ev100 == 15
 
 
-def test_matplotlib_video_override_replaces_output_section(monkeypatch, tmp_path):
+@pytest.mark.parametrize("global_dpi", [72, 100, 300])
+def test_matplotlib_video_override_replaces_output_section(
+    monkeypatch, tmp_path, global_dpi
+):
     import soromox.rendering.matplotlib_renderer as module
     from soromox.rendering import VideoEncodingConfig
 
@@ -274,6 +278,7 @@ def test_matplotlib_video_override_replaces_output_section(monkeypatch, tmp_path
             pass
 
     monkeypatch.setattr(module, "FFmpegVideoWriter", Writer)
+    monkeypatch.setitem(module.plt.rcParams, "figure.dpi", global_dpi)
     default = VideoEncodingConfig(crf=20)
     override = VideoEncodingConfig(crf=8)
     renderer = MatplotlibRenderer(

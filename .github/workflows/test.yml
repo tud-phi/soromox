@@ -52,6 +52,11 @@ jobs:
           python -m pip install ./tools/open3d
           python -m pip install -e ".[rendering,test]"
 
+      - name: Test Open3D configuration adaptation
+        run: |
+          python -m pytest -q \
+            tests/rendering/test_renderer_config.py::test_open3d_converts_point_flux_and_applies_exposure_without_mutating
+
       - name: Test headless frame and MP4 export
         run: |
           env -u DISPLAY \

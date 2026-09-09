@@ -57,6 +57,8 @@ and include benchmark baseline and measurement context for performance claims.
 
 ### Fixed
 
+- Matplotlib video exports respect configured pixel dimensions regardless of the
+  global figure DPI setting.
 - Matplotlib static ground surfaces no longer cover robot lines above the floor;
   rounded line joins remove visible gaps between sampled backbone segments.
 
