@@ -62,8 +62,14 @@ OUTPUT_DIR = CASE_DIR / "outputs"
 
 DEFAULT_ARM_LENGTH = 0.25
 DEFAULT_ARM_RADIUS = 0.025
-DEFAULT_GRID_SPACING = 0.16
+DEFAULT_GRID_SPACING = 0.24
+PARALLEL_BACKBONE_NUM_POINTS = 40
 GRID_CAMERA_DISTANCE_FACTOR = 5.5
+GRID_FRAME_FILL = 1.12
+GRID_ROBOT_WIDTH_MARGIN = 0.5
+GRID_CAMERA_LOOK_DEPTH = 0.25
+GRID_CAMERA_HEIGHT = 1.5
+GRID_CAMERA_LOOK_HEIGHT = 0.35
 # Camera offsets are expressed in the arm's base frame. This transforms to the
 # symmetric world-grid direction (0.8, -0.8, 0.9), retaining an elevated view.
 GRID_CAMERA_POSITION_OFFSET = (0.9, -0.8, 0.8)
@@ -425,6 +431,15 @@ def make_grid_offsets(
     return offsets
 
 
+def resolve_backbone_num_points(num_envs: int, override: int | None) -> int:
+    """Use fewer discrete markers for dense grids unless explicitly overridden."""
+    if override is not None:
+        if override <= 0:
+            raise ValueError("--num-points must be positive")
+        return override
+    return BACKBONE_NUM_POINTS if num_envs == 1 else PARALLEL_BACKBONE_NUM_POINTS
+
+
 def make_render_camera_config(
     *,
     num_envs: int,
@@ -434,18 +449,34 @@ def make_render_camera_config(
     distance_factor: float | None,
     position_offset: tuple[float, float, float] | None,
     grid_span: float = 0.0,
+    aspect_ratio: float = RENDER_WIDTH / RENDER_HEIGHT,
 ) -> CameraConfig:
     """Select the fixed paper camera or a scene-aware automatic camera."""
     manual_auto_camera = distance_factor is not None or position_offset is not None
     if num_envs == 1 and not manual_auto_camera:
         return make_rl_camera_config(arm_length, fov=fov, up=up)
     if num_envs > 1 and not manual_auto_camera:
-        # Face the rear wall squarely and fit the robot grid, excluding scenery.
-        span = grid_span + 2.0 * arm_length
-        distance = 0.6375 * span / np.tan(np.deg2rad(fov / 2.0))
+        if grid_span <= 0.0:
+            raise ValueError("grid_span must be positive for a multi-robot camera")
+        if aspect_ratio <= 0.0:
+            raise ValueError("aspect_ratio must be positive")
+
+        # Place the camera just beyond the front row and aim through the grid.
+        # The outer robots cross the side boundary to suggest that the parallel
+        # scene continues beyond the visible frame.
+        scene_width = grid_span + GRID_ROBOT_WIDTH_MARGIN * arm_length
+        distance = scene_width / (
+            2.0 * aspect_ratio * np.tan(np.deg2rad(fov / 2.0)) * GRID_FRAME_FILL
+        )
+        look_at_z = GRID_CAMERA_LOOK_HEIGHT * arm_length
+        camera_z = GRID_CAMERA_HEIGHT * arm_length
+        vertical_offset = camera_z - look_at_z
+        distance = max(distance, 1.05 * vertical_offset)
+        horizontal_offset = np.sqrt(max(distance**2 - vertical_offset**2, 0.0))
+        look_at_y = -(0.5 - GRID_CAMERA_LOOK_DEPTH) * grid_span
         return CameraConfig(
-            position=(0.0, -0.67 * distance, 0.35 * arm_length + 0.74 * distance),
-            look_at=(0.0, 0.0, 0.35 * arm_length),
+            position=(0.0, look_at_y - horizontal_offset, camera_z),
+            look_at=(0.0, look_at_y, look_at_z),
             fov=fov,
             up=up,
         )
@@ -560,10 +591,14 @@ def render_rollout_to_mp4(
         distance_factor=args.camera_distance_factor,
         position_offset=args.camera_position_offset,
         grid_span=float(np.max(np.ptp(offsets, axis=0))),
+        aspect_ratio=args.width / args.height,
     )
 
     static_positions = static_radii = static_colors = None
-    if args.show_trajectory:
+    show_trajectory = (
+        rollout.num_envs == 1 if args.show_trajectory is None else args.show_trajectory
+    )
+    if show_trajectory:
         static_positions, static_radii, static_colors = make_target_trail_spheres(
             shifted_ball_ts
         )
@@ -577,7 +612,10 @@ def render_rollout_to_mp4(
         config=RendererConfig(
             output=RenderOutputConfig(width=args.width, height=args.height),
             geometry=GeometryConfig(
-                num_points=args.num_points,
+                num_points=resolve_backbone_num_points(
+                    rollout.num_envs,
+                    args.num_points,
+                ),
                 backbone_style="discrete",
                 actuator_line_width=args.tendon_line_width,
                 grid_spacing=(args.grid_spacing, args.grid_spacing),
@@ -680,12 +718,23 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--show-trajectory",
         action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Show each target ball's dotted trajectory trail.",
+        default=None,
+        help=(
+            "Show each target ball's dotted trajectory trail. Defaults to enabled "
+            "for one environment and disabled for parallel grids."
+        ),
     )
     parser.add_argument("--width", type=int, default=RENDER_WIDTH)
     parser.add_argument("--height", type=int, default=RENDER_HEIGHT)
-    parser.add_argument("--num-points", type=int, default=BACKBONE_NUM_POINTS)
+    parser.add_argument(
+        "--num-points",
+        type=int,
+        default=None,
+        help=(
+            "Backbone markers per robot. Defaults to 80 for a single arm and 40 "
+            "for parallel grids."
+        ),
+    )
     parser.add_argument("--sphere-resolution", type=int, default=12)
     parser.add_argument("--tendon-line-width", type=float, default=1.0)
     parser.add_argument("--record-every-n", type=int, default=1)
@@ -731,8 +780,10 @@ def main(argv: list[str] | None = None) -> None:
         raise ValueError("--gif-fps must be positive")
     if args.gif_width < 0:
         raise ValueError("--gif-width must be nonnegative")
-    if args.width <= 0 or args.height <= 0 or args.num_points <= 0:
-        raise ValueError("--width, --height, and --num-points must be positive")
+    if args.width <= 0 or args.height <= 0:
+        raise ValueError("--width and --height must be positive")
+    if args.num_points is not None and args.num_points <= 0:
+        raise ValueError("--num-points must be positive")
     if shutil.which("ffmpeg") is None:
         raise RuntimeError("ffmpeg was not found on PATH")
 
