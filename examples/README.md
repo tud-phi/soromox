@@ -41,6 +41,13 @@ from the repository root or another working directory.
 See [the Open3D and Viser preset example](rendering/README.md) for upright tapered soft
 tentacles with pastel materials, a curved grey backdrop, lighting, and shadows.
 
+The GVS [fast pneumatic arm example](simulation/gvs/simulate_fast_pneumatic_arm.py)
+recreates the accelerating circular motion of the four-muscle arm reported by
+Haggerty et al. (2023). Two orthogonal bending strains rotate the tip around the
+mounting axis in a plane parallel to the base, and its Viser studio uses a square
+frame. Add `--record-viser` to capture the 6.9 s sequence or `--no-viser` to run
+only the simulation and print motion statistics.
+
 Open3D simulation and control examples export trajectory videos through the modern
 renderer to a `videos/` directory beside the script. Static Open3D views also use
 modern rendering. Legacy animation previews are available through the renderer
