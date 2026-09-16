@@ -9,8 +9,8 @@ The geometry and motion envelope are based on robot #1 in:
 The paper reports a 45 cm arm with four longitudinal pneumatic muscles, a
 6.25 cm maximum diameter, and approximately 110 degrees of curvature. Its
 tracking tests span 0.1--1.1 Hz. Tracking the tip in the attached reference
-clip shows a sweep from approximately 0.65 to 1.05 Hz, which is the default
-here.
+clip shows a sweep from approximately 0.66 to 1.07 Hz. The commanded frequency
+range and eased ramp below account for the simulated arm's dynamic phase lag.
 
 This is a physics-based GVS analogue, not a parameter identification of the
 experimental robot. The effective stiffness, damping, density, muscle routing,
@@ -74,7 +74,8 @@ MUSCLE_RENDER_RADIUS = 0.00675
 MAXIMUM_DIAMETER = 2 * (MUSCLE_ROUTE_RADIUS + MUSCLE_RENDER_RADIUS)
 
 DEFAULT_START_FREQUENCY = 0.65
-DEFAULT_END_FREQUENCY = 1.05
+DEFAULT_END_FREQUENCY = 1.12
+DEFAULT_FREQUENCY_RAMP_POWER = 1.5
 DEFAULT_DURATION = 6.9
 DEFAULT_FRAME_RATE = 30.0
 DEFAULT_RENDER_SIZE = 1080
@@ -157,6 +158,7 @@ def muscle_tensions(
     *,
     start_frequency: float = DEFAULT_START_FREQUENCY,
     end_frequency: float = DEFAULT_END_FREQUENCY,
+    frequency_ramp_power: float = DEFAULT_FREQUENCY_RAMP_POWER,
     sweep_duration: float = DEFAULT_DURATION,
     preload: float = DEFAULT_PRELOAD,
     amplitude: float = DEFAULT_AMPLITUDE,
@@ -172,6 +174,8 @@ def muscle_tensions(
         t: Simulation time in seconds.
         start_frequency: Initial sweep frequency in hertz.
         end_frequency: Final sweep frequency in hertz.
+        frequency_ramp_power: Exponent controlling when the frequency increase
+            occurs. Values above one emphasize acceleration later in the sweep.
         sweep_duration: Duration of the frequency sweep in seconds.
         preload: Shared muscle pretension in newtons.
         amplitude: Initial sinusoidal tension amplitude in newtons.
@@ -181,8 +185,14 @@ def muscle_tensions(
         Muscle tensions ordered ``[+y, +z, -y, -z]`` in newtons.
     """
     visible_time = jnp.clip(t, 0.0, sweep_duration)
-    chirp_rate = (end_frequency - start_frequency) / sweep_duration
-    phase = 2.0 * jnp.pi * (start_frequency * t + 0.5 * chirp_rate * visible_time**2)
+    progress = visible_time / sweep_duration
+    phase_cycles = start_frequency * t + (
+        (end_frequency - start_frequency)
+        * sweep_duration
+        * progress ** (frequency_ramp_power + 1.0)
+        / (frequency_ramp_power + 1.0)
+    )
+    phase = 2.0 * jnp.pi * phase_cycles
     tapered_amplitude = amplitude * (
         1.0 - amplitude_taper * visible_time / sweep_duration
     )
@@ -205,6 +215,7 @@ def simulate_motion(
     duration: float = DEFAULT_DURATION,
     start_frequency: float = DEFAULT_START_FREQUENCY,
     end_frequency: float = DEFAULT_END_FREQUENCY,
+    frequency_ramp_power: float = DEFAULT_FREQUENCY_RAMP_POWER,
     frame_rate: float = DEFAULT_FRAME_RATE,
     solver_dt: float = 1e-3,
     preload: float = DEFAULT_PRELOAD,
@@ -219,6 +230,8 @@ def simulate_motion(
         duration: Visible sequence duration in seconds.
         start_frequency: Initial sweep frequency in hertz.
         end_frequency: Final sweep frequency in hertz.
+        frequency_ramp_power: Exponent controlling when the frequency increase
+            occurs.
         frame_rate: Saved trajectory rate in frames per second.
         solver_dt: Maximum fixed integration step in seconds.
         preload: Shared muscle pretension in newtons.
@@ -236,6 +249,8 @@ def simulate_motion(
         raise ValueError("duration must be positive")
     if start_frequency <= 0.0 or end_frequency <= 0.0:
         raise ValueError("frequencies must be positive")
+    if frequency_ramp_power <= 0.0:
+        raise ValueError("frequency_ramp_power must be positive")
     if frame_rate <= 0.0:
         raise ValueError("frame_rate must be positive")
     if solver_dt <= 0.0:
@@ -261,6 +276,7 @@ def simulate_motion(
                 state.t,
                 start_frequency=start_frequency,
                 end_frequency=end_frequency,
+                frequency_ramp_power=frequency_ramp_power,
                 sweep_duration=duration,
                 preload=preload,
                 amplitude=amplitude,
@@ -435,6 +451,9 @@ def parse_args() -> argparse.Namespace:
         "--start-frequency", type=float, default=DEFAULT_START_FREQUENCY
     )
     parser.add_argument("--end-frequency", type=float, default=DEFAULT_END_FREQUENCY)
+    parser.add_argument(
+        "--frequency-ramp-power", type=float, default=DEFAULT_FREQUENCY_RAMP_POWER
+    )
     parser.add_argument("--frame-rate", type=float, default=DEFAULT_FRAME_RATE)
     parser.add_argument("--solver-dt", type=float, default=1e-3)
     parser.add_argument("--preload", type=float, default=DEFAULT_PRELOAD)
@@ -469,6 +488,7 @@ def main() -> None:
         duration=args.duration,
         start_frequency=args.start_frequency,
         end_frequency=args.end_frequency,
+        frequency_ramp_power=args.frequency_ramp_power,
         frame_rate=args.frame_rate,
         solver_dt=args.solver_dt,
         preload=args.preload,

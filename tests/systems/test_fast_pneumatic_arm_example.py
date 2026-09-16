@@ -86,6 +86,25 @@ def test_muscle_command_is_antagonistic_nonnegative_and_phase_continuous():
     assert np.all(np.asarray(after) >= 0.0)
 
 
+def test_default_muscle_command_accelerates_across_the_sweep():
+    def phase_at(time: float) -> float:
+        tensions = np.asarray(example.muscle_tensions(jnp.asarray(time)))
+        return float(np.arctan2(tensions[0] - tensions[2], tensions[1] - tensions[3]))
+
+    dt = 1e-3
+    early_phase_step = np.angle(np.exp(1j * (phase_at(dt) - phase_at(0.0))))
+    late_phase_step = np.angle(
+        np.exp(
+            1j
+            * (
+                phase_at(example.DEFAULT_DURATION)
+                - phase_at(example.DEFAULT_DURATION - dt)
+            )
+        )
+    )
+    assert late_phase_step > 1.6 * early_phase_step
+
+
 def test_short_simulation_and_tracker_trajectories_are_finite():
     robot = example.make_robot()
     trajectory = example.simulate_motion(
