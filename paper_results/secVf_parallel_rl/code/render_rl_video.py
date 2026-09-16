@@ -63,6 +63,7 @@ OUTPUT_DIR = CASE_DIR / "outputs"
 DEFAULT_ARM_LENGTH = 0.25
 DEFAULT_ARM_RADIUS = 0.025
 DEFAULT_GRID_SPACING = 0.24
+BACKBONE_STYLE = "swept"
 PARALLEL_BACKBONE_NUM_POINTS = 40
 GRID_CAMERA_DISTANCE_FACTOR = 5.5
 GRID_FRAME_FILL = 1.12
@@ -432,7 +433,7 @@ def make_grid_offsets(
 
 
 def resolve_backbone_num_points(num_envs: int, override: int | None) -> int:
-    """Use fewer discrete markers for dense grids unless explicitly overridden."""
+    """Use fewer backbone samples for dense grids unless explicitly overridden."""
     if override is not None:
         if override <= 0:
             raise ValueError("--num-points must be positive")
@@ -616,7 +617,7 @@ def render_rollout_to_mp4(
                     rollout.num_envs,
                     args.num_points,
                 ),
-                backbone_style="discrete",
+                backbone_style=BACKBONE_STYLE,
                 actuator_line_width=args.tendon_line_width,
                 grid_spacing=(args.grid_spacing, args.grid_spacing),
             ),

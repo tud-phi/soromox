@@ -113,8 +113,9 @@ Use `--rows` and `--cols` together to override the automatic grid, and
 `--grid-spacing` to change the distance between robot bases. Dotted target paths
 are enabled by default for a single arm and hidden for parallel grids to keep the
 individual robots legible; `--show-trajectory` and `--no-show-trajectory`
-override that choice. Parallel grids use 40 backbone markers per robot while the
-single-arm view uses 80; `--num-points` overrides either default.
+override that choice. Robots are rendered as swept surfaces. Parallel grids use
+40 backbone samples per robot while the single-arm view uses 80;
+`--num-points` overrides either default.
 
 Rollouts default to a 20 second horizon at 15 policy steps per second. When
 `--n-steps` is omitted, it is derived from `--game-time` and `--control-fps` so

@@ -138,6 +138,7 @@ def test_grid_dimensions_require_complete_covering_override():
 
 
 def test_backbone_resolution_keeps_parallel_scene_bounded():
+    assert render_rl_video.BACKBONE_STYLE == "swept"
     assert render_rl_video.resolve_backbone_num_points(1, None) == 80
     assert render_rl_video.resolve_backbone_num_points(64, None) == 40
     assert render_rl_video.resolve_backbone_num_points(64, 60) == 60

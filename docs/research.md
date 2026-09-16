@@ -151,7 +151,8 @@ The video shows the trained policy tracking the green target in one environment.
 SoRoMoX can roll out many soft-robot environments in parallel, accelerating the
 experience collection that dominates reinforcement-learning training. The
 20 second animation below visualizes a trained policy acting simultaneously in
-64 independently simulated environments.
+64 independently simulated environments, with each robot rendered as a swept
+surface.
 
 <video class="soromox-video" controls muted loop playsinline preload="metadata" poster="assets/paper/parallel-rl-trained-64-envs-poster.jpg" aria-label="Trained reinforcement-learning policy in 64 parallel soft-robot environments">
   <source src="assets/paper/parallel-rl-trained-64-envs.mp4" type="video/mp4">
