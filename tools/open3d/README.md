@@ -83,14 +83,28 @@ python -m pip install --upgrade --pre --only-binary=:all: --no-index \
 python -m pip install -e ".[rendering]"
 ```
 
-Available wheel ABIs and architectures are controlled by upstream. On Windows,
-also install a current GPU driver, the Microsoft Visual C++ Redistributable, and
-FFmpeg on `PATH` for MP4 export. Native Windows rendering has not been validated
-for this checkout.
+Available wheel ABIs and architectures are controlled by upstream. As of
+September 16, 2026, the [main-devel assets](https://github.com/isl-org/Open3D/releases/tag/main-devel)
+include only one Open3D 0.20 Linux ARM64 wheel:
+`open3d-0.20.0+d32b4fc-cp310-cp310-manylinux_2_35_aarch64.whl`.
+Its `cp310-cp310` tags target CPython 3.10 specifically; this is a limitation of
+the published ARM64 wheels, not Open3D's overall Python support. SoRoMoX keeps
+Linux ARM64 CPython 3.11–3.14 on the available 0.19.0 wheels through a `uv`
+constraint until matching 0.20 wheels are published.
+
+On Windows, also install a current GPU driver, the Microsoft Visual C++
+Redistributable, and FFmpeg on `PATH` for MP4 export. Native Windows rendering
+has not been validated for this checkout.
 
 ## Validation
 
-The current revision, `1a9eb99`, was source-built on Ubuntu 26.04.1 x86-64 with
+The current pin is `d32b4fce639b3cde284184072796480ef9b528d1`
+(Open3D 0.20.0, Filament 1.76.0). Patch compatibility and package metadata were
+checked for this update. Native rendering and the supported-Python build matrix
+must be rerun before merging; the local macOS host lacks the Metal Toolchain.
+The results below describe the previous pin and do not validate this revision.
+
+The previous revision, `1a9eb99`, was source-built on Ubuntu 26.04.1 x86-64 with
 GCC 15.2 and tested using Mesa software OpenGL/EGL:
 
 | Python | Source wheel | Native surfaceless render | SoRoMoX PNG + MP4 | Xvfb `show()` + playback |
@@ -155,11 +169,6 @@ the required fixes.
 
 ## Temporary patches and upstreaming
 
-`metal_rgb_readback.patch` requests RGBA readback on Metal and strips alpha
-before returning the normal RGB image. Open3D
-[PR #7550](https://github.com/isl-org/Open3D/pull/7550) contains equivalent
-handling.
-
 `neutral_tone_mapping.patch` restores linear, ACES, legacy ACES, Filmic and
 Display Range selection through Filament's current `ToneMapper` API, and exposes
 PBR Neutral; see [Open3D issue #7557](https://github.com/isl-org/Open3D/issues/7557).
@@ -171,34 +180,30 @@ Uchimura/Reinhard fallback is unchanged. Wheels with these fixes use the
 The color-grading regression test was run with native Metal on Python 3.12;
 Ubuntu CI also runs it with surfaceless EGL.
 
-The Linux patches make the source package retain the `open3d` distribution name,
-fix current static-curl linking and Filament build integration, avoid creating
-the optional Gaussian-splat sharing context in surfaceless mode, and build both
-GLX and EGL-headless Filament platforms. The Filament changes also re-bind the
-EGL API on worker threads, use a pbuffer-compatible configuration, and avoid a
-desktop-GL extension query that can return null.
+The Linux patches serve the following purposes:
+
+- `linux_distribution_name.patch` keeps the source package's distribution name
+  as `open3d`.
+- `linux_static_curl.patch` groups the bundled curl and BoringSSL archives for
+  linking.
+- `linux_surfaceless.patch` selects OpenGL by default for EGL exports and GLX
+  viewing. Explicit Vulkan selection remains available.
+- `linux_filament_patch_hook.patch` enables EGL support and applies the local
+  Filament patch after upstream's Vulkan texture-import patch.
+- `filament_linux_dual_context.patch` builds both GLX and EGL-headless platforms,
+  selects between them at runtime, and binds the EGL API on worker threads.
 
 Upstream tracking:
 
 | Finding | Upstream discussion |
 | --- | --- |
-| Metal RGB readback | [Validation comment on PR #7550](https://github.com/isl-org/Open3D/pull/7550#issuecomment-5595190113) |
 | Modern GUI followed by legacy Visualizer segfault | [Open3D #7553](https://github.com/isl-org/Open3D/issues/7553) |
-| Surfaceless rendering initializes splat GLX contexts | [Open3D #7554](https://github.com/isl-org/Open3D/issues/7554) |
-| Linux Filament archive byproduct paths | [Open3D #7555](https://github.com/isl-org/Open3D/issues/7555) |
 | Bundled curl/BoringSSL archive grouping | [Open3D #7556](https://github.com/isl-org/Open3D/issues/7556) |
 | Desktop OpenGL API binding on EGL worker threads | [Filament #10397](https://github.com/google/filament/issues/10397) |
 
-The mixed-GUI segfault and Metal RGB readback abort were reproduced with the
-official unmodified macOS development wheel; the reports include complete logs
-and a successful legacy-only control. The Linux source findings require isolated
-Ubuntu reproductions with full error logs. The macOS tone-mapper reproduction
-is blocked by that wheel's Metal readback abort, which is captured in #7557.
-Current Filament main already guards null extension strings and has revised
-swapchain selection; the older patch hunks need reassessment when Open3D updates
-its embedded Filament. The distribution-name patch, patch hook and runtime
-platform-selection policy support the downstream build and are not all
-independent upstream defects.
+The distribution-name patch, patch hook, and runtime platform selection support
+SoRoMoX's source-build configuration. The tone-mapping, static-curl linking, and
+EGL worker-thread fixes address upstream defects.
 
 ## Build configuration and overrides
 
