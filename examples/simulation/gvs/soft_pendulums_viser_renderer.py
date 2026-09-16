@@ -149,11 +149,21 @@ def render_motion(
     """
     q_ts, _ = split_state(trajectory.y, robot.num_internal_dofs)
     renderer_type = SoftCartPoleViserRenderer if cart else ViserRenderer
+    base_axis = np.asarray(robot.base_transform, dtype=np.float64)[:3, 0]
+    height_reference = (
+        "base_mounting_face"
+        if np.allclose(np.abs(base_axis), (0.0, 0.0, 1.0))
+        else "world"
+    )
     renderer = renderer_type(
         robot,
         config=RendererConfig(
             geometry=GeometryConfig(num_points=100),
-            scene=SceneConfig(ground=GroundPlaneConfig(size=2.5)),
+            scene=SceneConfig(
+                ground=GroundPlaneConfig(
+                    size=2.5, height_reference=height_reference, height=0.0
+                )
+            ),
         ),
         port=port,
         open_browser=True,

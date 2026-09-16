@@ -96,6 +96,14 @@ class BaseSoftRobotRenderer(ABC):
         self.color_config = color_config or RendererColorConfig()
         self.show_ground_plane = bool(show_ground_plane)
         self._is_planar = bool(robot.is_planar)
+        if (
+            robot.floating_base
+            and self.config.scene.ground.height_reference == "base_mounting_face"
+        ):
+            raise ValueError(
+                "height_reference='base_mounting_face' is not supported for "
+                "floating-base robots; use height_reference='world'"
+            )
         floating_base = robot.floating_base
         initial_base_pose = (
             robot._identity_base_pose if floating_base else robot.fixed_base_pose
@@ -103,6 +111,10 @@ class BaseSoftRobotRenderer(ABC):
         assert initial_base_pose is not None
         self.base_pose = jnp.asarray(initial_base_pose)
         self.base_transform = jnp.asarray(robot.base_transform)
+        if self.config.scene.ground.height_reference == "base_mounting_face":
+            self._resolve_ground_height(
+                self._base_position(dim=3), self._base_tangent_axis(dim=3)
+            )
 
         self._color_cache: dict[tuple[int, int, int], ResolvedBackboneColors] = {}
         self._segment_cache: dict[int, tuple[np.ndarray, np.ndarray]] = {}
@@ -262,7 +274,8 @@ class BaseSoftRobotRenderer(ABC):
         if cfg.alignment == "world":
             n = self._world_up()
             c = self._appearance_center
-            return [(c - (c @ n) * n + cfg.height * n, n, size)]
+            ground_height = self._resolve_ground_height(curves[:, 0], base_axes)
+            return [(c - (c @ n) * n + ground_height * n, n, size)]
         count = len(curves)
         normals = (
             np.broadcast_to(self._base_tangent_axis(dim=3), (count, 3))
@@ -271,10 +284,85 @@ class BaseSoftRobotRenderer(ABC):
         )
         normals = normals / np.linalg.norm(normals, axis=-1, keepdims=True)
         centers = np.pad(curves[:, 0], ((0, 0), (0, 3 - curves.shape[-1])))
-        centers = (
-            centers + (cfg.height - self.config.geometry.base_plate_thickness) * normals
-        )
+        if cfg.height_reference not in ("world", "base_mounting_face"):
+            raise ValueError(f"Unknown ground height reference: {cfg.height_reference}")
+        # Base alignment is already anchored to each base plate. Its zero
+        # height is the mounting face, with cfg.height applying an offset from it.
+        base_offset = cfg.height - self.config.geometry.base_plate_thickness
+        centers = centers + base_offset * normals
         return list(zip(centers, normals, np.full(count, size)))
+
+    def _resolve_ground_height(self, base_points=None, base_axes=None) -> float:
+        """Resolve a world-aligned floor height from the configured reference.
+
+        Args:
+            base_points: Robot base points in renderer coordinates. Required for
+                ``height_reference="base_mounting_face"`` when a world floor is used.
+            base_axes: Optional base plate axes in renderer coordinates. A base
+                mounting face reference requires every axis to be parallel or
+                antiparallel to the floor normal.
+
+        Returns:
+            World-space signed height along the configured floor normal.
+
+        Raises:
+            ValueError: Base-referenced world floors have different base heights.
+        """
+        cfg = self.config.scene.ground
+        if cfg.height_reference == "world":
+            return float(cfg.height)
+        if cfg.height_reference != "base_mounting_face":
+            raise ValueError(f"Unknown ground height reference: {cfg.height_reference}")
+        if self.robot.floating_base:
+            raise ValueError(
+                "height_reference='base_mounting_face' is not supported for "
+                "floating-base robots; use height_reference='world'"
+            )
+        if self._is_planar:
+            raise ValueError(
+                "height_reference='base_mounting_face' requires a spatial fixed-base "
+                "robot with a base axis parallel or antiparallel to the floor normal"
+            )
+        if base_points is None:
+            base_points = self._base_position(dim=3)
+        points = np.asarray(base_points, dtype=np.float64)
+        if points.ndim == 1:
+            points = points[None, :]
+        if points.ndim != 2 or points.shape[1] not in (2, 3):
+            raise ValueError("base_points must have shape (N, 2) or (N, 3)")
+        if points.shape[1] == 2:
+            points = np.pad(points, ((0, 0), (0, 1)))
+        normal = self._world_up()
+        if base_axes is None:
+            axes = np.broadcast_to(self._base_tangent_axis(dim=3), (len(points), 3))
+        else:
+            axes = np.asarray(base_axes, dtype=np.float64)
+            if axes.ndim == 1:
+                axes = axes[None, :]
+            if axes.ndim != 2 or axes.shape[1] not in (2, 3):
+                raise ValueError("base_axes must have shape (N, 2) or (N, 3)")
+            if axes.shape[1] == 2:
+                axes = np.pad(axes, ((0, 0), (0, 1)))
+            axes = axes / np.linalg.norm(axes, axis=-1, keepdims=True)
+        if len(axes) != len(points):
+            raise ValueError("base_points and base_axes must have matching rows")
+        axis_alignment = np.abs(axes @ normal)
+        if not np.allclose(axis_alignment, 1.0):
+            raise ValueError(
+                "height_reference='base_mounting_face' requires the base axis to be "
+                "parallel or antiparallel to the floor normal (+z or -z for the "
+                "default spatial floor)"
+            )
+        base_heights = points @ normal - self.config.geometry.base_plate_thickness * (
+            axes @ normal
+        )
+        if not np.allclose(base_heights, base_heights[0]):
+            raise ValueError(
+                "height_reference='base_mounting_face' with world alignment requires "
+                "all robot base mounting faces to share one height; use "
+                "alignment='base' for separate base planes"
+            )
+        return float(base_heights[0] + cfg.height)
 
     def _base_position(self, dim: int | None = None) -> np.ndarray:
         """Return the configured base translation in renderer coordinates.

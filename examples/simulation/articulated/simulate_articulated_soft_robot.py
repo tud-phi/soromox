@@ -7,7 +7,12 @@ from pathlib import Path
 
 import jax
 
-from soromox.rendering.config import GeometryConfig, RendererConfig
+from soromox.rendering.config import (
+    GeometryConfig,
+    GroundPlaneConfig,
+    RendererConfig,
+    SceneConfig,
+)
 
 jax.config.update("jax_enable_x64", True)  # double precision
 
@@ -219,7 +224,15 @@ def render_robot(
             print("Open3DRenderer is unavailable. Install the optional Open3D extras.")
         else:
             renderer = Open3DRenderer(
-                robot, config=RendererConfig(geometry=GeometryConfig(num_points=80))
+                robot,
+                config=RendererConfig(
+                    geometry=GeometryConfig(num_points=80),
+                    scene=SceneConfig.technical(
+                        ground=GroundPlaneConfig(
+                            surface=False, height_reference="base_mounting_face"
+                        )
+                    ),
+                ),
             )
             open3d_output = record_path or (
                 Path(__file__).resolve().parent
@@ -241,7 +254,15 @@ def render_robot(
             print("ViserRenderer is unavailable. Install the optional Viser extras.")
         else:
             renderer = ViserRenderer(
-                robot, config=RendererConfig(geometry=GeometryConfig(num_points=80))
+                robot,
+                config=RendererConfig(
+                    geometry=GeometryConfig(num_points=80),
+                    scene=SceneConfig.technical(
+                        ground=GroundPlaneConfig(
+                            surface=False, height_reference="base_mounting_face"
+                        )
+                    ),
+                ),
             )
             renderer.render_sequence(
                 ts,

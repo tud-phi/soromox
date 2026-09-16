@@ -62,6 +62,7 @@ from soromox.rendering.scenery import (
     backdrop_mesh,
     ground_grid,
     linear_to_srgb,
+    resolved_lights,
     srgb_to_linear,
 )
 from soromox.rendering.video_encoding import FFmpegVideoWriter
@@ -1678,7 +1679,13 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         """
         center, extent = self._scene_bounds(scene_data)
         vertices, faces = backdrop_mesh(
-            self.scene_config, center, extent, self._world_up()
+            self.scene_config,
+            center,
+            extent,
+            self._world_up(),
+            ground_height=self._resolve_ground_height(
+                scene_data.curves[:, 0, 0], scene_data.material_frames[:, 0, 0, :, 0]
+            ),
         )
         mesh = o3d.geometry.TriangleMesh(
             o3d.utility.Vector3dVector(vertices), o3d.utility.Vector3iVector(faces)
@@ -1750,7 +1757,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         }[cfg.tone_mapping]
         if algorithm is not None:
             scene.view.set_color_grading(grading(grading.Quality.ULTRA, algorithm))
-        for index, light in enumerate(cfg.lights):
+        for index, light in enumerate(resolved_lights(cfg, self._world_up())):
             name = f"configured_light_{index}"
             color = srgb_to_linear(light.color)
             cast = cfg.shadows and light.cast_shadow

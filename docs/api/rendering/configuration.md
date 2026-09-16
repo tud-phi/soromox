@@ -98,7 +98,8 @@ The independent `config.scene.ground` describes the floor:
 from soromox.rendering import GroundPlaneConfig
 
 config.scene.ground = GroundPlaneConfig(
-    visible=True, surface=True, alignment="world", height=0.0, size=1.2,
+    visible=True, surface=True, alignment="world", height=0.0,
+    height_reference="world", size=1.2,
     color=(0.85, 0.85, 0.85), opacity=1.0,
     grid=True, grid_spacing=0.1, grid_major_every=5, receive_shadow=True,
 )
@@ -111,11 +112,35 @@ selects a 1/2/5 decimal step; `grid_major_every` and `grid_major_color` control
 the major lines. Planar renderers show this reference as a line.
 
 A world floor uses +Z for spatial robots and +Y for planar robots. `normal`
-selects an explicit world normal; `height` is measured along it in metres.
-`alignment="base"` creates one plane behind each robot's base plate, aligned
-with its tangent. Automatic sizing fits the whole robot trajectory and helper
-bounds. Scenery is excluded from camera fitting. Live visualization retains its
-initial bounds. A curved backdrop replaces the separate flat floor and grid.
+selects an explicit world normal; `height` is measured along the selected
+reference in metres. The default `height_reference="world"` keeps the current
+world-origin height behavior. `height_reference="base_mounting_face"` uses the
+configured base plate thickness and the current robot base position, so
+`height=0` places a world-aligned floor at the mounting face of the base plate. A
+world-aligned base-referenced floor requires all robot bases to share one
+height; `alignment="base"` creates one plane per robot when they do not. Base
+alignment already anchors each plane at its corresponding base mounting face, and
+`height` offsets that plane along the base normal.
+The `base_mounting_face` reference requires a fixed base; selecting it for a
+floating-base robot raises `ValueError`. It also requires every fixed base axis
+to be parallel or antiparallel to the floor normal: +Z shifts the floor down by
+the plate thickness, while -Z shifts it up by the same amount.
+
+The existing `normal` field represents the ground direction, so spatial z-up
+and z-down planes are selected with `normal=(0, 0, 1)` and `normal=(0, 0, -1)`.
+For a hanging composition, rotate the camera position and look-at with the
+mounting orientation and keep camera up at +z. The gallery provides this as
+`--mounting hanging`, preserving the curved studio surface above the robot.
+
+```python
+scene = SceneConfig.studio(
+    ground=GroundPlaneConfig(height_reference="base_mounting_face")
+)
+```
+
+Automatic sizing fits the whole robot trajectory and helper bounds. Scenery is
+excluded from camera fitting. Live visualization retains its initial bounds. A
+curved backdrop uses the same resolved floor height.
 
 `BackdropConfig.radius` controls the bend's horizontal reach;
 `vertical_radius` controls its height and defaults to the same value.
@@ -402,3 +427,23 @@ FFmpeg writer.
       show_source: false
       heading_level: 3
       docstring_section_style: table
+
+### Light orientation for hanging scenes
+
+Preset directional and point lights use `reference="ground"`, resolving their
+vectors through the same basis as the backdrop. `GroundPlaneConfig(normal=(0, 0, -1))`
+rotates that basis by 180 degrees about world Y. For tilted normals, backdrop
+depth follows world +Y projected into the ground plane, avoiding a sign flip
+when the normal crosses the XY plane. At normals parallel to world Y, depth
+is undefined and the basis uses world +X for width; this reference-axis
+singularity cannot provide a continuous orientation for every approach direction.
+Custom lights default to
+`reference="world"`, preserving explicit world positions and directions. Ground-relative
+point positions are measured from the world origin; ground height does not translate
+them. Preset intensity and range retain the existing `scene_extent` scaling.
+
+The gallery's `--mounting hanging` also rotates robot placement and camera position,
+while retaining camera up at +z for an upside-down composition. Merely changing the
+camera up vector rolls the image; it does not change the robot's world mounting or
+the ground normal. Open3D's fixed environment map may produce ambient shading
+differences between mounting orientations.

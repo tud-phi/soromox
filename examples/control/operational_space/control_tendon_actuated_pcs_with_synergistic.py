@@ -19,7 +19,12 @@ import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 
-from soromox.rendering.config import GeometryConfig, RendererConfig
+from soromox.rendering.config import (
+    GeometryConfig,
+    GroundPlaneConfig,
+    RendererConfig,
+    SceneConfig,
+)
 
 jax.config.update("jax_enable_x64", True)  # Double precision
 
@@ -381,7 +386,15 @@ def main(
         target_radius = float(jnp.mean(robot.params.r)) * 0.5
         target_positions = jnp.asarray(x_des_traj_pos)[None, :, :]
         renderer = Open3DRenderer(
-            robot, config=RendererConfig(geometry=GeometryConfig(num_points=50))
+            robot,
+            config=RendererConfig(
+                geometry=GeometryConfig(num_points=50),
+                scene=SceneConfig.technical(
+                    ground=GroundPlaneConfig(
+                        surface=False, height_reference="base_mounting_face"
+                    )
+                ),
+            ),
         )
         renderer.render_sequence(
             ts=t_traj,

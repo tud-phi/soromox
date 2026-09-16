@@ -86,12 +86,12 @@ environments in one NPZ per policy and pass each file to the same renderer:
 
 ```bash
 uv run python paper_results/secVf_parallel_rl/code/run_rl_policy.py \
-  --policy random --num-envs 64 \
+  --policy random --num-envs 64 --game-time 20 --n-steps 300 \
   --trajectory-output paper_results/secVf_parallel_rl/data/traj/rl_rollout_initialized_64_envs.npz \
   --force
 
 uv run python paper_results/secVf_parallel_rl/code/run_rl_policy.py \
-  --policy trained --num-envs 64 \
+  --policy trained --num-envs 64 --game-time 20 --n-steps 300 \
   --trajectory-output paper_results/secVf_parallel_rl/data/traj/rl_rollout_trained_64_envs.npz \
   --force
 
@@ -105,11 +105,21 @@ uv run python paper_results/secVf_parallel_rl/code/render_rl_video.py \
 ```
 
 The multi-arm renderer uses every stored environment by default, arranges the
-arms in a centered near-square grid, and fits an oblique camera to the complete
-scene. `--max-envs N` selects the first `N` environments; in particular,
+arms in a centered near-square grid, and uses a low camera with the outer robots
+crossing the image boundary. `--max-envs N` selects the first `N` environments;
+in particular,
 `--max-envs 1` provides the first-class single-arm view from a batched rollout.
 Use `--rows` and `--cols` together to override the automatic grid, and
-`--grid-spacing` to change the distance between robot bases.
+`--grid-spacing` to change the distance between robot bases. Dotted target paths
+are enabled by default for a single arm and hidden for parallel grids to keep the
+individual robots legible; `--show-trajectory` and `--no-show-trajectory`
+override that choice. Robots are rendered as swept surfaces. Parallel grids use
+40 backbone samples per robot while the single-arm view uses 80;
+`--num-points` overrides either default.
+
+Rollouts default to a 20 second horizon at 15 policy steps per second. When
+`--n-steps` is omitted, it is derived from `--game-time` and `--control-fps` so
+the target trajectory covers the complete saved rollout.
 
 Generated trajectories use time-major arrays and retain every environment:
 `q_ts` has shape `(T, N, D)` and `ball_ts` has shape `(T, N, 3)`. Existing

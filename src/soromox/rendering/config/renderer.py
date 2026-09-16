@@ -142,6 +142,7 @@ class RendererConfig:
         scene.lights += (
             PointLightConfig.from_lumens(
                 100000 * scale**2,
+                reference="ground",
                 position=tuple(np.array([0.7, 0.4, 0.6]) * scale),
                 range_m=6.0 * scale,
                 color=(0.85, 0.92, 1.0),

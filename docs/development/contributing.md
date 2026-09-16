@@ -55,6 +55,9 @@ Follow our coding standards:
 
 ### 3. Run Tests
 
+Paper figure tests decode committed videos and require the `ffmpeg` executable
+on `PATH` (for example, `sudo apt-get install ffmpeg` on Ubuntu).
+
 ```bash
 # Run all tests
 pytest

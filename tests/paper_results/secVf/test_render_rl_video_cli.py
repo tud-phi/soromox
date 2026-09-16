@@ -21,11 +21,12 @@ sys.path.insert(0, str(MODULE_DIR))
 import render_rl_video  # noqa: E402
 
 
-def test_show_trajectory_defaults_to_enabled():
+def test_show_trajectory_defaults_to_scene_dependent():
     args = render_rl_video.parse_args([])
 
-    assert args.show_trajectory is True
+    assert args.show_trajectory is None
     assert args.max_envs is None
+    assert args.grid_spacing == pytest.approx(0.24)
     assert args.output == (render_rl_video.OUTPUT_DIR / "rl_rollout_trained_1_env.mp4")
     assert args.gif_output == (
         render_rl_video.OUTPUT_DIR / "rl_rollout_trained_1_env.gif"
@@ -39,10 +40,14 @@ def test_default_outputs_derive_from_data_filename_in_case_outputs():
     assert args.gif_output == render_rl_video.OUTPUT_DIR / "custom_parallel_rollout.gif"
 
 
-def test_show_trajectory_can_be_disabled():
-    args = render_rl_video.parse_args(["--no-show-trajectory"])
+@pytest.mark.parametrize(
+    ("flag", "expected"),
+    [("--show-trajectory", True), ("--no-show-trajectory", False)],
+)
+def test_show_trajectory_can_be_overridden(flag, expected):
+    args = render_rl_video.parse_args([flag])
 
-    assert args.show_trajectory is False
+    assert args.show_trajectory is expected
 
 
 def test_load_rollout_supports_first_class_unbatched_single_arm(tmp_path):
@@ -132,7 +137,14 @@ def test_grid_dimensions_require_complete_covering_override():
         render_rl_video.resolve_grid_dimensions(5, 2, 2)
 
 
-def test_camera_uses_fixed_paper_view_for_one_arm_and_auto_fit_for_grid():
+def test_backbone_resolution_keeps_parallel_scene_bounded():
+    assert render_rl_video.BACKBONE_STYLE == "swept"
+    assert render_rl_video.resolve_backbone_num_points(1, None) == 80
+    assert render_rl_video.resolve_backbone_num_points(64, None) == 40
+    assert render_rl_video.resolve_backbone_num_points(64, 60) == 60
+
+
+def test_camera_faces_backdrop_for_single_arm_and_grid():
     single = render_rl_video.make_render_camera_config(
         num_envs=1,
         arm_length=0.25,
@@ -142,31 +154,29 @@ def test_camera_uses_fixed_paper_view_for_one_arm_and_auto_fit_for_grid():
         position_offset=None,
     )
     grid = render_rl_video.make_render_camera_config(
-        num_envs=4,
+        num_envs=64,
         arm_length=0.25,
         fov=60.0,
         up=(0.0, 0.0, 1.0),
         distance_factor=None,
         position_offset=None,
+        grid_span=7 * render_rl_video.DEFAULT_GRID_SPACING,
+        aspect_ratio=16 / 9,
     )
 
     assert single.position is not None
     assert single.look_at is not None
-    assert grid.position is None
-    assert grid.look_at is None
-    assert grid.distance_factor == render_rl_video.GRID_CAMERA_DISTANCE_FACTOR
-    assert grid.position_offset == render_rl_video.GRID_CAMERA_POSITION_OFFSET
-    robot = render_rl_video.build_rl_robot()
-    assert_allclose(robot.params.gravity, np.zeros(3))
-    camera_pos, look_at = grid.compute_auto_position(
-        np.array([1.0, 2.0, 3.0]),
-        0.5,
-        reference_transform=np.asarray(robot.base_transform),
+    assert grid.position is not None
+    assert grid.look_at is not None
+    assert grid.position[0] == grid.look_at[0] == 0.0
+    assert grid.position[1] < grid.look_at[1]
+    assert grid.position[2] > grid.look_at[2]
+    view_offset = np.asarray(grid.position) - np.asarray(grid.look_at)
+    assert view_offset[2] < abs(view_offset[1])
+    frame_width = (
+        2.0 * np.linalg.norm(view_offset) * np.tan(np.deg2rad(grid.fov / 2.0)) * 16 / 9
     )
-    assert_allclose(look_at, (1.0, 2.0, 3.0))
-    assert_allclose(camera_pos, (3.2, -0.2, 5.475))
-    world_offset = camera_pos - look_at
-    assert world_offset[0] == pytest.approx(-world_offset[1])
+    assert frame_width < 7 * render_rl_video.DEFAULT_GRID_SPACING
 
 
 def test_manual_auto_camera_override_applies_to_single_arm():

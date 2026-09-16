@@ -7,7 +7,12 @@ from pathlib import Path
 
 import jax
 
-from soromox.rendering.config import GeometryConfig, RendererConfig
+from soromox.rendering.config import (
+    GeometryConfig,
+    GroundPlaneConfig,
+    RendererConfig,
+    SceneConfig,
+)
 
 jax.config.update("jax_enable_x64", True)
 
@@ -167,7 +172,12 @@ def render_robot(
             robot,
             actuator_color_mode="pressure",
             config=RendererConfig(
-                geometry=GeometryConfig(num_points=80, backbone_style="discrete")
+                geometry=GeometryConfig(num_points=80, backbone_style="discrete"),
+                scene=SceneConfig.technical(
+                    ground=GroundPlaneConfig(
+                        surface=False, height_reference="base_mounting_face"
+                    )
+                ),
             ),
         )
         renderer.render_sequence(

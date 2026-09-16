@@ -65,6 +65,26 @@ Following the model organization in Table II of the paper:
 | Piecewise constant strain (PCS) | [Planar PCS](https://github.com/tud-phi/soromox/blob/main/examples/simulation/pcs/simulate_planar_pcs.py) | Generalized-strain, threadlike, and functional-metamaterial (HSA) actuation | [I-SUPPORT](https://tud-phi.github.io/soromox/api/systems/pcs/isupport/) and [planar HSA](https://tud-phi.github.io/soromox/api/systems/pcs/planar-hsa/) |
 | Geometric variable strain (GVS) | — | Generalized-coordinate and threadlike actuation | [Tapered cable-driven soft tentacle](https://github.com/tud-phi/soromox/blob/main/examples/simulation/gvs/simulate_tendon_actuated_gvs.py) |
 
+## Renderer examples
+
+The renderer gallery uses the same soft-tentacle scene to compare backends and
+scene presets. These examples show the neutral studio preset in Open3D and the
+technical preset in Viser:
+
+<p align="center">
+  <a href="https://tud-phi.github.io/soromox/api/rendering/presets/">
+    <img src="docs/assets/rendering/presets/open3d_neutral.png" alt="Open3D neutral studio preset" width="48%"/>
+  </a>
+  <a href="https://tud-phi.github.io/soromox/api/rendering/presets/">
+    <img src="docs/assets/rendering/presets/viser_technical.png" alt="Viser technical preset" width="48%"/>
+  </a>
+</p>
+
+Generate the gallery with
+`python examples/rendering/preset_gallery.py --backend open3d` or
+`--backend viser`. See the [full preset gallery](https://tud-phi.github.io/soromox/api/rendering/presets/)
+for all six styles and both backends.
+
 ## Installation
 
 Install the core package from PyPI:

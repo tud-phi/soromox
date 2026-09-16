@@ -1292,3 +1292,45 @@ def test_viser_registers_shared_mount_geometry(monkeypatch, style):
     assert_array_equal(mesh.faces, faces)
     assert add.call_args.kwargs["surface_color"] == (0.2, 0.3, 0.4)
     assert_allclose(add.call_args.kwargs["position"], [0.388, 0.2, 0.3])
+
+
+@pytest.mark.parametrize("gap", [0.0, 0.01])
+def test_viser_internal_caps_follow_world_contour_continuity(gap):
+    from soromox.rendering.viser_renderer import SceneHandles, ViserRenderer
+
+    robot = DummySpatialRobot(jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]))
+    robot.segment_length = jnp.array([0.6, 0.4])
+    renderer = ViserRenderer(
+        robot,
+        auto_start=False,
+        config=RendererConfig(
+            geometry=GeometryConfig(num_points=8, cross_section_resolution=8)
+        ),
+    )
+    curves, frames = renderer.compute_backbone_curves_and_frames_batched(
+        jnp.zeros((1, 0)), jnp.zeros((1, 3))
+    )
+    curves, frames = np.array(curves), np.array(frames)
+    curves[:, 4:, 0] += gap
+    caps = renderer._matching_swept_edge_caps(curves[0], frames[0])
+    assert caps[2][1] == bool(gap)
+    assert caps[4][0] == bool(gap)
+    assert caps[6][1]  # Keep the exposed tip closed.
+    server = FakeViserActuatorServer()
+    renderer._server = server
+    renderer._scene_handles = SceneHandles()
+    renderer._build_robot_geometry(
+        curves,
+        np.ones((1, 8, 4)),
+        material_frames=frames,
+        base_plate_color=(0.15, 0.15, 0.15),
+    )
+    mesh = server.scene.simple_meshes[0]
+    expected_faces = 6 * 16 + (3 if gap else 1) * 8
+    assert len(mesh.faces) == expected_faces
+    renderer._update_robot_geometry(curves + [0, 0.02, 0], frames)
+    assert len(mesh.faces) == expected_faces
+    # A later pose can open or close the interface; update its topology too.
+    curves[:, 4:, 0] += 0.01 if not gap else -gap
+    renderer._update_robot_geometry(curves, frames)
+    assert len(mesh.faces) == 6 * 16 + (1 if gap else 3) * 8

@@ -10,7 +10,12 @@ from pathlib import Path
 
 import jax
 
-from soromox.rendering.config import GeometryConfig, RendererConfig
+from soromox.rendering.config import (
+    GeometryConfig,
+    GroundPlaneConfig,
+    RendererConfig,
+    SceneConfig,
+)
 
 jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
@@ -165,6 +170,11 @@ def main(*, open3d_video_output: Path, viser_video_output: Path):
             colors=RendererColorConfig(
                 backbone=BackboneColorConfig(robot_palette="viridis")
             ),
+            scene=SceneConfig.technical(
+                ground=GroundPlaneConfig(
+                    surface=False, height_reference="base_mounting_face"
+                )
+            ),
         ),
     )
     renderer.render_sequence(
@@ -184,6 +194,11 @@ def main(*, open3d_video_output: Path, viser_video_output: Path):
             geometry=GeometryConfig(grid_spacing=grid_spacing),
             colors=RendererColorConfig(
                 backbone=BackboneColorConfig(robot_palette="magma")
+            ),
+            scene=SceneConfig.technical(
+                ground=GroundPlaneConfig(
+                    surface=False, height_reference="base_mounting_face"
+                )
             ),
         ),
     )

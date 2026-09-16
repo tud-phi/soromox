@@ -13,7 +13,12 @@ from soromox.rendering import (
     RendererColorConfig,
     ViserRenderer,
 )
-from soromox.rendering.config import GeometryConfig, RendererConfig
+from soromox.rendering.config import (
+    GeometryConfig,
+    GroundPlaneConfig,
+    RendererConfig,
+    SceneConfig,
+)
 from soromox.systems import (
     GVS,
     GVSSegment,
@@ -116,7 +121,14 @@ if __name__ == "__main__":
 
     # Visualize the initial configuration using Open3DRenderer
     renderer = Open3DRenderer(
-        robot, config=RendererConfig(geometry=GeometryConfig(num_points=50))
+        robot,
+        config=RendererConfig(
+            geometry=GeometryConfig(num_points=50),
+            scene=SceneConfig.studio(
+                "neutral",
+                ground=GroundPlaneConfig(height=-0.06, height_reference="world"),
+            ),
+        ),
     )
     # renderer.show(q0)
 

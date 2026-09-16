@@ -46,7 +46,8 @@ class DirectionalLightConfig:
     """Distant light with constant illuminance.
 
     Attributes:
-        direction: World direction in which light travels; normalized by adapters.
+        direction: Direction in which light travels; normalized by adapters.
+        reference: World coordinates, or the ground basis used by the backdrop.
         illuminance_lux: Nonnegative illuminance in lux.
         color: sRGB illumination tint.
         cast_shadow: Whether this light casts shadows when scene shadows are enabled.
@@ -56,6 +57,7 @@ class DirectionalLightConfig:
     illuminance_lux: float = 60000.0
     color: RGB = (1.0, 0.97, 0.94)
     cast_shadow: bool = True
+    reference: Literal["world", "ground"] = "world"
 
     def __post_init__(self) -> None:
         """Validate photometric intensity, color and direction.
@@ -69,6 +71,8 @@ class DirectionalLightConfig:
         _validate_vector(self.direction, "direction", nonzero=True)
         _validate_vector(self.color, "color", color=True)
         _nonnegative(self.illuminance_lux, "illuminance_lux")
+        if self.reference not in ("world", "ground"):
+            raise ValueError("light reference must be world or ground")
 
 
 @dataclass
@@ -76,7 +80,8 @@ class PointLightConfig:
     """Isotropic point light with inverse-square attenuation.
 
     Attributes:
-        position: World position in metres.
+        position: Position in metres.
+        reference: World coordinates, or the ground basis used by the backdrop.
         intensity_candela: Nonnegative luminous intensity in candela.
         color: sRGB illumination tint.
         range_m: Positive finite influence distance in metres.
@@ -88,6 +93,7 @@ class PointLightConfig:
     color: RGB = (1.0, 0.98, 0.96)
     range_m: float = 4.0
     cast_shadow: bool = False
+    reference: Literal["world", "ground"] = "world"
 
     @classmethod
     def from_lumens(cls, lumens: float, **kwargs: Any) -> PointLightConfig:
@@ -118,6 +124,8 @@ class PointLightConfig:
         _validate_vector(self.position, "position")
         _validate_vector(self.color, "color", color=True)
         _nonnegative(self.intensity_candela, "intensity_candela")
+        if self.reference not in ("world", "ground"):
+            raise ValueError("light reference must be world or ground")
         if not np.isfinite(self.range_m) or self.range_m <= 0:
             raise ValueError("range_m must be finite and positive")
 
@@ -168,7 +176,9 @@ class GroundPlaneConfig:
         visible: Display the ground reference, including its surface and grid.
         surface: Draw a filled surface; False displays only the optional grid.
         alignment: World alignment or alignment with each robot's base tangent.
-        height: Signed displacement along the normal, in metres.
+        height: Signed displacement along the selected height reference, in metres.
+        height_reference: Use the world origin or the robot base plate mounting face
+            as the height reference for world-aligned floors.
         normal: Explicit world normal; None selects the robot's world-up direction.
         size: Side length in metres; None fits the complete scene.
         color: Surface sRGB color.
@@ -185,6 +195,7 @@ class GroundPlaneConfig:
     surface: bool = True
     alignment: Literal["world", "base"] = "world"
     height: float = 0.0
+    height_reference: Literal["world", "base_mounting_face"] = "world"
     normal: Vector3 | None = None
     size: float | None = None
     color: RGB = (0.94, 0.95, 0.96)
@@ -207,6 +218,8 @@ class GroundPlaneConfig:
         """
         if self.alignment not in ("world", "base"):
             raise ValueError("alignment must be world or base")
+        if self.height_reference not in ("world", "base_mounting_face"):
+            raise ValueError("height_reference must be world or base_mounting_face")
         if not np.isfinite(self.height):
             raise ValueError("height must be finite")
         if self.normal is not None:
@@ -317,9 +330,11 @@ class SceneConfig:
     )
     lights: tuple[DirectionalLightConfig | PointLightConfig, ...] = field(
         default_factory=lambda: (
-            DirectionalLightConfig(illuminance_lux=80000, color=(1.0, 1.0, 1.0)),
+            DirectionalLightConfig(
+                reference="ground", illuminance_lux=80000, color=(1.0, 1.0, 1.0)
+            ),
             PointLightConfig.from_lumens(
-                250000, position=(0.0, -0.8, 0.8), range_m=6.0
+                250000, reference="ground", position=(0.0, -0.8, 0.8), range_m=6.0
             ),
         )
     )
@@ -406,7 +421,7 @@ class SceneConfig:
         scene_extent: float = 1.2,
         **overrides: Any,
     ) -> SceneConfig:
-        """Create a studio scene with concrete world-space lights.
+        """Create a studio scene with lights oriented in the ground basis.
 
         Args:
             style: Neutral grey, bright white, or dark charcoal studio. The dark
@@ -435,6 +450,7 @@ class SceneConfig:
         ambient = {"neutral": 1.05, "bright": 1.2, "dark": 0.4}[style]
         lights = [
             DirectionalLightConfig(
+                reference="ground",
                 illuminance_lux=key,
                 color=(1.0, 1.0, 1.0),
                 direction={
@@ -446,6 +462,7 @@ class SceneConfig:
             PointLightConfig.from_lumens(
                 {"neutral": 212500, "bright": 400000, "dark": 300000}[style] * scale**2,
                 position=tuple(np.array([0.0, -0.8, 0.8]) * scale),
+                reference="ground",
                 range_m=6.0 * scale,
             ),
             PointLightConfig.from_lumens(
@@ -454,6 +471,7 @@ class SceneConfig:
                     np.array([0.0, 0.4, 0.75] if style != "dark" else [0.8, 0.35, 0.75])
                     * scale
                 ),
+                reference="ground",
                 range_m=6.0 * scale,
                 color=(1.0, 1.0, 1.0) if style != "dark" else (0.8, 0.88, 1.0),
             ),

@@ -11,8 +11,10 @@ from diffrax import Tsit5
 from soromox.rendering import MatplotlibRenderer, OpenCVPlanarRenderer
 from soromox.rendering.config import (
     GeometryConfig,
+    GroundPlaneConfig,
     RendererConfig,
     RenderOutputConfig,
+    SceneConfig,
 )
 from soromox.systems import LinkSpec, PlanarPCS, SystemState
 
@@ -233,7 +235,14 @@ if __name__ == "__main__":
     # Plot the robot configuration upon time
     # =====================================================
     renderer = MatplotlibRenderer(
-        robot, config=RendererConfig(geometry=GeometryConfig(num_points=50))
+        robot,
+        config=RendererConfig(
+            geometry=GeometryConfig(num_points=50),
+            scene=SceneConfig.studio(
+                "neutral",
+                ground=GroundPlaneConfig(height=-0.06, height_reference="world"),
+            ),
+        ),
     )
     renderer.animate(ts=ts, q_ts=q_ts, interval=100, mode="slider")
 
@@ -246,6 +255,10 @@ if __name__ == "__main__":
         config=RendererConfig(
             geometry=GeometryConfig(num_points=50),
             output=RenderOutputConfig(width=700, height=700),
+            scene=SceneConfig.studio(
+                "neutral",
+                ground=GroundPlaneConfig(height=-0.06, height_reference="world"),
+            ),
         ),
     )
     opencv_renderer.render_sequence(

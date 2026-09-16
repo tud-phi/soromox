@@ -17,6 +17,7 @@ from pcs_cf_cbf_clf_common import (
     load_trajectory,
     trajectory_path,
 )
+from scipy.spatial.transform import Rotation
 
 from soromox.rendering import (
     BackboneColorConfig,
@@ -28,6 +29,7 @@ from soromox.rendering.config import (
     GeometryConfig,
     RendererConfig,
     RenderOutputConfig,
+    SceneConfig,
 )
 
 PAPER_RESULTS_DIR = Path(__file__).resolve().parents[2]
@@ -144,13 +146,14 @@ def main() -> None:
     static_spheres_radii = np.concatenate([obs_radii, target_radius], axis=0)
     static_spheres_colors = np.concatenate([obs_colors, target_color], axis=0)
 
-    # Manual camera settings
-    radius = 2.4
-    angle = -np.pi / 4
-    x, y = float(radius * np.cos(angle)), float(radius * np.sin(angle))
+    # Rotate all displayed geometry together to reveal the goal and obstacles.
+    # The saved trajectory and its physical relationships remain in one frame.
+    display_rotation = Rotation.from_euler("z", 155.0, degrees=True)
+    static_spheres_positions = display_rotation.apply(static_spheres_positions)
+    # Frontal studio view; camera roll presents the +z robot as hanging.
     camera_config = CameraConfig(
-        position=(x, y, 0.325),
-        look_at=(0.0, 0.0, 0.125),
+        position=(-0.04, -0.65, 0.05),
+        look_at=(-0.04, 0.0, 0.16),
         up=(0.0, 0.0, -1.0),
         fov=60.0,
     )
@@ -164,7 +167,14 @@ def main() -> None:
 
     print("Building robot geometry...")
     robot = build_simulation_setup().robot
+    base_pose = np.asarray(robot.fixed_base_pose).copy()
+    base_rotation = Rotation.from_quat(base_pose[:4])
+    base_pose[:4] = (display_rotation * base_rotation).as_quat()
+    base_pose[4:] = display_rotation.apply(base_pose[4:])
+    robot = robot.with_fixed_base_pose(base_pose)
     print("L_cum =", robot.L_cum)
+    scene = SceneConfig.studio("neutral")
+    scene.ground.height_reference = "base_mounting_face"
     renderer = Open3DRenderer(
         robot,
         config=RendererConfig(
@@ -173,6 +183,7 @@ def main() -> None:
             ),
             colors=color_config,
             output=RenderOutputConfig(width=1920, height=1080),
+            scene=scene,
         ),
     )
 

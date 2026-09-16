@@ -10,10 +10,7 @@ import matplotlib.pyplot as plt  # noqa: E402
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 SECTION_CODE_DIR = (
-    REPOSITORY_ROOT
-    / "paper_results"
-    / "secVc_model_based_control"
-    / "code"
+    REPOSITORY_ROOT / "paper_results" / "secVc_model_based_control" / "code"
 )
 if str(SECTION_CODE_DIR) not in sys.path:
     sys.path.insert(0, str(SECTION_CODE_DIR))
@@ -51,11 +48,37 @@ def test_composite_has_expected_physical_layout(composite_figure):
     assert axes.operational_errors[0].get_ylabel() == r"$e_p$ $\mathrm{[mm]}$"
     assert axes.operational_errors[1].get_ylabel() == r"$e_r$ $\mathrm{[deg]}$"
     assert all(len(axis.lines) == 4 for axis in axes.operational_errors)
-    assert all(axis.lines[-1].get_gid() == "secondary" for axis in axes.operational_errors)
+    assert all(
+        axis.lines[-1].get_gid() == "secondary" for axis in axes.operational_errors
+    )
+    assert all(len(axis.lines) == 9 for axis in axes.operational)
+    for axis in axes.operational:
+        marker_lines = [
+            line for line in axis.lines if line.get_label() == "_actual samples"
+        ]
+        assert len(marker_lines) == 3
+        assert all(line.get_linestyle() == "None" for line in marker_lines)
+        assert all(line.get_marker() == "o" for line in marker_lines)
+        assert all(line.get_zorder() > 5 for line in marker_lines)
+
+    operational_legend_labels = [
+        text.get_text() for text in figure.legends[1].get_texts()
+    ]
+    assert operational_legend_labels == [
+        r"$x$",
+        r"$y$",
+        r"$z$",
+        "Actual",
+        "Desired",
+        "Zero error",
+    ]
     assert axes.operational[0].get_position().width == pytest.approx(
         axes.operational_errors[0].get_position().width
     )
-    assert axes.operational[0].get_position().x1 < axes.operational_errors[0].get_position().x0
+    assert (
+        axes.operational[0].get_position().x1
+        < axes.operational_errors[0].get_position().x0
+    )
 
     renderer = figure.canvas.get_renderer()
     assert all(
@@ -93,9 +116,7 @@ def test_composite_enforces_shared_style_contract(composite_figure):
                 assert line.get_linewidth() == pytest.approx(role_widths[role])
                 marker = line.get_marker()
                 if marker not in (None, "None", "", " "):
-                    assert line.get_markersize() == pytest.approx(
-                        composite.MARKER_SIZE
-                    )
+                    assert line.get_markersize() == pytest.approx(composite.MARKER_SIZE)
 
     panel_labels = [text for text in figure.texts if text.get_text() in "AB"]
     assert all(
@@ -121,11 +142,10 @@ def test_snapshot_resolution_and_timestamps_are_publication_ready(composite_figu
     assert 0.10 <= bottom_whitespace_cm <= 0.30
 
     for axis in axes.snapshots:
+        assert axis.get_position().width / axis.get_position(original=True).width > 0.9
         assert len(axis.images) == 1
         assert len(axis.texts) == 1
-        assert axis.texts[0].get_fontsize() == pytest.approx(
-            composite.SMALL_FONT_SIZE
-        )
+        assert axis.texts[0].get_fontsize() == pytest.approx(composite.SMALL_FONT_SIZE)
         image_width = axis.images[0].get_array().shape[1]
         width_inches = axis.get_window_extent(renderer).width / figure.dpi
         assert image_width / width_inches >= 300.0
@@ -167,12 +187,9 @@ def test_legends_labels_and_snapshot_timestamps_do_not_overlap(composite_figure)
         renderer
     )
     snapshot_bottom = min(
-        axis.texts[0].get_window_extent(renderer).y0
-        for axis in axes.snapshots
+        axis.texts[0].get_window_extent(renderer).y0 for axis in axes.snapshots
     )
-    snapshot_top = max(
-        axis.get_window_extent(renderer).y1 for axis in axes.snapshots
-    )
+    snapshot_top = max(axis.get_window_extent(renderer).y1 for axis in axes.snapshots)
     operational_xlabel_bottom = min(
         axis.xaxis.label.get_window_extent(renderer).y0
         for axis in (axes.operational[1], axes.operational_errors[1])
@@ -221,5 +238,14 @@ def test_save_writes_both_formats_and_requires_force_to_overwrite(
     )
     assert pdf_output.stat().st_size > 0
     assert svg_output.stat().st_size > 0
+    assert not any(
+        line != line.rstrip() for line in svg_output.read_text().splitlines()
+    )
+    import xml.etree.ElementTree as ET
+
+    svg = ET.parse(svg_output)
+    background = svg.find(".//{*}g[@id='patch_1']/{*}path")
+    assert background is not None
+    assert "fill: none" in background.attrib["style"]
     with pytest.raises(FileExistsError, match="--force"):
         composite.save_composite_figure(figure, output_base, force=False)

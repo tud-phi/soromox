@@ -10,9 +10,11 @@ from soromox.rendering import OpenCVPlanarRenderer, ViserRenderer
 from soromox.rendering.config import (
     BackboneColorConfig,
     GeometryConfig,
+    GroundPlaneConfig,
     RendererColorConfig,
     RendererConfig,
     RenderOutputConfig,
+    SceneConfig,
 )
 from soromox.systems import Pendulum, PendulumParams, SystemState
 
@@ -185,7 +187,12 @@ if __name__ == "__main__":
         viser_renderer = ViserRenderer(
             robot,
             config=RendererConfig(
-                geometry=GeometryConfig(num_points=50, backbone_style="discrete")
+                geometry=GeometryConfig(num_points=50, backbone_style="discrete"),
+                scene=SceneConfig.technical(
+                    ground=GroundPlaneConfig(
+                        surface=False, height=-0.06, height_reference="world"
+                    )
+                ),
             ),
         )
         viser_renderer.render_sequence(

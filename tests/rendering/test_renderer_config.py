@@ -7,11 +7,12 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 from numpy.testing import assert_allclose
-from test_base_renderer import DummyPlanarRobot
+from test_base_renderer import DummyPlanarRobot, DummyRenderer, DummySpatialRobot
 
 from soromox.rendering import (
     BackdropConfig,
     CameraConfig,
+    DirectionalLightConfig,
     GeometryConfig,
     GroundPlaneConfig,
     MatplotlibRenderer,
@@ -69,6 +70,39 @@ def test_edits_are_validated_when_constructing(section, field, value):
         OpenCVPlanarRenderer(robot(), config=config)
 
 
+def test_invalid_ground_height_reference_is_rejected():
+    config = RendererConfig()
+    config.scene.ground.height_reference = "invalid"
+    with pytest.raises(ValueError, match="height_reference"):
+        OpenCVPlanarRenderer(robot(), config=config)
+
+
+def test_base_mounting_face_ground_rejects_nonvertical_fixed_base_robot():
+    with pytest.raises(ValueError, match="parallel or antiparallel"):
+        DummyRenderer(
+            DummySpatialRobot(jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0])),
+            config=RendererConfig(
+                scene=SceneConfig(
+                    ground=GroundPlaneConfig(height_reference="base_mounting_face")
+                )
+            ),
+        )
+
+
+def test_base_mounting_face_ground_rejects_floating_base_robot():
+    floating_robot = DummySpatialRobot(jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]))
+    floating_robot.floating_base = True
+    with pytest.raises(ValueError, match="floating-base"):
+        DummyRenderer(
+            floating_robot,
+            config=RendererConfig(
+                scene=SceneConfig(
+                    ground=GroundPlaneConfig(height_reference="base_mounting_face")
+                )
+            ),
+        )
+
+
 def test_photometry_and_preset_scaling_do_not_rescale_explicit_lights():
     light = PointLightConfig.from_lumens(4 * np.pi * 15, position=(1.0, 2.0, 3.0))
     assert light.intensity_candela == pytest.approx(15)
@@ -97,6 +131,48 @@ def test_world_base_and_explicit_ground_orientation():
     assert len(world) == 1
     assert_allclose(world[0][1], [0, 1, 0])
     assert world[0][0][1] == 0
+    spatial_renderer = DummyRenderer(
+        DummySpatialRobot(
+            jnp.array([0.0, -np.sqrt(0.5), 0.0, np.sqrt(0.5), 0.0, 0.0, 0.0])
+        ),
+        config=RendererConfig(
+            scene=SceneConfig(
+                ground=GroundPlaneConfig(height_reference="base_mounting_face")
+            )
+        ),
+    )
+    spatial_curves = np.array([[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]])
+    spatial_renderer._fit_scene_bounds(spatial_curves)
+    grounded_spatial = spatial_renderer._resolve_ground_planes(spatial_curves)
+    assert grounded_spatial[0][0][2] == pytest.approx(-0.06)
+    grounded = spatial_renderer._resolve_ground_planes(spatial_curves[:1])
+    assert grounded[0][0][2] == pytest.approx(-0.06)
+    spatial_renderer.config.scene.ground = GroundPlaneConfig(
+        height_reference="base_mounting_face", height=0.1
+    )
+    grounded_offset = spatial_renderer._resolve_ground_planes(spatial_curves[:1])
+    assert grounded_offset[0][0][2] == pytest.approx(-0.06 + 0.1)
+    with pytest.raises(ValueError, match="share one height"):
+        spatial_renderer._resolve_ground_planes(
+            np.array(
+                [
+                    [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]],
+                    [[0.0, 0.0, 0.1], [1.0, 0.0, 0.1]],
+                ]
+            )
+        )
+    hanging_renderer = DummyRenderer(
+        DummySpatialRobot(
+            jnp.array([0.0, np.sqrt(0.5), 0.0, np.sqrt(0.5), 0.0, 0.0, 0.0])
+        ),
+        config=RendererConfig(
+            scene=SceneConfig(
+                ground=GroundPlaneConfig(height_reference="base_mounting_face")
+            )
+        ),
+    )
+    hanging = hanging_renderer._resolve_ground_planes(spatial_curves[:1])
+    assert hanging[0][0][2] == pytest.approx(0.06)
     renderer.config.scene.ground = GroundPlaneConfig(alignment="base", height=0.1)
     bases = renderer._resolve_ground_planes(curves, [[0, 1, 0], [1, 0, 0]])
     assert len(bases) == 2
@@ -116,6 +192,13 @@ def test_trajectory_helpers_and_backdrop_bounds():
     vertices, faces = backdrop_mesh(SceneConfig.studio(), center, extent, [0, 0, 1])
     assert len(faces) > 100
     assert vertices[:, 2].min() == 0
+    grounded_scene = SceneConfig.studio(
+        ground=GroundPlaneConfig(height_reference="base_mounting_face")
+    )
+    grounded_vertices, _ = backdrop_mesh(
+        grounded_scene, center, extent, [0, 0, 1], ground_height=-0.06
+    )
+    assert grounded_vertices[:, 2].min() == pytest.approx(-0.06)
     assert_allclose(renderer._appearance_center, center)
     assert renderer._appearance_extent == extent
     basis = plane_basis([1, 2, 3])
@@ -448,7 +531,7 @@ def test_technical_tone_mapping_preserves_white_without_changing_studio_defaults
     assert SceneConfig.studio().tone_mapping == "backend-default"
 
 
-@pytest.mark.parametrize("normal", [[0, 0, 1], [0, 1, 0], [1, 2, 3]])
+@pytest.mark.parametrize("normal", [[0, 0, 1], [0, 0, -1], [0, 1, 0], [1, 2, 3]])
 def test_eased_backdrop_dimensions_orientation_and_smooth_joins(normal):
     """Preserve world floor height, bend dimensions and continuous join tangents."""
     scene = SceneConfig.studio()
@@ -636,3 +719,86 @@ def test_hsa_opencv_ignores_studio_scenery():
     np.testing.assert_array_equal(images[0], images[1])
     np.testing.assert_array_equal(images[0][0, 0], [255, 255, 255])
     assert np.any(images[0] != 255)
+
+
+@pytest.mark.parametrize(
+    "preset", ["technical", "neutral", "bright", "dark", "flat", "clay"]
+)
+def test_preset_lights_and_backdrop_rotate_together_for_hanging(preset):
+    from soromox.rendering.scenery import resolved_lights
+
+    scene = (
+        RendererConfig.clay().scene
+        if preset == "clay"
+        else SceneConfig.technical()
+        if preset == "technical"
+        else SceneConfig.flat()
+        if preset == "flat"
+        else SceneConfig.studio(preset)
+    )
+    rotation = np.diag([-1, 1, -1])
+    upright = list(resolved_lights(scene, (0, 0, 1)))
+    hanging = list(resolved_lights(scene, (0, 0, -1)))
+    for original, rotated in zip(upright, hanging):
+        field = "position" if isinstance(original, PointLightConfig) else "direction"
+        assert_allclose(getattr(rotated, field), rotation @ getattr(original, field))
+    if scene.backdrop.enabled:
+        center = np.array([0.2, -0.1, 0.4])
+        vertices, faces = backdrop_mesh(scene, center, 1.2, (0, 0, 1))
+        inverted, inverted_faces = backdrop_mesh(
+            scene, rotation @ center, 1.2, (0, 0, -1)
+        )
+        assert_allclose(inverted, vertices @ rotation.T)
+        assert_allclose(inverted_faces, faces)
+        # Floor faces point toward the robot in both mounting orientations.
+        triangle = inverted[inverted_faces[0]]
+        assert np.cross(triangle[1] - triangle[0], triangle[2] - triangle[0])[2] < 0
+
+
+def test_explicit_world_lights_do_not_rotate_with_ground():
+    from soromox.rendering.scenery import resolved_lights
+
+    light = PointLightConfig(position=(1, 2, 3))
+    scene = SceneConfig.studio(lights=(light,))
+    assert list(resolved_lights(scene, (0, 0, -1))) == [light]
+    assert scene.lights == (light,)
+
+
+@pytest.mark.parametrize("light_type", [PointLightConfig, DirectionalLightConfig])
+def test_light_reference_validation(light_type):
+    with pytest.raises(ValueError, match="reference"):
+        light_type(reference="invalid")
+
+
+@pytest.mark.parametrize("x", [0.01, 0.4, 0.96, 1.0])
+def test_ground_basis_does_not_flip_across_horizontal_normals(x):
+    from soromox.rendering.scenery import resolved_lights
+
+    # Avoid the unavoidable reference-axis singularity at exactly +/-Y.
+    y = np.sqrt(1 - x**2)
+    normals = ([x, y, 1e-7], [x, y, -1e-7])
+    bases = [plane_basis(n) for n in normals]
+    assert_allclose(bases[0], bases[1], atol=3e-5)
+    scene = SceneConfig.studio()
+    lights = [list(resolved_lights(scene, n)) for n in normals]
+    for left, right in zip(*lights):
+        field = "position" if isinstance(left, PointLightConfig) else "direction"
+        assert_allclose(getattr(left, field), getattr(right, field), atol=3e-5)
+    meshes = [backdrop_mesh(scene, np.zeros(3), 1.0, n)[0] for n in normals]
+    assert_allclose(meshes[0], meshes[1], atol=1e-4)
+
+
+@pytest.mark.parametrize(
+    "normal", [[0, 0, 1], [0, 0, -1], [0, 1, 0], [0, -1, 0], [1, 0, 0], [1, 2, -3]]
+)
+def test_ground_basis_is_right_handed_with_canonical_mounts(normal):
+    basis = plane_basis(normal)
+    assert_allclose(basis.T @ basis, np.eye(3), atol=1e-12)
+    assert np.linalg.det(basis) == pytest.approx(1)
+    assert_allclose(basis[:, 2], np.asarray(normal) / np.linalg.norm(normal))
+    if normal == [0, 0, 1]:
+        assert_allclose(basis, np.eye(3))
+    elif normal == [0, 0, -1]:
+        assert_allclose(basis, np.diag([-1, 1, -1]))
+    elif normal[0] == normal[2] == 0:
+        assert_allclose(basis[:, 0], [1, 0, 0])

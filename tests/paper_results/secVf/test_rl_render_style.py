@@ -25,7 +25,11 @@ def test_run_policy_defaults_to_shared_paper_render_style():
 
     assert args.width == rl_render_style.RENDER_WIDTH
     assert args.height == rl_render_style.RENDER_HEIGHT
-    assert args.num_points == rl_render_style.BACKBONE_NUM_POINTS
+    assert args.num_points is None
+    assert (
+        render_rl_video.resolve_backbone_num_points(1, args.num_points)
+        == rl_render_style.BACKBONE_NUM_POINTS
+    )
     assert args.camera_fov == 60.0
     assert args.camera_distance_factor is None
     assert args.camera_position_offset is None
@@ -35,13 +39,16 @@ def test_run_policy_defaults_to_all_64_parallel_environments():
     args = run_rl_policy.parse_args([])
 
     assert args.num_envs == 64
+    assert args.game_time == 20.0
+    assert args.control_fps == 15.0
+    assert args.n_steps == 300
 
 
 def test_shared_camera_matches_section_vf_viewpoint():
     camera = rl_render_style.make_rl_camera_config(0.25)
 
     assert camera.fov == 60.0
-    assert_allclose(camera.position, (-1.51471109, -0.77178385, 0.5), atol=1e-8)
+    assert_allclose(camera.position, (0.0, -0.4675, 0.331875), atol=1e-8)
     assert_allclose(camera.look_at, (0.0, 0.0, 0.0875), atol=1e-12)
 
 

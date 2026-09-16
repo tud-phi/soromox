@@ -130,6 +130,12 @@ def test_sphere_surface_mesh_is_closed_and_has_requested_radius():
     assert sphere.faces.max() == len(sphere.vertices) - 1
 
 
+def test_sphere_surface_style_remains_visible_at_publication_scale():
+    assert renderer.SURFACE_FILL_OPACITY >= 0.15
+    assert renderer.SURFACE_MESH_OPACITY >= 0.35
+    assert np.mean(renderer.SURFACE_MESH_RGB) < np.mean(renderer.SURFACE_FILL_RGB)
+
+
 def test_transformed_disk_segments_follow_desired_tangent_axes():
     geometry = renderer.make_target_disk_geometry(0.2, num_points=16)
     position = np.array([1.0, 2.0, 3.0])

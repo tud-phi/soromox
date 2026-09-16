@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -18,7 +19,11 @@ from configuration_space_comparison_simulation import (
 )
 
 from soromox.rendering import BackboneColorConfig, RendererColorConfig, ViserRenderer
-from soromox.rendering.config import GeometryConfig, RendererConfig
+from soromox.rendering.config import (
+    GeometryConfig,
+    RendererConfig,
+    SceneConfig,
+)
 
 ACTUAL_RENDER_COLORS = np.array(
     [
@@ -382,6 +387,12 @@ def render_run(
         config=RendererConfig(
             geometry=GeometryConfig(num_points=num_points, backbone_style="discrete"),
             colors=color_config,
+            scene=SceneConfig.studio(
+                "neutral",
+                ground=replace(
+                    SceneConfig.studio().ground, height=-0.06, height_reference="world"
+                ),
+            ),
         ),
     )
     target_curves = np.asarray(

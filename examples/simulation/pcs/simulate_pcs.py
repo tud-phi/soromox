@@ -7,7 +7,12 @@ import matplotlib.pyplot as plt
 import plotly.graph_objects as go
 from diffrax import Tsit5
 
-from soromox.rendering.config import GeometryConfig, RendererConfig
+from soromox.rendering.config import (
+    GeometryConfig,
+    GroundPlaneConfig,
+    RendererConfig,
+    SceneConfig,
+)
 
 VIDEO_OUTPUT = Path(__file__).resolve().parent / "videos" / f"{Path(__file__).stem}.mp4"
 
@@ -183,7 +188,15 @@ if __name__ == "__main__":
     )
     renderer.animate(ts=ts, q_ts=q_ts, interval=100, mode="slider")
     renderer = Open3DRenderer(
-        robot, config=RendererConfig(geometry=GeometryConfig(num_points=50))
+        robot,
+        config=RendererConfig(
+            geometry=GeometryConfig(num_points=50),
+            scene=SceneConfig.technical(
+                ground=GroundPlaneConfig(
+                    surface=False, height_reference="base_mounting_face"
+                )
+            ),
+        ),
     )
     renderer.render_sequence(ts, q_ts, record_path=str(VIDEO_OUTPUT))
     print(f"Saved {VIDEO_OUTPUT}")
@@ -195,7 +208,15 @@ if __name__ == "__main__":
     # with GUI controls for playback, speed, and looping.
     # Plotly plots are automatically added to the GUI at the end of the sidebar
     viser_renderer = ViserRenderer(
-        robot, config=RendererConfig(geometry=GeometryConfig(num_points=50))
+        robot,
+        config=RendererConfig(
+            geometry=GeometryConfig(num_points=50),
+            scene=SceneConfig.technical(
+                ground=GroundPlaneConfig(
+                    surface=False, height_reference="base_mounting_face"
+                )
+            ),
+        ),
     )
 
     # Create custom strain plots for PCS

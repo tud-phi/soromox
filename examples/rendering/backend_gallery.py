@@ -30,14 +30,16 @@ def make_scene(planar: bool = False):
         planar: Use a two-link planar PCS counterpart for OpenCV.
 
     Returns:
-        Robot, strain displacement vector and shared rendering configuration.
+        Robot, strain displacement vector, shared rendering configuration and
+        base offsets.
         The planar counterpart shares lengths and bending coordinates; OpenCV
         represents its backbone with a line. Geometry lengths are in metres.
     """
-    config, q, _ = make_comparison("neutral", count=1, width=1200, height=800)
+    config, q, offsets = make_comparison("neutral", count=1, width=1200, height=800)
     config.geometry.line_width = 16.0
     if not planar:
-        return make_tentacle(), q[0], config
+        return make_tentacle(), q[0], config, offsets
+    config.scene.ground.height_reference = "world"
     robot = PlanarPCS.from_links(
         [
             LinkSpec.circular(
@@ -51,7 +53,7 @@ def make_scene(planar: bool = False):
             for length, radius in ((0.305, 0.01541), (0.055, 0.00642))
         ]
     )
-    return robot, np.array([3.6, 0, 0, -7.5, 0, 0]), config
+    return robot, np.array([3.6, 0, 0, -7.5, 0, 0]), config, offsets
 
 
 def main() -> None:
@@ -76,7 +78,8 @@ def main() -> None:
     args = parser.parse_args()
     jax.config.update("jax_enable_x64", True)
     planar = args.backend == "opencv"
-    robot, q, config = make_scene(planar)
+    robot, q, config, offsets = make_scene(planar)
+    render_offsets = offsets[:, :2] if planar else offsets
     if planar:
         renderer = OpenCVPlanarRenderer(
             robot, config=config, length_scale=1.5, origin_uv=(600, 690)
@@ -98,9 +101,10 @@ def main() -> None:
                 if time.monotonic() >= deadline:
                     raise RuntimeError("No browser connected within five minutes")
                 time.sleep(0.2)
-        offsets = jnp.array([[0, 0.012]] if planar else [[0, 0, 0.012]])
         pixels = renderer.render_frame(
-            jnp.asarray(q), base_offsets=offsets, render_actuators=False
+            jnp.asarray(q),
+            base_offsets=jnp.asarray(render_offsets),
+            render_actuators=False,
         )
         if planar:
             pixels = pixels[..., ::-1]  # OpenCV exports BGR; PNG uses RGB.

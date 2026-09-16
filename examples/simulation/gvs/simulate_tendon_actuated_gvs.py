@@ -8,7 +8,12 @@ import optimistix as optx
 
 from soromox.actuation import ThreadlikeActuator, ThreadlikeRouting
 from soromox.rendering import Open3DRenderer
-from soromox.rendering.config import GeometryConfig, RendererConfig
+from soromox.rendering.config import (
+    GeometryConfig,
+    GroundPlaneConfig,
+    RendererConfig,
+    SceneConfig,
+)
 from soromox.systems import (
     GVS,
     GVSSegment,
@@ -210,7 +215,15 @@ if Open3DRenderer is None:
 
 # Create renderer for visualization
 renderer = Open3DRenderer(
-    robot, config=RendererConfig(geometry=GeometryConfig(num_points=50))
+    robot,
+    config=RendererConfig(
+        geometry=GeometryConfig(num_points=50),
+        scene=SceneConfig.technical(
+            ground=GroundPlaneConfig(
+                surface=False, height_reference="base_mounting_face"
+            )
+        ),
+    ),
 )
 
 # =====================================================
