@@ -147,10 +147,23 @@ def build_figure(results, *, ax=None):
         ),
         Line2D([0], [0], color="black", linestyle="--"),
         Line2D([0], [0], color="black", linestyle="-"),
+        Line2D(
+            [0],
+            [0],
+            color=COLORS["post_opt_1"],
+            linestyle=":",
+            linewidth=2.0,
+        ),
     ]
     ax1.legend(
         custom_handles,
-        ["HOCLF controller", "HOCLF+HOCBF controller", "Goal distance", "Normal force"],
+        [
+            "HOCLF controller",
+            "HOCLF+HOCBF controller",
+            "Goal distance",
+            "Normal force",
+            "Force limit (5 N)",
+        ],
         loc="center right",
     )
     ax1.set_ylim(0.0, force_axis_max)

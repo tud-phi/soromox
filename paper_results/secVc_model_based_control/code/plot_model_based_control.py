@@ -165,7 +165,29 @@ def _set_line_role(line: Line2D, role: str) -> None:
     if marker not in (None, "None", "", " "):
         line.set_markersize(MARKER_SIZE)
         point_count = len(line.get_xdata())
-        line.set_markevery(max(1, point_count // 50))
+        line.set_markevery(max(1, point_count // 24))
+
+
+def _add_actual_markers(
+    ax: Axes,
+    t: np.ndarray,
+    values: np.ndarray,
+    color: str,
+) -> Line2D:
+    """Keep nearly overlapping actual and desired traces distinguishable."""
+    markers = ax.plot(
+        t,
+        values,
+        color=color,
+        linestyle="none",
+        marker="o",
+        markeredgecolor="white",
+        markeredgewidth=0.35,
+        label="_actual samples",
+        zorder=6,
+    )[0]
+    _set_line_role(markers, "primary")
+    return markers
 
 
 def _normalize_configuration_lines(axes: tuple[Axes, ...]) -> None:
@@ -315,6 +337,12 @@ def _plot_operational_group(
         )[0]
         _set_line_role(actual, "primary")
         _set_line_role(desired, "reference")
+        _add_actual_markers(
+            position_axis,
+            t,
+            np.asarray(x_pos[:, component]),
+            color,
+        )
         error = position_error_axis.plot(
             t,
             1e3 * np.asarray(position_error[:, component]),
@@ -345,6 +373,12 @@ def _plot_operational_group(
         )[0]
         _set_line_role(actual, "primary")
         _set_line_role(desired, "reference")
+        _add_actual_markers(
+            orientation_axis,
+            t,
+            np.asarray(run.x_traj_full[:, component]),
+            color,
+        )
         error = orientation_error_axis.plot(
             t,
             np.rad2deg(np.asarray(orientation_error[:, component])),
@@ -473,9 +507,27 @@ def _operational_legend_handles() -> tuple[list[Line2D], list[str]]:
                 linestyle="--",
                 linewidth=REFERENCE_LINE_WIDTH,
             ),
+            Line2D(
+                [],
+                [],
+                color="0.25",
+                alpha=0.7,
+                linewidth=SECONDARY_LINE_WIDTH,
+            ),
         )
     )
-    return handles, [r"$x$", r"$y$", r"$z$", "Actual", "Desired"]
+    handles[3].set_marker("o")
+    handles[3].set_markersize(MARKER_SIZE)
+    handles[3].set_markeredgecolor("white")
+    handles[3].set_markeredgewidth(0.35)
+    return handles, [
+        r"$x$",
+        r"$y$",
+        r"$z$",
+        "Actual",
+        "Desired",
+        "Zero error",
+    ]
 
 
 def build_composite_figure(
@@ -542,7 +594,7 @@ def build_composite_figure(
             operational_handles,
             operational_labels,
             operational_grid[0, :],
-            ncol=5,
+            ncol=6,
         )
 
         snapshot_grid = operational_grid[5, :].subgridspec(
@@ -597,6 +649,10 @@ def save_composite_figure(
     with plt.style.context(PAPER_STYLE), mpl.rc_context(COMPOSITE_RC_PARAMS):
         fig.savefig(pdf_output, dpi=300, transparent=True, bbox_inches=None)
         fig.savefig(svg_output, dpi=300, transparent=True, bbox_inches=None)
+    svg_output.write_text(
+        "\n".join(line.rstrip() for line in svg_output.read_text().splitlines())
+        + "\n"
+    )
     return pdf_output, svg_output
 
 

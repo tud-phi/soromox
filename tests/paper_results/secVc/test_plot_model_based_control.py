@@ -51,6 +51,27 @@ def test_composite_has_expected_physical_layout(composite_figure):
     assert all(
         axis.lines[-1].get_gid() == "secondary" for axis in axes.operational_errors
     )
+    assert all(len(axis.lines) == 9 for axis in axes.operational)
+    for axis in axes.operational:
+        marker_lines = [
+            line for line in axis.lines if line.get_label() == "_actual samples"
+        ]
+        assert len(marker_lines) == 3
+        assert all(line.get_linestyle() == "None" for line in marker_lines)
+        assert all(line.get_marker() == "o" for line in marker_lines)
+        assert all(line.get_zorder() > 5 for line in marker_lines)
+
+    operational_legend_labels = [
+        text.get_text() for text in figure.legends[1].get_texts()
+    ]
+    assert operational_legend_labels == [
+        r"$x$",
+        r"$y$",
+        r"$z$",
+        "Actual",
+        "Desired",
+        "Zero error",
+    ]
     assert axes.operational[0].get_position().width == pytest.approx(
         axes.operational_errors[0].get_position().width
     )
@@ -217,6 +238,9 @@ def test_save_writes_both_formats_and_requires_force_to_overwrite(
     )
     assert pdf_output.stat().st_size > 0
     assert svg_output.stat().st_size > 0
+    assert not any(
+        line != line.rstrip() for line in svg_output.read_text().splitlines()
+    )
     import xml.etree.ElementTree as ET
 
     svg = ET.parse(svg_output)

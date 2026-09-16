@@ -57,6 +57,17 @@ def test_snapshot_timestamps_match_axis_labels_and_clear_row_titles():
             assembly.plt.close(fig)
 
 
+def test_safety_legend_identifies_force_limit():
+    results = assembly.load_results("both", assembly.SAFETY / "data")
+    fig, ax = assembly.plt.subplots()
+    try:
+        assembly.safety_plot.build_figure(results, ax=ax)
+        labels = [text.get_text() for text in ax.get_legend().get_texts()]
+        assert "Force limit (5 N)" in labels
+    finally:
+        assembly.plt.close(fig)
+
+
 def test_exports_preserve_transparent_canvas_and_axes(tmp_path, monkeypatch):
     import xml.etree.ElementTree as ET
 
