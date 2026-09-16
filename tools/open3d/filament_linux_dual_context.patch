@@ -82,3 +82,33 @@ diff --git a/filament/backend/src/opengl/platforms/PlatformEGL.cpp b/filament/ba
              shared ? mEGLContext : EGL_NO_CONTEXT, mContextAttribs.data());
  
      if (UTILS_UNLIKELY(context == EGL_NO_CONTEXT)) {
+diff --git a/filament/backend/src/opengl/gl_headers.h b/filament/backend/src/opengl/gl_headers.h
+--- a/filament/backend/src/opengl/gl_headers.h
++++ b/filament/backend/src/opengl/gl_headers.h
+@@ -37,7 +37,9 @@
+  */
+ 
+ 
+-#if defined(__ANDROID__) || defined(FILAMENT_USE_EXTERNAL_GLES3) || defined(__EMSCRIPTEN__) || defined(FILAMENT_SUPPORTS_EGL_ON_LINUX)
++// Both GLX and EGLHeadless use desktop OpenGL in the SoRoMoX build.
++// Resolve their entry points through BlueGL rather than linking GLES symbols.
++#if defined(__ANDROID__) || defined(FILAMENT_USE_EXTERNAL_GLES3) || defined(__EMSCRIPTEN__)
+ 
+     #if defined(__EMSCRIPTEN__)
+     #   include <GLES3/gl3.h>
+diff --git a/filament/backend/src/opengl/platforms/PlatformEGLHeadless.cpp b/filament/backend/src/opengl/platforms/PlatformEGLHeadless.cpp
+--- a/filament/backend/src/opengl/platforms/PlatformEGLHeadless.cpp
++++ b/filament/backend/src/opengl/platforms/PlatformEGLHeadless.cpp
+@@ -35,11 +35,8 @@
+ }
+ 
+ bool PlatformEGLHeadless::isOpenGL() const noexcept {
+-#if defined(BACKEND_OPENGL_VERSION_GL)
++// Match the desktop OpenGL entry points shared with PlatformGLX.
+     return true;
+-#else
+-    return false;
+-#endif  // defined(BACKEND_OPENGL_VERSION_GL)
+ }
+ 
+ backend::Driver* PlatformEGLHeadless::createDriver(void* sharedContext,

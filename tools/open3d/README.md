@@ -60,6 +60,7 @@ Install Xcode and its Metal Toolchain, then the native build dependencies:
 sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer
 sudo xcodebuild -runFirstLaunch
 xcodebuild -downloadComponent metalToolchain
+xcrun --kill-cache
 xcrun -sdk macosx metal --version
 brew install cmake ninja openblas glslang spirv-cross
 uv sync --extra rendering
@@ -98,21 +99,27 @@ has not been validated for this checkout.
 
 ## Validation
 
-The current pin is `d32b4fce639b3cde284184072796480ef9b528d1`
-(Open3D 0.20.0, Filament 1.76.0). Patch compatibility and package metadata were
-checked for this update. Native rendering and the supported-Python build matrix
-must be rerun before merging; the local macOS host lacks the Metal Toolchain.
-The results below describe the previous pin and do not validate this revision.
+The current pin, `d32b4fce639b3cde284184072796480ef9b528d1`
+(Open3D 0.20.0, Filament 1.76.0), was source-built and tested on Apple M4 Max,
+macOS 27.0, Xcode 27.0 (27A266a), Metal 32023.921, and Python 3.12.11.
+The installed wheel reported `0.20.0+d32b4fc.soromox2`.
 
-The previous revision, `1a9eb99`, was source-built on Ubuntu 26.04.1 x86-64 with
-GCC 15.2 and tested using Mesa software OpenGL/EGL:
+The three native macOS integration checks passed: RGB `uint8` readback and
+color-grading selection, a 320 × 240 tentacle PNG and 60-frame H.264 MP4,
+and opening/closing the real Metal viewer through its event loop. The exported
+PNG was visually inspected. The source build compiled the Metal shaders, and
+130 focused renderer/configuration tests passed against the new wheel.
 
-| Python | Source wheel | Native surfaceless render | SoRoMoX PNG + MP4 | Xvfb `show()` + playback |
-| --- | --- | --- | --- | --- |
-| 3.11.15 | Passed | Passed | Passed | Passed |
-| 3.12.13 | Passed | Passed | Passed | Passed |
-| 3.13.15 | Passed | Passed | Passed | Passed |
-| 3.14.7 | Passed | Passed | Passed | Passed |
+Run the macOS checks with:
+
+```bash
+SOROMOX_RUN_RENDERING_INTEGRATION=1 uv run --no-sync python -m pytest -q \
+  tests/rendering/test_open3d_color_integration.py \
+  tests/rendering/test_open3d_macos_integration.py
+```
+
+Ubuntu native validation runs in CI. Results for this revision must pass before
+merging; macOS checks do not validate the Linux patch set or other Python ABIs.
 
 The Ubuntu integration checks render non-uniform RGB pixels, encode and probe a
 three-frame H.264 MP4, open and close a real modern GUI window under Xvfb, and
@@ -131,19 +138,12 @@ xvfb-run -a env -u EGL_PLATFORM LIBGL_ALWAYS_SOFTWARE=true \
 ```
 
 Xvfb's software GLX exposes Filament feature level 1, so the modern window smoke
-test disables VSM shadows and SSAO. Full default lighting and shadows passed in
-the surfaceless image and video checks.
+test disables VSM shadows and SSAO. The surfaceless image/video checks exercise
+default lighting and shadows.
 
-Open3D can abort during interpreter finalization if its modern GUI and legacy
-visualizer are both initialized sequentially in one process. The integration
-tests run those two otherwise-successful viewer checks in fresh subprocesses.
-Applications should likewise avoid mixing the two Open3D GUI systems in one
-process until upstream fixes their teardown interaction.
-
-The same Open3D revision was previously source-built and validated on Apple
-Silicon (M4 Max, macOS 26.6.2, Xcode 26.6) with Python 3.12.11, 3.13.15, and
-3.14.7. PNG export, MP4 export, compiled Metal shaders, and modern `show()` all
-passed.
+The integration tests run modern GUI and legacy visualizer checks in separate
+processes because their graphics teardown can interact. Applications should
+likewise avoid mixing the two Open3D GUI systems in one process.
 
 ## Updating Open3D main
 
@@ -191,7 +191,8 @@ The Linux patches serve the following purposes:
 - `linux_filament_patch_hook.patch` enables EGL support and applies the local
   Filament patch after upstream's Vulkan texture-import patch.
 - `filament_linux_dual_context.patch` builds both GLX and EGL-headless platforms,
-  selects between them at runtime, and binds the EGL API on worker threads.
+  selects between them at runtime, uses desktop OpenGL entry points for both,
+  and binds the EGL API on worker threads.
 
 Upstream tracking:
 
