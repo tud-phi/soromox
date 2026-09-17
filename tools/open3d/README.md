@@ -186,7 +186,8 @@ meshes without triangle UVs. Open3D uses a `TexturedVertex` buffer for this path
 and advertises UV0 to Filament, while the buffer comes from `malloc`; without
 the patch, those UV bytes are undefined. This can produce heap-dependent
 triangles or lighting artifacts with software Vulkan and may affect any
-Filament backend.
+Filament backend; see [Open3D issue #7565](https://github.com/isl-org/Open3D/issues/7565)
+and [the proposed upstream fix](https://github.com/isl-org/Open3D/pull/7566).
 
 `neutral_tone_mapping.patch` restores linear, ACES, legacy ACES, Filmic and
 Display Range selection through Filament's current `ToneMapper` API, and exposes
