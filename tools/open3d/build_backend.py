@@ -18,7 +18,7 @@ from pathlib import Path
 REPOSITORY = "https://github.com/isl-org/Open3D.git"
 HERE = Path(__file__).resolve().parent
 REVISION_FILE = HERE / "OPEN3D_REVISION"
-BASE_VERSION = "0.19.0"
+BASE_VERSION = "0.20.0"
 RUNTIME_REQUIREMENTS = (
     "numpy>=1.18.0",
     "dash>=2.6.0",
@@ -28,7 +28,7 @@ RUNTIME_REQUIREMENTS = (
     "configargparse",
 )
 COMMON_PATCHES = [HERE / "neutral_tone_mapping.patch"]
-MACOS_PATCHES = [*COMMON_PATCHES, HERE / "metal_rgb_readback.patch"]
+MACOS_PATCHES = [*COMMON_PATCHES]
 LINUX_PATCHES = [
     *COMMON_PATCHES,
     HERE / "linux_surfaceless.patch",
@@ -87,9 +87,8 @@ def _run(*args, cwd=None):
 def _build_macos():
     """Build or reuse a patched Open3D wheel for the running macOS Python.
 
-    Checks the cache manifest, applies the color-grading and Metal
-    readback patches and invokes upstream CMake targets. Cache and source/build
-    overrides use the ``SOROMOX_OPEN3D_*`` environment variables documented in
+    Checks the cache manifest, applies the color-grading patch and invokes
+    upstream CMake targets. Cache and source/build overrides use the ``SOROMOX_OPEN3D_*`` environment variables documented in
     this directory's README. Shaders are compiled with Apple's Metal toolchain.
 
     Returns:

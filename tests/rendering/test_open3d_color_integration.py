@@ -44,6 +44,8 @@ def test_neutral_grading_preserves_greys_and_honors_tone_mapper_selection():
                     for level in (0.18, 0.58, 1.0):
                         scene.set_background([level, level, level, 1.0])
                         pixels = np.asarray(render.render_to_image())
+                        assert pixels.shape == (72, 96, 3), pixels.shape
+                        assert pixels.dtype == np.uint8, pixels.dtype
                         values.append(pixels[10:-10, 10:-10, :3].mean(axis=(0, 1)))
                     results[mode] = np.array(values)
                 assert np.max(np.ptp(results[modes.PBR_NEUTRAL], axis=1)) < 2.0

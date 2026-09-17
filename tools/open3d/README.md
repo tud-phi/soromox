@@ -60,6 +60,7 @@ Install Xcode and its Metal Toolchain, then the native build dependencies:
 sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer
 sudo xcodebuild -runFirstLaunch
 xcodebuild -downloadComponent metalToolchain
+xcrun --kill-cache
 xcrun -sdk macosx metal --version
 brew install cmake ninja openblas glslang spirv-cross
 uv sync --extra rendering
@@ -83,22 +84,42 @@ python -m pip install --upgrade --pre --only-binary=:all: --no-index \
 python -m pip install -e ".[rendering]"
 ```
 
-Available wheel ABIs and architectures are controlled by upstream. On Windows,
-also install a current GPU driver, the Microsoft Visual C++ Redistributable, and
-FFmpeg on `PATH` for MP4 export. Native Windows rendering has not been validated
-for this checkout.
+Available wheel ABIs and architectures are controlled by upstream. As of
+September 16, 2026, the [main-devel assets](https://github.com/isl-org/Open3D/releases/tag/main-devel)
+include only one Open3D 0.20 Linux ARM64 wheel:
+`open3d-0.20.0+d32b4fc-cp310-cp310-manylinux_2_35_aarch64.whl`.
+Its `cp310-cp310` tags target CPython 3.10 specifically; this is a limitation of
+the published ARM64 wheels, not Open3D's overall Python support. SoRoMoX keeps
+Linux ARM64 CPython 3.11–3.14 on the available 0.19.0 wheels through a `uv`
+constraint until matching 0.20 wheels are published.
+
+On Windows, also install a current GPU driver, the Microsoft Visual C++
+Redistributable, and FFmpeg on `PATH` for MP4 export. Native Windows rendering
+has not been validated for this checkout.
 
 ## Validation
 
-The current revision, `1a9eb99`, was source-built on Ubuntu 26.04.1 x86-64 with
-GCC 15.2 and tested using Mesa software OpenGL/EGL:
+The current pin, `d32b4fce639b3cde284184072796480ef9b528d1`
+(Open3D 0.20.0, Filament 1.76.0), was source-built and tested on Apple M4 Max,
+macOS 27.0, Xcode 27.0 (27A266a), Metal 32023.921, and Python 3.12.11.
+The installed wheel reported `0.20.0+d32b4fc.soromox2`.
 
-| Python | Source wheel | Native surfaceless render | SoRoMoX PNG + MP4 | Xvfb `show()` + playback |
-| --- | --- | --- | --- | --- |
-| 3.11.15 | Passed | Passed | Passed | Passed |
-| 3.12.13 | Passed | Passed | Passed | Passed |
-| 3.13.15 | Passed | Passed | Passed | Passed |
-| 3.14.7 | Passed | Passed | Passed | Passed |
+The three native macOS integration checks passed: RGB `uint8` readback and
+color-grading selection, a 320 × 240 tentacle PNG and 60-frame H.264 MP4,
+and opening/closing the real Metal viewer through its event loop. The exported
+PNG was visually inspected. The source build compiled the Metal shaders, and
+130 focused renderer/configuration tests passed against the new wheel.
+
+Run the macOS checks with:
+
+```bash
+SOROMOX_RUN_RENDERING_INTEGRATION=1 uv run --no-sync python -m pytest -q \
+  tests/rendering/test_open3d_color_integration.py \
+  tests/rendering/test_open3d_macos_integration.py
+```
+
+Ubuntu native validation runs in CI. Results for this revision must pass before
+merging; macOS checks do not validate the Linux patch set or other Python ABIs.
 
 The Ubuntu integration checks render non-uniform RGB pixels, encode and probe a
 three-frame H.264 MP4, open and close a real modern GUI window under Xvfb, and
@@ -117,19 +138,12 @@ xvfb-run -a env -u EGL_PLATFORM LIBGL_ALWAYS_SOFTWARE=true \
 ```
 
 Xvfb's software GLX exposes Filament feature level 1, so the modern window smoke
-test disables VSM shadows and SSAO. Full default lighting and shadows passed in
-the surfaceless image and video checks.
+test disables VSM shadows and SSAO. The surfaceless image/video checks exercise
+default lighting and shadows.
 
-Open3D can abort during interpreter finalization if its modern GUI and legacy
-visualizer are both initialized sequentially in one process. The integration
-tests run those two otherwise-successful viewer checks in fresh subprocesses.
-Applications should likewise avoid mixing the two Open3D GUI systems in one
-process until upstream fixes their teardown interaction.
-
-The same Open3D revision was previously source-built and validated on Apple
-Silicon (M4 Max, macOS 26.6.2, Xcode 26.6) with Python 3.12.11, 3.13.15, and
-3.14.7. PNG export, MP4 export, compiled Metal shaders, and modern `show()` all
-passed.
+The integration tests run modern GUI and legacy visualizer checks in separate
+processes because their graphics teardown can interact. Applications should
+likewise avoid mixing the two Open3D GUI systems in one process.
 
 ## Updating Open3D main
 
@@ -155,11 +169,6 @@ the required fixes.
 
 ## Temporary patches and upstreaming
 
-`metal_rgb_readback.patch` requests RGBA readback on Metal and strips alpha
-before returning the normal RGB image. Open3D
-[PR #7550](https://github.com/isl-org/Open3D/pull/7550) contains equivalent
-handling.
-
 `neutral_tone_mapping.patch` restores linear, ACES, legacy ACES, Filmic and
 Display Range selection through Filament's current `ToneMapper` API, and exposes
 PBR Neutral; see [Open3D issue #7557](https://github.com/isl-org/Open3D/issues/7557).
@@ -171,34 +180,31 @@ Uchimura/Reinhard fallback is unchanged. Wheels with these fixes use the
 The color-grading regression test was run with native Metal on Python 3.12;
 Ubuntu CI also runs it with surfaceless EGL.
 
-The Linux patches make the source package retain the `open3d` distribution name,
-fix current static-curl linking and Filament build integration, avoid creating
-the optional Gaussian-splat sharing context in surfaceless mode, and build both
-GLX and EGL-headless Filament platforms. The Filament changes also re-bind the
-EGL API on worker threads, use a pbuffer-compatible configuration, and avoid a
-desktop-GL extension query that can return null.
+The Linux patches serve the following purposes:
+
+- `linux_distribution_name.patch` keeps the source package's distribution name
+  as `open3d`.
+- `linux_static_curl.patch` groups the bundled curl and BoringSSL archives for
+  linking.
+- `linux_surfaceless.patch` selects OpenGL by default for EGL exports and GLX
+  viewing. Explicit Vulkan selection remains available.
+- `linux_filament_patch_hook.patch` enables EGL support and applies the local
+  Filament patch after upstream's Vulkan texture-import patch.
+- `filament_linux_dual_context.patch` builds both GLX and EGL-headless platforms,
+  selects between them at runtime, uses desktop OpenGL entry points for both,
+  and binds the EGL API on worker threads.
 
 Upstream tracking:
 
 | Finding | Upstream discussion |
 | --- | --- |
-| Metal RGB readback | [Validation comment on PR #7550](https://github.com/isl-org/Open3D/pull/7550#issuecomment-5595190113) |
 | Modern GUI followed by legacy Visualizer segfault | [Open3D #7553](https://github.com/isl-org/Open3D/issues/7553) |
-| Surfaceless rendering initializes splat GLX contexts | [Open3D #7554](https://github.com/isl-org/Open3D/issues/7554) |
-| Linux Filament archive byproduct paths | [Open3D #7555](https://github.com/isl-org/Open3D/issues/7555) |
 | Bundled curl/BoringSSL archive grouping | [Open3D #7556](https://github.com/isl-org/Open3D/issues/7556) |
 | Desktop OpenGL API binding on EGL worker threads | [Filament #10397](https://github.com/google/filament/issues/10397) |
 
-The mixed-GUI segfault and Metal RGB readback abort were reproduced with the
-official unmodified macOS development wheel; the reports include complete logs
-and a successful legacy-only control. The Linux source findings require isolated
-Ubuntu reproductions with full error logs. The macOS tone-mapper reproduction
-is blocked by that wheel's Metal readback abort, which is captured in #7557.
-Current Filament main already guards null extension strings and has revised
-swapchain selection; the older patch hunks need reassessment when Open3D updates
-its embedded Filament. The distribution-name patch, patch hook and runtime
-platform-selection policy support the downstream build and are not all
-independent upstream defects.
+The distribution-name patch, patch hook, and runtime platform selection support
+SoRoMoX's source-build configuration. The tone-mapping, static-curl linking, and
+EGL worker-thread fixes address upstream defects.
 
 ## Build configuration and overrides
 

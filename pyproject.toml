@@ -405,6 +405,11 @@ line-ending = "auto"
 # Open3D development channel. macOS and Linux x86-64 build the checked-in main
 # revision with the renderer fixes; other platforms use upstream wheels.
 [tool.uv]
+# main-devel has only a cp310-cp310 Linux ARM64 wheel for 0.20 (2026-09-16).
+# Retain the available 3.11-3.14 wheels until that platform's assets catch up.
+constraint-dependencies = [
+    "open3d==0.19.0; sys_platform == 'linux' and platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and python_version < '3.15'",
+]
 find-links = ["https://github.com/isl-org/Open3D/releases/expanded_assets/main-devel"]
 
 [tool.uv.sources]
