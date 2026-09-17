@@ -106,7 +106,7 @@ Robot colors, geometry, camera direction and output settings apply.
 
 `Open3DRenderer` provides interactive spatial visualization with mesh geometry,
 camera controls, playback, screenshots, and offline frame or video capture.
-Use the [Open3D development dependency](../../installation.md);
+Use the [patched Open3D 0.20 dependency](../../installation.md);
 macOS needs the source build with the Metal readback patch.
 
 `render_frame()` and `render_sequence(..., record_path=...)` use the modern

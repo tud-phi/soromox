@@ -25,11 +25,11 @@ and include benchmark baseline and measurement context for performance claims.
   `config.geometry.base_plate_style`. Opt-in
   `GroundPlaneConfig(height_reference="base_mounting_face")` places floors and
   backdrops at the base plate mounting face.
-- Added reproducible Open3D 0.20.0 development builds for macOS and Linux x86-64,
-  including Metal image capture, neutral color grading and selectable linear/ACES
-  tone mapping, and surfaceless EGL exports alongside GLX interactive viewing.
-  Ubuntu native-rendering tests and an upstream-revision check cover the
-  source-build workflow.
+- Added reproducible patched Open3D 0.20.0 builds for macOS, Linux x86-64,
+  Linux ARM64 and Windows x86-64, including Metal image capture, neutral color
+  grading, selectable linear/ACES tone mapping, and Vulkan image/video exports
+  and modern interactive viewing. Ubuntu and Windows native-rendering tests cover
+  the source-build workflow.
 
 ### Changed
 
@@ -67,6 +67,11 @@ and include benchmark baseline and measurement context for performance claims.
 
 ### Fixed
 
+- Patched Open3D 0.20 legacy triangle-mesh buffers to initialize fallback UVs,
+  preventing heap-dependent rendering artifacts on software Vulkan and other
+  Filament backends. Windows x86-64 now uses the patched Open3D 0.20 source
+  adapter alongside macOS and Linux x86-64. Linux ARM64 now uses the same
+  patched source adapter instead of an unpatched official wheel.
 - Viser removes buried caps at matching swept-link contours, avoiding dark rings
   at continuous segment boundaries. Figure 11 and Figure 13 exports preserve
   transparent canvas and plot backgrounds.

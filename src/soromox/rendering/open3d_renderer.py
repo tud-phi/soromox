@@ -1711,8 +1711,9 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         camera = camera_config or self.config.camera
         gain = 2.0 ** (15.0 - camera.exposure_ev100)
         grading = o3d.visualization.rendering.ColorGrading
-        # This enum is added by the patch that restores mapper selection.
-        tone_mapping_supported = hasattr(grading.ToneMapping, "PBR_NEUTRAL")
+        tone_mapping_supported = o3d.__version__.endswith(".soromox3") or hasattr(
+            grading.ToneMapping, "PBR_NEUTRAL"
+        )
         features = []
         if cfg.material.shading != "unlit" and not tone_mapping_supported:
             features.append(

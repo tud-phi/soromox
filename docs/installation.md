@@ -11,7 +11,7 @@
     - **NumPy**
 
 !!! warning "Python Version Compatibility"
-    - **Open3D Rendering**: Patched Open3D development source builds are tested
+    - **Open3D Rendering**: Patched Open3D 0.20 source builds are tested
       with Python 3.11–3.14 on Ubuntu x86-64. Python 3.12–3.14 are also tested
       on Apple Silicon.
     - **Python 3.14 on Windows**: There may currently exist an incompatibility of Python 3.14 on Windows with the package
@@ -88,20 +88,20 @@ pip install soromox[rendering]
     encoding when FFmpeg is unavailable.
 
 !!! note "Open3D Compatibility"
-    This checkout follows an immutable, regularly checked Open3D `main`
-    revision. On Ubuntu x86-64 and macOS, `uv sync --extra rendering` builds the
-    patched source locally; the first build takes time and disk space. Ubuntu
-    needs the documented compiler, graphics, Xvfb, and FFmpeg packages. macOS
-    needs Xcode with its Metal Toolchain and Homebrew `cmake`, `ninja`,
-    `openblas`, `glslang`, and `spirv-cross`. See the
+    This checkout pins the immutable Open3D 0.20.0 release commit. On Ubuntu,
+    macOS, and Windows, `uv sync --extra rendering` builds the patched source
+    locally; the first build takes time and disk space. Ubuntu needs the
+    documented compiler, Vulkan, Xvfb, and FFmpeg packages. macOS needs Xcode
+    with its Metal Toolchain and Homebrew `cmake`, `ninja`, `openblas`,
+    `glslang`, and `spirv-cross`. See the
     [build instructions](https://github.com/tud-phi/soromox/tree/main/tools/open3d)
     for prerequisites, environment variables, cache controls, validation commands,
     and other platforms. On Ubuntu 26.04 x86-64, Python 3.11–3.14 pass real
-    surfaceless image and MP4 export plus modern and animated viewers under Xvfb.
+    Vulkan image and MP4 export plus modern and animated viewers under Xvfb.
     Apple Silicon image, video, and modern-window checks pass with Python
-    3.12–3.14. Native Windows rendering remains unverified. Plain
-    `pip install soromox[rendering]` uses PyPI; use the source-checkout instructions
-    when following Open3D `main`.
+    3.12–3.14. Native Windows builds are validated in CI. Plain
+    `pip install soromox[rendering]` uses PyPI; use the source-checkout
+    instructions for the patched Open3D build.
 
 ### 📚 Examples Dependencies
 

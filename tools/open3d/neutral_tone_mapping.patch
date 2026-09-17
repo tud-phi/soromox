@@ -1,17 +1,5 @@
-diff --git a/cpp/open3d/visualization/rendering/ColorGrading.h b/cpp/open3d/visualization/rendering/ColorGrading.h
-index 0a2298b..39a3b01 100644
---- a/cpp/open3d/visualization/rendering/ColorGrading.h
-+++ b/cpp/open3d/visualization/rendering/ColorGrading.h
-@@ -28,6 +28,7 @@ public:
-         kUchimura = 4,
-         kReinhard = 5,
-         kDisplayRange = 6,
-+        kPbrNeutral = 7,
-     };
- 
-     ColorGradingParams(Quality q, ToneMapping algorithm);
 diff --git a/cpp/open3d/visualization/rendering/filament/FilamentView.cpp b/cpp/open3d/visualization/rendering/filament/FilamentView.cpp
-index 80f6cf0..cb141ff 100644
+index 5f9294921..4aa1d283e 100644
 --- a/cpp/open3d/visualization/rendering/filament/FilamentView.cpp
 +++ b/cpp/open3d/visualization/rendering/filament/FilamentView.cpp
 @@ -24,6 +24,7 @@
@@ -22,7 +10,7 @@ index 80f6cf0..cb141ff 100644
  #include <filament/View.h>
  #include <filament/Viewport.h>
  
-@@ -244,34 +245,32 @@ void FilamentView::SetColorGrading(const ColorGradingParams& color_grading) {
+@@ -245,63 +246,57 @@ void FilamentView::SetColorGrading(const ColorGradingParams& color_grading) {
              break;
      }
  
@@ -72,35 +60,65 @@ index 80f6cf0..cb141ff 100644
 +        case ColorGradingParams::ToneMapping::kDisplayRange:
 +            tone_mapper = std::make_unique<filament::DisplayRangeToneMapper>();
 +            break;
-+        case ColorGradingParams::ToneMapping::kPbrNeutral:
-+            tone_mapper = std::make_unique<filament::PBRNeutralToneMapper>();
-+            break;
 +        default:
-+            // Uchimura and Reinhard have no equivalent built-in mapper in the
-+            // current Filament API. Preserve the development build's fallback.
++            // Uchimura and Reinhard have no equivalent in Filament's current
++            // API. Retain Filament's default mapper for those modes.
 +            break;
 +    }
  
      if (color_grading_) {
          engine_.destroy(color_grading_);
-@@ -279,7 +278,7 @@ void FilamentView::SetColorGrading(const ColorGradingParams& color_grading) {
-     color_grading_ =
-             filament::ColorGrading::Builder()
-                     .quality(q)
+     }
+-    color_grading_ =
+-            filament::ColorGrading::Builder()
+-                    .quality(q)
 -                    // .toneMapping(tm)
-+                    .toneMapper(tone_mapper.get())
-                     .whiteBalance(color_grading.GetTemperature(),
-                                   color_grading.GetTint())
-                     .channelMixer(
-diff --git a/cpp/pybind/visualization/rendering/rendering.cpp b/cpp/pybind/visualization/rendering/rendering.cpp
-index 2115791..a5ed876 100644
---- a/cpp/pybind/visualization/rendering/rendering.cpp
-+++ b/cpp/pybind/visualization/rendering/rendering.cpp
-@@ -191,6 +191,7 @@ void pybind_rendering_declarations(py::module &m) {
-     py::native_enum<ColorGradingParams::ToneMapping>(
-             color_grading, "ToneMapping", "enum.Enum",
-             "Specifies the tone-mapping algorithm")
-+            .value("PBR_NEUTRAL", ColorGradingParams::ToneMapping::kPbrNeutral)
-             .value("LINEAR", ColorGradingParams::ToneMapping::kLinear)
-             .value("ACES_LEGACY", ColorGradingParams::ToneMapping::kAcesLegacy)
-             .value("ACES", ColorGradingParams::ToneMapping::kAces)
+-                    .whiteBalance(color_grading.GetTemperature(),
+-                                  color_grading.GetTint())
+-                    .channelMixer(
+-                            eigen_to_float3(color_grading.GetMixerRed()),
+-                            eigen_to_float3(color_grading.GetMixerGreen()),
+-                            eigen_to_float3(color_grading.GetMixerBlue()))
+-                    .shadowsMidtonesHighlights(
+-                            eigen_to_float4(color_grading.GetShadows()),
+-                            eigen_to_float4(color_grading.GetMidtones()),
+-                            eigen_to_float4(color_grading.GetHighlights()),
+-                            eigen_to_float4(color_grading.GetRanges()))
+-                    .slopeOffsetPower(
+-                            eigen_to_float3(color_grading.GetSlope()),
+-                            eigen_to_float3(color_grading.GetOffset()),
+-                            eigen_to_float3(color_grading.GetPower()))
+-                    .contrast(color_grading.GetContrast())
+-                    .vibrance(color_grading.GetVibrance())
+-                    .saturation(color_grading.GetSaturation())
+-                    .curves(eigen_to_float3(color_grading.GetShadowGamma()),
+-                            eigen_to_float3(color_grading.GetMidpoint()),
+-                            eigen_to_float3(color_grading.GetHighlightScale()))
+-                    .build(engine_);
++    filament::ColorGrading::Builder builder;
++    builder.quality(q)
++            .whiteBalance(color_grading.GetTemperature(),
++                          color_grading.GetTint())
++            .channelMixer(eigen_to_float3(color_grading.GetMixerRed()),
++                          eigen_to_float3(color_grading.GetMixerGreen()),
++                          eigen_to_float3(color_grading.GetMixerBlue()))
++            .shadowsMidtonesHighlights(
++                    eigen_to_float4(color_grading.GetShadows()),
++                    eigen_to_float4(color_grading.GetMidtones()),
++                    eigen_to_float4(color_grading.GetHighlights()),
++                    eigen_to_float4(color_grading.GetRanges()))
++            .slopeOffsetPower(eigen_to_float3(color_grading.GetSlope()),
++                              eigen_to_float3(color_grading.GetOffset()),
++                              eigen_to_float3(color_grading.GetPower()))
++            .contrast(color_grading.GetContrast())
++            .vibrance(color_grading.GetVibrance())
++            .saturation(color_grading.GetSaturation())
++            .curves(eigen_to_float3(color_grading.GetShadowGamma()),
++                    eigen_to_float3(color_grading.GetMidpoint()),
++                    eigen_to_float3(color_grading.GetHighlightScale()));
++    if (tone_mapper) {
++        builder.toneMapper(tone_mapper.get());
++    }
++    color_grading_ = builder.build(engine_);
+     view_->setColorGrading(color_grading_);
+ }
