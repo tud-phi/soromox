@@ -98,26 +98,14 @@ PyPI. Install SoRoMoX normally:
 python -m pip install -e ".[rendering]"
 ```
 
-Available stable wheel ABIs and architectures are controlled by upstream. Linux
-ARM64 uses the local source adapter alongside Linux x86-64 because Open3D 0.20's
-uninitialized legacy-mesh UV field is architecture-independent. Selecting the
-official ARM64 wheel would omit that fix and the other temporary renderer
-patches.
-
 ## Validation
 
-The current release-tag pin is
-`b6c5e196384ad71e75b6e6f9c5da22d046221f1d`. The preceding version-bump commit,
-`d32b4fce639b3cde284184072796480ef9b528d1` (Open3D 0.20.0, Filament 1.76.0),
-was source-built and tested on Apple M4 Max, macOS 27.0, Xcode 27.0 (27A266a),
-Metal 32023.921, and Python 3.12.11. Patched release-tag wheels report
-`0.20.0+b6c5e19.soromox3`; native CI rebuilds and validates the exact pin.
+The release-tag pin is `b6c5e196384ad71e75b6e6f9c5da22d046221f1d`.
+Patched wheels report `0.20.0+b6c5e19.soromox3`.
 
-The three native macOS integration checks passed: RGB `uint8` readback and
-color-grading selection, a 320 × 240 tentacle PNG and 60-frame H.264 MP4,
-and opening/closing the real Metal viewer through its event loop. The exported
-PNG was visually inspected. The source build compiled the Metal shaders, and
-130 focused renderer/configuration tests passed against the new wheel.
+The native macOS integration checks cover RGB `uint8` readback and color-grading
+selection, a 320 × 240 tentacle PNG and 60-frame H.264 MP4, and opening/closing
+the real Metal viewer through its event loop.
 
 Run the macOS checks with:
 
@@ -192,8 +180,8 @@ preset selects linear mapping to keep its background white. Uchimura and
 Reinhard modes continue to use Filament's default mapper because
 Filament 1.76 has no corresponding built-in mapper. Wheels with these fixes use
 the `.soromox3` suffix; run `uv sync --extra rendering` to update an older build.
-The color-grading regression test was run with native Metal on Python 3.12;
-Ubuntu CI also runs it with software Vulkan.
+The color-grading regression test exercises native Metal on macOS and software
+Vulkan in Ubuntu CI.
 
 The Linux patches serve the following purposes:
 
