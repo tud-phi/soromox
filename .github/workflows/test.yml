@@ -28,7 +28,7 @@ jobs:
     timeout-minutes: 120
     env:
       CMAKE_BUILD_PARALLEL_LEVEL: 4
-      SOROMOX_OPEN3D_CACHE: ${{ runner.temp }}/soromox/open3d
+      SOROMOX_OPEN3D_CACHE: ${{ github.workspace }}/.cache/soromox/open3d
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -95,7 +95,7 @@ jobs:
     timeout-minutes: 180
     env:
       CMAKE_BUILD_PARALLEL_LEVEL: 4
-      SOROMOX_OPEN3D_CACHE: ${{ runner.temp }}/soromox/open3d
+      SOROMOX_OPEN3D_CACHE: ${{ github.workspace }}/.cache/soromox/open3d
     steps:
       - name: Checkout
         uses: actions/checkout@v6
