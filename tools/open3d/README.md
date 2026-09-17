@@ -25,7 +25,7 @@ sudo apt-get install -y \
   xorg-dev libxcb-shm0 libglu1-mesa-dev libssl-dev \
   libc++-dev libc++abi-dev libsdl2-dev libxi-dev libtbb-dev \
   libegl1-mesa-dev libudev-dev libusb-1.0-0-dev \
-  mesa-vulkan-drivers autoconf libtool clang xvfb xauth ffmpeg
+  mesa-vulkan-drivers autoconf libtool clang gfortran xvfb xauth ffmpeg
 ```
 
 Then build the rendering environment from the SoRoMoX checkout:

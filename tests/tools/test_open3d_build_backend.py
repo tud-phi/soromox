@@ -96,6 +96,10 @@ def test_linux_arm64_build_uses_common_patches(
 
     assert wheel.name.endswith("-manylinux_aarch64.whl")
     assert prepared[0][2:] == (commit, tuple(backend.LINUX_PATCHES))
+    assert any("ext_openblas" in command for command in calls)
+    assert calls.index(
+        next(command for command in calls if "ext_openblas" in command)
+    ) < calls.index(next(command for command in calls if "pip-package" in command))
     manifest = json.loads((wheel.parents[3] / "soromox-build.json").read_text())
     assert manifest["platform"] == "linux-aarch64"
 

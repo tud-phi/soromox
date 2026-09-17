@@ -220,7 +220,8 @@ def _build_macos():
 
 def _build_linux():
     """Build or reuse patched Open3D for the running Linux CPython ABI."""
-    if not sys.platform.startswith("linux") or platform.machine() not in (
+    machine = platform.machine()
+    if not sys.platform.startswith("linux") or machine not in (
         "x86_64",
         "AMD64",
         "aarch64",
@@ -235,8 +236,7 @@ def _build_linux():
         os.environ.get("SOROMOX_OPEN3D_CACHE", Path.home() / ".cache/soromox/open3d")
     )
     cache /= (
-        f"linux-{commit[:7]}-{fingerprint}-"
-        f"{sys.implementation.cache_tag}-{platform.machine()}"
+        f"linux-{commit[:7]}-{fingerprint}-{sys.implementation.cache_tag}-{machine}"
     )
     source = Path(os.environ.get("SOROMOX_OPEN3D_SOURCE_DIR", cache / "source"))
     build = Path(os.environ.get("SOROMOX_OPEN3D_BUILD_DIR", cache / "build"))
@@ -246,7 +246,7 @@ def _build_linux():
         "commit": commit,
         "patches": fingerprint,
         "python": sys.implementation.cache_tag,
-        "platform": f"linux-{platform.machine()}",
+        "platform": f"linux-{machine}",
     }
     pattern = (
         f"open3d-{_version()}-cp{sys.version_info.major}{sys.version_info.minor}-*.whl"
@@ -290,6 +290,11 @@ def _build_linux():
     _run(cmake, "-S", source, "-B", build, "-G", "Ninja", *flags)
     jobs = os.environ.get("CMAKE_BUILD_PARALLEL_LEVEL", "8")
     _run(cmake, "--build", build, "--target", "ext_filament", "--parallel", jobs)
+    if machine in ("aarch64", "arm64"):
+        # Open3D 0.20 does not register libopenblas.a as an ExternalProject
+        # byproduct, so Ninja cannot infer that the archive must be built before
+        # linking the shared library.
+        _run(cmake, "--build", build, "--target", "ext_openblas", "--parallel", jobs)
     _run(cmake, "--build", build, "--target", "pip-package", "--parallel", jobs)
     built = list(wheels.glob(pattern))
     if len(built) != 1:
