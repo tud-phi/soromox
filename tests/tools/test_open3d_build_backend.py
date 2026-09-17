@@ -18,6 +18,15 @@ backend = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(backend)
 
 
+def test_source_wheel_metadata_matches_open3d_ipywidgets_requirement(
+    tmp_path: Path,
+) -> None:
+    directory = backend.prepare_metadata_for_build_wheel(tmp_path)
+    metadata = (tmp_path / directory / "METADATA").read_text()
+
+    assert "Requires-Dist: ipywidgets>=8.0.4" in metadata
+
+
 def test_uv_initialization_patch_is_applied_on_every_source_platform() -> None:
     assert "legacy_mesh_uv_initialization.patch" in {
         patch.name for patch in backend.COMMON_PATCHES

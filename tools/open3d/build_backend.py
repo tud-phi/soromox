@@ -24,6 +24,7 @@ RUNTIME_REQUIREMENTS = (
     "dash>=2.6.0",
     "werkzeug>=3.0.0",
     "flask>=3.0.0",
+    "ipywidgets>=8.0.4",
     "nbformat>=5.7.0",
     "configargparse",
 )
@@ -34,12 +35,9 @@ COMMON_PATCHES = [
 MACOS_PATCHES = [*COMMON_PATCHES]
 LINUX_PATCHES = [
     *COMMON_PATCHES,
-    HERE / "linux_surfaceless.patch",
     HERE / "linux_distribution_name.patch",
     HERE / "linux_static_curl.patch",
-    HERE / "linux_filament_patch_hook.patch",
 ]
-LINUX_FILAMENT_PATCH = HERE / "filament_linux_dual_context.patch"
 
 
 def _pinned_commit():
@@ -232,7 +230,7 @@ def _build_linux():
             "The SoRoMoX Linux Open3D adapter supports Linux x86-64 and ARM64."
         )
     commit = _pinned_commit()
-    fingerprint = _recipe_fingerprint([*LINUX_PATCHES, LINUX_FILAMENT_PATCH])
+    fingerprint = _recipe_fingerprint(LINUX_PATCHES)
     cache = Path(
         os.environ.get("SOROMOX_OPEN3D_CACHE", Path.home() / ".cache/soromox/open3d")
     )
@@ -280,8 +278,6 @@ def _build_linux():
         "-DBUILD_AZURE_KINECT=OFF",
         "-DBUILD_LIBREALSENSE=OFF",
         "-DWITH_STUBGEN=OFF",
-        "-DBUILD_FILAMENT_FROM_SOURCE=ON",
-        f"-DFILAMENT_PATCH_FILE={LINUX_FILAMENT_PATCH}",
         # Current Assimp/Filament sources omit standard integer/difference
         # declarations exposed transitively by older compiler libraries.
         # Ignore unsupported warning names across Ubuntu and newer Clang releases;

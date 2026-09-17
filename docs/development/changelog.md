@@ -27,9 +27,9 @@ and include benchmark baseline and measurement context for performance claims.
   backdrops at the base plate mounting face.
 - Added reproducible patched Open3D 0.20.0 builds for macOS, Linux x86-64,
   Linux ARM64 and Windows x86-64, including Metal image capture, neutral color
-  grading and selectable linear/ACES tone mapping, and surfaceless EGL exports
-  alongside GLX interactive viewing. Ubuntu and Windows native-rendering tests
-  cover the source-build workflow.
+  grading, selectable linear/ACES tone mapping, and Vulkan image/video exports
+  and modern interactive viewing. Ubuntu and Windows native-rendering tests cover
+  the source-build workflow.
 
 ### Changed
 

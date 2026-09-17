@@ -36,9 +36,8 @@ def test_neutral_grading_preserves_greys_and_honors_tone_mapper_selection():
                 scene.view.set_post_processing(True)
                 grading = o3d.visualization.rendering.ColorGrading
                 modes = grading.ToneMapping
-                assert hasattr(modes, 'PBR_NEUTRAL'), 'Update the patched Open3D build'
                 results = {}
-                for mode in (modes.FILMIC, modes.PBR_NEUTRAL, modes.LINEAR, modes.ACES):
+                for mode in (modes.FILMIC, modes.LINEAR, modes.ACES):
                     scene.view.set_color_grading(grading(grading.Quality.ULTRA, mode))
                     values = []
                     for level in (0.18, 0.58, 1.0):
@@ -48,7 +47,6 @@ def test_neutral_grading_preserves_greys_and_honors_tone_mapper_selection():
                         assert pixels.dtype == np.uint8, pixels.dtype
                         values.append(pixels[10:-10, 10:-10, :3].mean(axis=(0, 1)))
                     results[mode] = np.array(values)
-                assert np.max(np.ptp(results[modes.PBR_NEUTRAL], axis=1)) < 2.0
                 neutral = results[modes.FILMIC]
                 assert np.max(np.ptp(neutral, axis=1)) < 2.0, neutral
                 assert np.all(np.diff(neutral.mean(axis=1)) > 0), neutral

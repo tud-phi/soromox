@@ -25,7 +25,7 @@ sudo apt-get install -y \
   xorg-dev libxcb-shm0 libglu1-mesa-dev libssl-dev \
   libc++-dev libc++abi-dev libsdl2-dev libxi-dev libtbb-dev \
   libegl1-mesa-dev libudev-dev libusb-1.0-0-dev \
-  autoconf libtool clang xvfb xauth ffmpeg
+  mesa-vulkan-drivers autoconf libtool clang xvfb xauth ffmpeg
 ```
 
 Then build the rendering environment from the SoRoMoX checkout:
@@ -34,22 +34,23 @@ Then build the rendering environment from the SoRoMoX checkout:
 uv sync --extra rendering
 ```
 
-The first sync compiles Open3D and Filament and can take several minutes and
-multiple gigabytes. Later syncs reuse `~/.cache/soromox/open3d` when the upstream
-revision, adapter recipe, patches, Python ABI, and architecture are unchanged.
+The first sync compiles Open3D and can take several minutes and multiple
+gigabytes. Later syncs reuse `~/.cache/soromox/open3d` when the upstream revision,
+adapter recipe, patches, Python ABI, and architecture are unchanged.
 
-Offscreen rendering needs an OpenGL/EGL implementation but not an X display.
-Select the surfaceless backend before importing Open3D:
+Open3D 0.20 uses Vulkan for modern offscreen and GUI rendering. On machines
+without a physical Vulkan device, Mesa's Lavapipe driver provides software
+Vulkan and does not need an X display for image or video export:
 
 ```bash
-env -u DISPLAY EGL_PLATFORM=surfaceless \
+env -u DISPLAY \
   uv run --no-sync python examples/rendering/preset_gallery.py --backend open3d --preset neutral \
   --count 1 --output-dir open3d-figures --video-output open3d.mp4
 ```
 
-Interactive `show()` and trajectory playback use GLX and need a desktop display.
-Do not set `EGL_PLATFORM=surfaceless` for them. A headless CI machine can use
-`xvfb-run`; the integration tests demonstrate the supported setup.
+Interactive `show()` and trajectory playback need a desktop display. A headless
+CI machine can use `xvfb-run`; the integration tests exercise Vulkan for the
+modern window and software GLX for the legacy visualizer.
 
 ## macOS installation
 
@@ -136,18 +137,18 @@ advance all frames in real legacy interactive playback. They are opt-in and
 guarded at module scope so they skip on non-Ubuntu and non-Linux hosts:
 
 ```bash
-env -u DISPLAY EGL_PLATFORM=surfaceless LIBGL_ALWAYS_SOFTWARE=true \
+env -u DISPLAY \
   SOROMOX_RUN_RENDERING_INTEGRATION=1 python -m pytest -q \
-  tests/rendering/test_open3d_linux_integration.py::test_open3d_surfaceless_frame_and_mp4_export
+  tests/rendering/test_open3d_linux_integration.py::test_open3d_headless_frame_and_mp4_export
 
-xvfb-run -a env -u EGL_PLATFORM LIBGL_ALWAYS_SOFTWARE=true \
+xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=true \
   SOROMOX_RUN_RENDERING_INTEGRATION=1 python -m pytest -q \
   tests/rendering/test_open3d_linux_integration.py::test_open3d_show_opens_and_closes_real_xvfb_window \
   tests/rendering/test_open3d_linux_integration.py::test_open3d_interactive_sequence_advances_in_real_xvfb_window
 ```
 
-Xvfb's software GLX exposes Filament feature level 1, so the modern window smoke
-test disables VSM shadows and SSAO. The surfaceless image/video checks exercise
+The modern Xvfb window smoke test disables VSM shadows and SSAO to keep the
+software-rendered lifecycle check fast. The headless image/video checks exercise
 default lighting and shadows.
 
 The integration tests run modern GUI and legacy visualizer checks in separate
@@ -182,15 +183,17 @@ Filament backend; see [Open3D issue #7565](https://github.com/isl-org/Open3D/iss
 and [the proposed upstream fix](https://github.com/isl-org/Open3D/pull/7566).
 
 `neutral_tone_mapping.patch` restores linear, ACES, legacy ACES, Filmic and
-Display Range selection through Filament's current `ToneMapper` API, and exposes
-PBR Neutral; see [Open3D issue #7557](https://github.com/isl-org/Open3D/issues/7557).
+Display Range selection through Filament's current `ToneMapper` API; see
+[Open3D issue #7557](https://github.com/isl-org/Open3D/issues/7557) and
+[the proposed upstream fix](https://github.com/isl-org/Open3D/pull/7567).
 SoRoMoX selects Filmic for its default lit rendering: neutral greys
 and readable midtones without the legacy ACES highlight tint. The technical
-preset selects linear mapping to keep its background white. Upstream's
-Uchimura/Reinhard fallback is unchanged. Wheels with these fixes use the
-`.soromox3` suffix; run `uv sync --extra rendering` to update an older build.
+preset selects linear mapping to keep its background white. Uchimura and
+Reinhard modes continue to use Filament's default mapper because
+Filament 1.76 has no corresponding built-in mapper. Wheels with these fixes use
+the `.soromox3` suffix; run `uv sync --extra rendering` to update an older build.
 The color-grading regression test was run with native Metal on Python 3.12;
-Ubuntu CI also runs it with surfaceless EGL.
+Ubuntu CI also runs it with software Vulkan.
 
 The Linux patches serve the following purposes:
 
@@ -198,32 +201,23 @@ The Linux patches serve the following purposes:
   as `open3d`.
 - `linux_static_curl.patch` groups the bundled curl and BoringSSL archives for
   linking.
-- `linux_surfaceless.patch` selects OpenGL by default for EGL exports and GLX
-  viewing. Explicit Vulkan selection remains available.
-- `linux_filament_patch_hook.patch` enables EGL support and applies the local
-  Filament patch after upstream's Vulkan texture-import patch.
-- `filament_linux_dual_context.patch` builds both GLX and EGL-headless platforms,
-  selects between them at runtime, uses desktop OpenGL entry points for both,
-  and binds the EGL API on worker threads.
 
 Upstream tracking:
 
 | Finding | Upstream discussion |
 | --- | --- |
 | Modern GUI followed by legacy Visualizer segfault | [Open3D #7553](https://github.com/isl-org/Open3D/issues/7553) |
-| Bundled curl/BoringSSL archive grouping | [Open3D #7556](https://github.com/isl-org/Open3D/issues/7556) |
-| Desktop OpenGL API binding on EGL worker threads | [Filament #10397](https://github.com/google/filament/issues/10397) |
+| Bundled curl/BoringSSL archive grouping | [Open3D #7556](https://github.com/isl-org/Open3D/issues/7556), [Open3D PR #7568](https://github.com/isl-org/Open3D/pull/7568) |
 
-The distribution-name patch, patch hook, and runtime platform selection support
-SoRoMoX's source-build configuration. The tone-mapping, static-curl linking, and
-EGL worker-thread fixes address upstream defects.
+The distribution-name patch supports SoRoMoX's source-build configuration. The
+tone-mapping and static-curl linking patches address upstream defects.
 
 ## Build configuration and overrides
 
 The native builds enable GUI and CPU geometry operations. CUDA, ML framework
 integrations, WebRTC, the Jupyter extension, examples, and upstream unit tests
-are disabled. Linux builds Filament from source so the GLX/EGL selection fix is
-present; macOS builds Metal shaders locally.
+are disabled. Linux uses Open3D's prebuilt Filament package; macOS builds Metal
+shaders locally.
 
 Set `SOROMOX_OPEN3D_CACHE` to relocate the cache and
 `CMAKE_BUILD_PARALLEL_LEVEL` to change compilation parallelism (default 8).

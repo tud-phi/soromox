@@ -48,8 +48,15 @@ jobs:
             git build-essential cmake ninja-build glslang-tools \
             xorg-dev libxcb-shm0 libglu1-mesa-dev libssl-dev \
             libc++-dev libc++abi-dev libsdl2-dev libxi-dev libtbb-dev \
-            libegl1-mesa-dev libudev-dev libusb-1.0-0-dev \
+            libegl1-mesa-dev libudev-dev libusb-1.0-0-dev mesa-vulkan-drivers \
             autoconf libtool clang xvfb xauth ffmpeg
+
+      - name: Select Mesa software Vulkan
+        run: |
+          lavapipe_icd="$(find /usr/share/vulkan/icd.d -name 'lvp_icd*.json' -print -quit)"
+          test -n "$lavapipe_icd"
+          echo "VK_DRIVER_FILES=$lavapipe_icd" >> "$GITHUB_ENV"
+          echo "VK_ICD_FILENAMES=$lavapipe_icd" >> "$GITHUB_ENV"
 
       - name: Restore native Open3D build cache
         uses: actions/cache@v5
@@ -71,17 +78,14 @@ jobs:
       - name: Test headless frame and MP4 export
         run: |
           env -u DISPLAY \
-            EGL_PLATFORM=surfaceless \
-            LIBGL_ALWAYS_SOFTWARE=true \
             SOROMOX_RUN_RENDERING_INTEGRATION=1 \
             python -m pytest -q \
-            tests/rendering/test_open3d_linux_integration.py::test_open3d_surfaceless_frame_and_mp4_export \
+            tests/rendering/test_open3d_linux_integration.py::test_open3d_headless_frame_and_mp4_export \
             tests/rendering/test_open3d_color_integration.py
 
       - name: Test interactive viewers under Xvfb
         run: |
-          xvfb-run -a env -u EGL_PLATFORM \
-            LIBGL_ALWAYS_SOFTWARE=true \
+          xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=true \
             SOROMOX_RUN_RENDERING_INTEGRATION=1 \
             python -m pytest -q \
             tests/rendering/test_open3d_linux_integration.py::test_open3d_show_opens_and_closes_real_xvfb_window \

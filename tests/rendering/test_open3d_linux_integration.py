@@ -92,8 +92,8 @@ def _renderer(*, xvfb_compatible: bool = False) -> Open3DRenderer:
     """Create a small renderer that keeps native integration checks fast.
 
     Args:
-        xvfb_compatible: Disable shadows and ambient occlusion for software GLX
-            contexts that cannot render these effects.
+        xvfb_compatible: Disable expensive shadows and ambient occlusion for
+            the software-rendered GUI smoke test.
 
     Returns:
         Renderer with a 96 by 72 pixel output, 24 backbone samples and 12
@@ -133,9 +133,8 @@ def _run_xvfb_test_in_fresh_process(test_name: str) -> bool:
     return True
 
 
-def test_open3d_surfaceless_frame_and_mp4_export(tmp_path):
+def test_open3d_headless_frame_and_mp4_export(tmp_path):
     """Render real RGB pixels and encode a short video without a display."""
-    assert os.environ.get("EGL_PLATFORM") == "surfaceless"
     assert not os.environ.get("DISPLAY")
     renderer = _renderer()
     frame = renderer.render_frame(np.array([[0.25, 0.08, 0.04]]))
@@ -183,7 +182,6 @@ def test_open3d_unavailable_display_raises_with_native_log(monkeypatch, tmp_path
     monkeypatch.setenv("DISPLAY", ":65535")
     monkeypatch.setenv("WAYLAND_DISPLAY", "soromox-nonexistent-display")
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
-    monkeypatch.delenv("EGL_PLATFORM", raising=False)
     with pytest.raises(
         RuntimeError, match="failed to create a usable GUI window"
     ) as caught:
@@ -196,13 +194,11 @@ def test_open3d_unavailable_display_raises_with_native_log(monkeypatch, tmp_path
 def test_open3d_show_opens_and_closes_real_xvfb_window(monkeypatch):
     """Exercise the public modern interactive viewer with a real X display."""
     assert os.environ.get("DISPLAY")
-    assert os.environ.get("EGL_PLATFORM") != "surfaceless"
     if _run_xvfb_test_in_fresh_process(
         "test_open3d_show_opens_and_closes_real_xvfb_window"
     ):
         return
-    # Xvfb exposes only Filament feature level 1 on GitHub's software GLX
-    # stack; VSM and SSAO require higher feature levels than the window test.
+    # Keep this window-lifecycle smoke test light on a software Vulkan device.
     renderer = _renderer(xvfb_compatible=True)
     create_window = renderer._create_modern_window
 
@@ -223,7 +219,6 @@ def test_open3d_show_opens_and_closes_real_xvfb_window(monkeypatch):
 def test_open3d_interactive_sequence_advances_in_real_xvfb_window(monkeypatch):
     """Exercise public interactive playback and multiple real mesh updates."""
     assert os.environ.get("DISPLAY")
-    assert os.environ.get("EGL_PLATFORM") != "surfaceless"
     if _run_xvfb_test_in_fresh_process(
         "test_open3d_interactive_sequence_advances_in_real_xvfb_window"
     ):
