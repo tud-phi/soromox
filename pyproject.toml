@@ -161,7 +161,7 @@ examples = [
     "ipython",
     "matplotlib",
     "numpy",
-    "open3d>=0.19",
+    "open3d>=0.20",
     "ipywidgets>=8.0.4",
     "opencv-python",
     "optax",
@@ -177,7 +177,7 @@ paper_results = [
     "ipython",
     "matplotlib",
     "numpy",
-    "open3d>=0.19",
+    "open3d>=0.20",
     "ipywidgets>=8.0.4",
     "opencv-python",
     "openpyxl",
@@ -193,7 +193,7 @@ paper_results = [
 ]
 rendering = [
     "matplotlib",
-    "open3d>=0.19",
+    "open3d>=0.20",
     "ipywidgets>=8.0.4",
     "opencv-python",
     "plotly",
@@ -235,7 +235,7 @@ all = [
     "mkdocstrings",
     "mkdocstrings-python",
     "numpy",
-    "open3d>=0.19",
+    "open3d>=0.20",
     "ipywidgets>=8.0.4",
     "opencv-python",
     "openpyxl",
@@ -402,17 +402,13 @@ skip-magic-trailing-comma = false
 # Auto-detect line ending
 line-ending = "auto"
 
-# Open3D development channel. macOS and Linux x86-64 build the checked-in main
-# revision with the renderer fixes; other platforms use upstream wheels.
+# Open3D development channel. macOS, Linux x86-64 and Windows x86-64 build the
+# checked-in main revision with the renderer fixes; other platforms use upstream
+# wheels.
 [tool.uv]
-# main-devel has only a cp310-cp310 Linux ARM64 wheel for 0.20 (2026-09-16).
-# Retain the available 3.11-3.14 wheels until that platform's assets catch up.
-constraint-dependencies = [
-    "open3d==0.19.0; sys_platform == 'linux' and platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and python_version < '3.15'",
-]
 find-links = ["https://github.com/isl-org/Open3D/releases/expanded_assets/main-devel"]
 
 [tool.uv.sources]
 open3d = [
-    { path = "tools/open3d", marker = "sys_platform == 'darwin' or (sys_platform == 'linux' and platform_machine == 'x86_64' and platform_python_implementation == 'CPython' and python_version < '3.15')" },
+    { path = "tools/open3d", marker = "sys_platform == 'darwin' or sys_platform == 'win32' or (sys_platform == 'linux' and platform_machine == 'x86_64' and platform_python_implementation == 'CPython' and python_version < '3.15')" },
 ]

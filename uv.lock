@@ -32,9 +32,6 @@ resolution-markers = [
     "python_full_version < '3.12' and sys_platform == 'darwin'",
 ]
 
-[manifest]
-constraints = [{ name = "open3d", marker = "python_full_version < '3.15' and platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux'", specifier = "==0.19.0" }]
-
 [[package]]
 name = "absl-py"
 version = "2.4.0"
@@ -2896,38 +2893,23 @@ wheels = [
 
 [[package]]
 name = "open3d"
-version = "0.19.0"
-source = { registry = "https://github.com/isl-org/Open3D/releases/expanded_assets/main-devel" }
-resolution-markers = [
-    "python_full_version == '3.14.*' and platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux'",
-    "python_full_version == '3.13.*' and platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux'",
-    "python_full_version == '3.12.*' and platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux'",
-    "python_full_version < '3.12' and platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux'",
-]
-dependencies = [
-    { name = "configargparse" },
-    { name = "dash" },
-    { name = "flask" },
-    { name = "nbformat" },
-    { name = "numpy" },
-    { name = "werkzeug" },
-]
-wheels = [
-    { url = "https://github.com/isl-org/Open3D/releases/download/main-devel/open3d-0.19.0-cp311-cp311-manylinux_2_35_aarch64.whl" },
-    { url = "https://github.com/isl-org/Open3D/releases/download/main-devel/open3d-0.19.0-cp312-cp312-manylinux_2_35_aarch64.whl" },
-    { url = "https://github.com/isl-org/Open3D/releases/download/main-devel/open3d-0.19.0-cp313-cp313-manylinux_2_35_aarch64.whl" },
-    { url = "https://github.com/isl-org/Open3D/releases/download/main-devel/open3d-0.19.0-cp314-cp314-manylinux_2_35_aarch64.whl" },
-]
-
-[[package]]
-name = "open3d"
 version = "0.20.0"
-source = { registry = "https://github.com/isl-org/Open3D/releases/expanded_assets/main-devel" }
+source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
-    "python_full_version == '3.14.*' and sys_platform == 'win32'",
-    "python_full_version == '3.13.*' and sys_platform == 'win32'",
-    "python_full_version == '3.12.*' and sys_platform == 'win32'",
-    "python_full_version < '3.12' and sys_platform == 'win32'",
+    "python_full_version >= '3.15' and sys_platform == 'emscripten'",
+    "python_full_version >= '3.15' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.14.*' and sys_platform == 'emscripten'",
+    "(python_full_version == '3.14.*' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (python_full_version == '3.14.*' and platform_machine == 'aarch64' and platform_python_implementation != 'CPython' and sys_platform == 'linux') or (python_full_version == '3.14.*' and platform_machine == 'x86_64' and platform_python_implementation != 'CPython' and sys_platform == 'linux') or (python_full_version == '3.14.*' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')",
+    "python_full_version == '3.14.*' and platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux'",
+    "python_full_version == '3.13.*' and sys_platform == 'emscripten'",
+    "(python_full_version == '3.13.*' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (python_full_version == '3.13.*' and platform_machine == 'aarch64' and platform_python_implementation != 'CPython' and sys_platform == 'linux') or (python_full_version == '3.13.*' and platform_machine == 'x86_64' and platform_python_implementation != 'CPython' and sys_platform == 'linux') or (python_full_version == '3.13.*' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')",
+    "python_full_version == '3.13.*' and platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux'",
+    "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
+    "(python_full_version == '3.12.*' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (python_full_version == '3.12.*' and platform_machine == 'aarch64' and platform_python_implementation != 'CPython' and sys_platform == 'linux') or (python_full_version == '3.12.*' and platform_machine == 'x86_64' and platform_python_implementation != 'CPython' and sys_platform == 'linux') or (python_full_version == '3.12.*' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')",
+    "python_full_version == '3.12.*' and platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux'",
+    "python_full_version < '3.12' and sys_platform == 'emscripten'",
+    "(python_full_version < '3.12' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (python_full_version < '3.12' and platform_machine == 'aarch64' and platform_python_implementation != 'CPython' and sys_platform == 'linux') or (python_full_version < '3.12' and platform_machine == 'x86_64' and platform_python_implementation != 'CPython' and sys_platform == 'linux') or (python_full_version < '3.12' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')",
+    "python_full_version < '3.12' and platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux'",
 ]
 dependencies = [
     { name = "configargparse" },
@@ -2939,50 +2921,33 @@ dependencies = [
     { name = "werkzeug" },
 ]
 wheels = [
-    { url = "https://github.com/isl-org/Open3D/releases/download/main-devel/open3d-0.20.0-cp311-cp311-win_amd64.whl" },
-    { url = "https://github.com/isl-org/Open3D/releases/download/main-devel/open3d-0.20.0-cp312-cp312-win_amd64.whl" },
-    { url = "https://github.com/isl-org/Open3D/releases/download/main-devel/open3d-0.20.0-cp313-cp313-win_amd64.whl" },
-    { url = "https://github.com/isl-org/Open3D/releases/download/main-devel/open3d-0.20.0-cp314-cp314-win_amd64.whl" },
+    { url = "https://files.pythonhosted.org/packages/08/dd/c47242b068cc7f16fe72b6e42bd7fb48abdcb36042b4a03e50e32b16aadc/open3d-0.20.0-cp311-cp311-manylinux_2_35_aarch64.whl", hash = "sha256:0c46c90fe5c071ca2d541df0a8f8e1c77c9f5f209ccff2ce38d48ecf56835509", size = 48461815, upload-time = "2026-09-16T21:12:57.648Z" },
+    { url = "https://files.pythonhosted.org/packages/1a/74/5364df64573016c45eb648a432253c2e50fed2c6c64be87dc928a46fc2e0/open3d-0.20.0-cp311-cp311-manylinux_2_35_x86_64.whl", hash = "sha256:18ae25cbc9f8fcabc06bad71e00cca3cd0ff0a762ce0fbec093f2e2a4d05eddf", size = 400803434, upload-time = "2026-09-16T21:16:44.877Z" },
+    { url = "https://files.pythonhosted.org/packages/fb/3d/00ad8495560dbaca74e3fddf2c5187a799578387bc08a387641af3c6455a/open3d-0.20.0-cp312-cp312-manylinux_2_35_aarch64.whl", hash = "sha256:4acfb34e2841dfac9f5a8681eca01abe4c219da5657e8cac4e2d0d88c70135b8", size = 48462058, upload-time = "2026-09-16T21:17:06.764Z" },
+    { url = "https://files.pythonhosted.org/packages/23/ad/493d28bcdf6093d9b6090d3ca4eefe060db06b257a708e57586119845338/open3d-0.20.0-cp312-cp312-manylinux_2_35_x86_64.whl", hash = "sha256:f5cc6106d9c0c41beb8160aa99c2b663e7f08588a598ec7d464391a4cfe684d6", size = 400788891, upload-time = "2026-09-16T21:20:55.395Z" },
+    { url = "https://files.pythonhosted.org/packages/46/0e/76806d75a2e71251cba07747797bffd882eb14f655d4d3d05609c8e8046f/open3d-0.20.0-cp313-cp313-manylinux_2_35_aarch64.whl", hash = "sha256:101b65d35dd2ee2057879694c2f1470d335c52bace3482e549b4b4642a4060f7", size = 48462764, upload-time = "2026-09-16T21:14:47.042Z" },
+    { url = "https://files.pythonhosted.org/packages/f2/13/787f1594b422492c367a55789718e4c77e1f9a588701310b9e383b5c2de8/open3d-0.20.0-cp313-cp313-manylinux_2_35_x86_64.whl", hash = "sha256:fd67667543fb1a0e2c05200f0ae3433038562cf93050965ac8e8fdda5964a1ab", size = 400787766, upload-time = "2026-09-16T21:19:02.908Z" },
+    { url = "https://files.pythonhosted.org/packages/50/d8/0e649c93a9743456deb6a03926538b600f7182e04ac1ce494dbcecc396a2/open3d-0.20.0-cp314-cp314-manylinux_2_35_aarch64.whl", hash = "sha256:d49c254377c643472ce579154fce19f143527e26577ad2c292ae8d5cd28cd8c6", size = 48461355, upload-time = "2026-09-16T21:11:44.444Z" },
+    { url = "https://files.pythonhosted.org/packages/8f/1a/819a16215a5844ea9aa9922009f9b4147b38d8c40e169af7052e743fbaa9/open3d-0.20.0-cp314-cp314-manylinux_2_35_x86_64.whl", hash = "sha256:14e0928af6f83555e58dde934af85fe61f6f9f5160f883e6e720d6205c38c68a", size = 392022146, upload-time = "2026-09-16T21:10:30.242Z" },
 ]
 
 [[package]]
 name = "open3d"
-version = "0.20.0+d32b4fc"
-source = { registry = "https://github.com/isl-org/Open3D/releases/expanded_assets/main-devel" }
-resolution-markers = [
-    "python_full_version >= '3.15' and sys_platform == 'win32'",
-    "python_full_version >= '3.15' and sys_platform == 'emscripten'",
-    "python_full_version >= '3.15' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32'",
-    "python_full_version == '3.14.*' and sys_platform == 'emscripten'",
-    "(python_full_version == '3.14.*' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (python_full_version == '3.14.*' and platform_machine == 'aarch64' and platform_python_implementation != 'CPython' and sys_platform == 'linux') or (python_full_version == '3.14.*' and platform_machine == 'x86_64' and platform_python_implementation != 'CPython' and sys_platform == 'linux') or (python_full_version == '3.14.*' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')",
-    "python_full_version == '3.13.*' and sys_platform == 'emscripten'",
-    "(python_full_version == '3.13.*' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (python_full_version == '3.13.*' and platform_machine == 'aarch64' and platform_python_implementation != 'CPython' and sys_platform == 'linux') or (python_full_version == '3.13.*' and platform_machine == 'x86_64' and platform_python_implementation != 'CPython' and sys_platform == 'linux') or (python_full_version == '3.13.*' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')",
-    "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
-    "(python_full_version == '3.12.*' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (python_full_version == '3.12.*' and platform_machine == 'aarch64' and platform_python_implementation != 'CPython' and sys_platform == 'linux') or (python_full_version == '3.12.*' and platform_machine == 'x86_64' and platform_python_implementation != 'CPython' and sys_platform == 'linux') or (python_full_version == '3.12.*' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')",
-    "python_full_version < '3.12' and sys_platform == 'emscripten'",
-    "(python_full_version < '3.12' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (python_full_version < '3.12' and platform_machine == 'aarch64' and platform_python_implementation != 'CPython' and sys_platform == 'linux') or (python_full_version < '3.12' and platform_machine == 'x86_64' and platform_python_implementation != 'CPython' and sys_platform == 'linux') or (python_full_version < '3.12' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')",
-]
-dependencies = [
-    { name = "configargparse" },
-    { name = "dash" },
-    { name = "flask" },
-    { name = "nbformat" },
-    { name = "numpy" },
-    { name = "werkzeug" },
-]
-
-[[package]]
-name = "open3d"
-version = "0.20.0+d32b4fc.soromox2"
+version = "0.20.0+d32b4fc.soromox3"
 source = { directory = "tools/open3d" }
 resolution-markers = [
+    "python_full_version >= '3.15' and sys_platform == 'win32'",
     "python_full_version >= '3.15' and sys_platform == 'darwin'",
+    "python_full_version == '3.14.*' and sys_platform == 'win32'",
     "python_full_version == '3.14.*' and platform_machine == 'x86_64' and platform_python_implementation == 'CPython' and sys_platform == 'linux'",
     "python_full_version == '3.14.*' and sys_platform == 'darwin'",
+    "python_full_version == '3.13.*' and sys_platform == 'win32'",
     "python_full_version == '3.13.*' and platform_machine == 'x86_64' and platform_python_implementation == 'CPython' and sys_platform == 'linux'",
     "python_full_version == '3.13.*' and sys_platform == 'darwin'",
+    "python_full_version == '3.12.*' and sys_platform == 'win32'",
     "python_full_version == '3.12.*' and platform_machine == 'x86_64' and platform_python_implementation == 'CPython' and sys_platform == 'linux'",
     "python_full_version == '3.12.*' and sys_platform == 'darwin'",
+    "python_full_version < '3.12' and sys_platform == 'win32'",
     "python_full_version < '3.12' and platform_machine == 'x86_64' and platform_python_implementation == 'CPython' and sys_platform == 'linux'",
     "python_full_version < '3.12' and sys_platform == 'darwin'",
 ]
@@ -4089,10 +4054,8 @@ all = [
     { name = "mkdocstrings" },
     { name = "mkdocstrings-python" },
     { name = "numpy" },
-    { name = "open3d", version = "0.19.0", source = { registry = "https://github.com/isl-org/Open3D/releases/expanded_assets/main-devel" }, marker = "python_full_version < '3.15' and platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux'" },
-    { name = "open3d", version = "0.20.0", source = { registry = "https://github.com/isl-org/Open3D/releases/expanded_assets/main-devel" }, marker = "python_full_version < '3.15' and sys_platform == 'win32'" },
-    { name = "open3d", version = "0.20.0+d32b4fc", source = { registry = "https://github.com/isl-org/Open3D/releases/expanded_assets/main-devel" }, marker = "(python_full_version >= '3.15' and platform_machine == 'aarch64' and sys_platform == 'linux') or (python_full_version >= '3.15' and platform_machine == 'x86_64' and sys_platform == 'linux') or (python_full_version >= '3.15' and sys_platform == 'win32') or (platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (platform_machine == 'aarch64' and platform_python_implementation != 'CPython' and sys_platform == 'linux') or (platform_machine == 'x86_64' and platform_python_implementation != 'CPython' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32')" },
-    { name = "open3d", version = "0.20.0+d32b4fc.soromox2", source = { directory = "tools/open3d" }, marker = "(python_full_version < '3.15' and platform_machine == 'x86_64' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or sys_platform == 'darwin'" },
+    { name = "open3d", version = "0.20.0", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.15' and sys_platform == 'linux') or (platform_machine != 'x86_64' and sys_platform == 'linux') or (platform_python_implementation != 'CPython' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32')" },
+    { name = "open3d", version = "0.20.0+d32b4fc.soromox3", source = { directory = "tools/open3d" }, marker = "(python_full_version < '3.15' and platform_machine == 'x86_64' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or sys_platform == 'darwin' or sys_platform == 'win32'" },
     { name = "opencv-python" },
     { name = "openpyxl" },
     { name = "optimistix" },
@@ -4143,10 +4106,8 @@ examples = [
     { name = "ipywidgets" },
     { name = "matplotlib" },
     { name = "numpy" },
-    { name = "open3d", version = "0.19.0", source = { registry = "https://github.com/isl-org/Open3D/releases/expanded_assets/main-devel" }, marker = "python_full_version < '3.15' and platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux'" },
-    { name = "open3d", version = "0.20.0", source = { registry = "https://github.com/isl-org/Open3D/releases/expanded_assets/main-devel" }, marker = "python_full_version < '3.15' and sys_platform == 'win32'" },
-    { name = "open3d", version = "0.20.0+d32b4fc", source = { registry = "https://github.com/isl-org/Open3D/releases/expanded_assets/main-devel" }, marker = "(python_full_version >= '3.15' and platform_machine == 'aarch64' and sys_platform == 'linux') or (python_full_version >= '3.15' and platform_machine == 'x86_64' and sys_platform == 'linux') or (python_full_version >= '3.15' and sys_platform == 'win32') or (platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (platform_machine == 'aarch64' and platform_python_implementation != 'CPython' and sys_platform == 'linux') or (platform_machine == 'x86_64' and platform_python_implementation != 'CPython' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32')" },
-    { name = "open3d", version = "0.20.0+d32b4fc.soromox2", source = { directory = "tools/open3d" }, marker = "(python_full_version < '3.15' and platform_machine == 'x86_64' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or sys_platform == 'darwin'" },
+    { name = "open3d", version = "0.20.0", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.15' and sys_platform == 'linux') or (platform_machine != 'x86_64' and sys_platform == 'linux') or (platform_python_implementation != 'CPython' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32')" },
+    { name = "open3d", version = "0.20.0+d32b4fc.soromox3", source = { directory = "tools/open3d" }, marker = "(python_full_version < '3.15' and platform_machine == 'x86_64' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or sys_platform == 'darwin' or sys_platform == 'win32'" },
     { name = "opencv-python" },
     { name = "optax" },
     { name = "optimistix" },
@@ -4162,10 +4123,8 @@ paper-results = [
     { name = "ipywidgets" },
     { name = "matplotlib" },
     { name = "numpy" },
-    { name = "open3d", version = "0.19.0", source = { registry = "https://github.com/isl-org/Open3D/releases/expanded_assets/main-devel" }, marker = "python_full_version < '3.15' and platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux'" },
-    { name = "open3d", version = "0.20.0", source = { registry = "https://github.com/isl-org/Open3D/releases/expanded_assets/main-devel" }, marker = "python_full_version < '3.15' and sys_platform == 'win32'" },
-    { name = "open3d", version = "0.20.0+d32b4fc", source = { registry = "https://github.com/isl-org/Open3D/releases/expanded_assets/main-devel" }, marker = "(python_full_version >= '3.15' and platform_machine == 'aarch64' and sys_platform == 'linux') or (python_full_version >= '3.15' and platform_machine == 'x86_64' and sys_platform == 'linux') or (python_full_version >= '3.15' and sys_platform == 'win32') or (platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (platform_machine == 'aarch64' and platform_python_implementation != 'CPython' and sys_platform == 'linux') or (platform_machine == 'x86_64' and platform_python_implementation != 'CPython' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32')" },
-    { name = "open3d", version = "0.20.0+d32b4fc.soromox2", source = { directory = "tools/open3d" }, marker = "(python_full_version < '3.15' and platform_machine == 'x86_64' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or sys_platform == 'darwin'" },
+    { name = "open3d", version = "0.20.0", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.15' and sys_platform == 'linux') or (platform_machine != 'x86_64' and sys_platform == 'linux') or (platform_python_implementation != 'CPython' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32')" },
+    { name = "open3d", version = "0.20.0+d32b4fc.soromox3", source = { directory = "tools/open3d" }, marker = "(python_full_version < '3.15' and platform_machine == 'x86_64' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or sys_platform == 'darwin' or sys_platform == 'win32'" },
     { name = "opencv-python" },
     { name = "openpyxl" },
     { name = "optax" },
@@ -4181,10 +4140,8 @@ paper-results = [
 rendering = [
     { name = "ipywidgets" },
     { name = "matplotlib" },
-    { name = "open3d", version = "0.19.0", source = { registry = "https://github.com/isl-org/Open3D/releases/expanded_assets/main-devel" }, marker = "python_full_version < '3.15' and platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux'" },
-    { name = "open3d", version = "0.20.0", source = { registry = "https://github.com/isl-org/Open3D/releases/expanded_assets/main-devel" }, marker = "python_full_version < '3.15' and sys_platform == 'win32'" },
-    { name = "open3d", version = "0.20.0+d32b4fc", source = { registry = "https://github.com/isl-org/Open3D/releases/expanded_assets/main-devel" }, marker = "(python_full_version >= '3.15' and platform_machine == 'aarch64' and sys_platform == 'linux') or (python_full_version >= '3.15' and platform_machine == 'x86_64' and sys_platform == 'linux') or (python_full_version >= '3.15' and sys_platform == 'win32') or (platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (platform_machine == 'aarch64' and platform_python_implementation != 'CPython' and sys_platform == 'linux') or (platform_machine == 'x86_64' and platform_python_implementation != 'CPython' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32')" },
-    { name = "open3d", version = "0.20.0+d32b4fc.soromox2", source = { directory = "tools/open3d" }, marker = "(python_full_version < '3.15' and platform_machine == 'x86_64' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or sys_platform == 'darwin'" },
+    { name = "open3d", version = "0.20.0", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.15' and sys_platform == 'linux') or (platform_machine != 'x86_64' and sys_platform == 'linux') or (platform_python_implementation != 'CPython' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32')" },
+    { name = "open3d", version = "0.20.0+d32b4fc.soromox3", source = { directory = "tools/open3d" }, marker = "(python_full_version < '3.15' and platform_machine == 'x86_64' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or sys_platform == 'darwin' or sys_platform == 'win32'" },
     { name = "opencv-python" },
     { name = "plotly" },
     { name = "trimesh" },
@@ -4258,14 +4215,14 @@ requires-dist = [
     { name = "numpy", marker = "extra == 'all'" },
     { name = "numpy", marker = "extra == 'examples'" },
     { name = "numpy", marker = "extra == 'paper-results'" },
-    { name = "open3d", marker = "(python_full_version < '3.15' and platform_machine == 'x86_64' and platform_python_implementation == 'CPython' and sys_platform == 'linux' and extra == 'all') or (sys_platform == 'darwin' and extra == 'all')", directory = "tools/open3d" },
-    { name = "open3d", marker = "(python_full_version < '3.15' and platform_machine == 'x86_64' and platform_python_implementation == 'CPython' and sys_platform == 'linux' and extra == 'examples') or (sys_platform == 'darwin' and extra == 'examples')", directory = "tools/open3d" },
-    { name = "open3d", marker = "(python_full_version < '3.15' and platform_machine == 'x86_64' and platform_python_implementation == 'CPython' and sys_platform == 'linux' and extra == 'paper-results') or (sys_platform == 'darwin' and extra == 'paper-results')", directory = "tools/open3d" },
-    { name = "open3d", marker = "(python_full_version < '3.15' and platform_machine == 'x86_64' and platform_python_implementation == 'CPython' and sys_platform == 'linux' and extra == 'rendering') or (sys_platform == 'darwin' and extra == 'rendering')", directory = "tools/open3d" },
-    { name = "open3d", marker = "(python_full_version >= '3.15' and sys_platform == 'linux' and extra == 'all') or (platform_machine != 'x86_64' and sys_platform == 'linux' and extra == 'all') or (platform_python_implementation != 'CPython' and sys_platform == 'linux' and extra == 'all') or (sys_platform != 'darwin' and sys_platform != 'linux' and extra == 'all')", specifier = ">=0.19" },
-    { name = "open3d", marker = "(python_full_version >= '3.15' and sys_platform == 'linux' and extra == 'examples') or (platform_machine != 'x86_64' and sys_platform == 'linux' and extra == 'examples') or (platform_python_implementation != 'CPython' and sys_platform == 'linux' and extra == 'examples') or (sys_platform != 'darwin' and sys_platform != 'linux' and extra == 'examples')", specifier = ">=0.19" },
-    { name = "open3d", marker = "(python_full_version >= '3.15' and sys_platform == 'linux' and extra == 'paper-results') or (platform_machine != 'x86_64' and sys_platform == 'linux' and extra == 'paper-results') or (platform_python_implementation != 'CPython' and sys_platform == 'linux' and extra == 'paper-results') or (sys_platform != 'darwin' and sys_platform != 'linux' and extra == 'paper-results')", specifier = ">=0.19" },
-    { name = "open3d", marker = "(python_full_version >= '3.15' and sys_platform == 'linux' and extra == 'rendering') or (platform_machine != 'x86_64' and sys_platform == 'linux' and extra == 'rendering') or (platform_python_implementation != 'CPython' and sys_platform == 'linux' and extra == 'rendering') or (sys_platform != 'darwin' and sys_platform != 'linux' and extra == 'rendering')", specifier = ">=0.19" },
+    { name = "open3d", marker = "(python_full_version < '3.15' and platform_machine == 'x86_64' and platform_python_implementation == 'CPython' and sys_platform == 'linux' and extra == 'all') or (sys_platform == 'darwin' and extra == 'all') or (sys_platform == 'win32' and extra == 'all')", directory = "tools/open3d" },
+    { name = "open3d", marker = "(python_full_version < '3.15' and platform_machine == 'x86_64' and platform_python_implementation == 'CPython' and sys_platform == 'linux' and extra == 'examples') or (sys_platform == 'darwin' and extra == 'examples') or (sys_platform == 'win32' and extra == 'examples')", directory = "tools/open3d" },
+    { name = "open3d", marker = "(python_full_version < '3.15' and platform_machine == 'x86_64' and platform_python_implementation == 'CPython' and sys_platform == 'linux' and extra == 'paper-results') or (sys_platform == 'darwin' and extra == 'paper-results') or (sys_platform == 'win32' and extra == 'paper-results')", directory = "tools/open3d" },
+    { name = "open3d", marker = "(python_full_version < '3.15' and platform_machine == 'x86_64' and platform_python_implementation == 'CPython' and sys_platform == 'linux' and extra == 'rendering') or (sys_platform == 'darwin' and extra == 'rendering') or (sys_platform == 'win32' and extra == 'rendering')", directory = "tools/open3d" },
+    { name = "open3d", marker = "(python_full_version >= '3.15' and sys_platform == 'linux' and extra == 'all') or (platform_machine != 'x86_64' and sys_platform == 'linux' and extra == 'all') or (platform_python_implementation != 'CPython' and sys_platform == 'linux' and extra == 'all') or (sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32' and extra == 'all')", specifier = ">=0.20" },
+    { name = "open3d", marker = "(python_full_version >= '3.15' and sys_platform == 'linux' and extra == 'examples') or (platform_machine != 'x86_64' and sys_platform == 'linux' and extra == 'examples') or (platform_python_implementation != 'CPython' and sys_platform == 'linux' and extra == 'examples') or (sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32' and extra == 'examples')", specifier = ">=0.20" },
+    { name = "open3d", marker = "(python_full_version >= '3.15' and sys_platform == 'linux' and extra == 'paper-results') or (platform_machine != 'x86_64' and sys_platform == 'linux' and extra == 'paper-results') or (platform_python_implementation != 'CPython' and sys_platform == 'linux' and extra == 'paper-results') or (sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32' and extra == 'paper-results')", specifier = ">=0.20" },
+    { name = "open3d", marker = "(python_full_version >= '3.15' and sys_platform == 'linux' and extra == 'rendering') or (platform_machine != 'x86_64' and sys_platform == 'linux' and extra == 'rendering') or (platform_python_implementation != 'CPython' and sys_platform == 'linux' and extra == 'rendering') or (sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32' and extra == 'rendering')", specifier = ">=0.20" },
     { name = "opencv-python", marker = "extra == 'all'" },
     { name = "opencv-python", marker = "extra == 'examples'" },
     { name = "opencv-python", marker = "extra == 'paper-results'" },

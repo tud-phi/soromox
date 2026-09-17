@@ -1,12 +1,12 @@
 # Open3D development build
 
-SoRoMoX builds an immutable, checked-in revision of Open3D `main` on macOS and
-Linux x86-64. The cross-platform PEP 517 adapter is
+SoRoMoX builds an immutable, checked-in Open3D 0.20 revision on macOS, Linux
+x86-64 and Windows x86-64. The cross-platform PEP 517 adapter is
 [`build_backend.py`](build_backend.py); it applies the temporary renderer fixes
 in this directory and caches one native wheel per revision, patch set, Python
-ABI, operating system, and CPU architecture. Other platforms use the official
-[Open3D main-devel](https://github.com/isl-org/Open3D/releases/tag/main-devel)
-wheel channel.
+ABI, operating system, and CPU architecture. Other platforms use official PyPI
+or [Open3D main-devel](https://github.com/isl-org/Open3D/releases/tag/main-devel)
+wheels.
 
 `OPEN3D_REVISION` makes a lock reproducible. The scheduled
 `Check Open3D upstream revision` workflow compares that pin with upstream
@@ -71,11 +71,28 @@ Components → Metal Toolchain → Get**. The adapter compiles the C++ library,
 Python bindings, Metal shaders, and a Python-specific wheel. The wheel links to
 Homebrew OpenBLAS.
 
-## Windows and other platforms
+## Windows installation
 
-The local adapter currently supports macOS and Linux x86-64. On other platforms,
-`uv` resolves a matching official development wheel when one is published. With
-`pip`, install that wheel before SoRoMoX:
+Install Visual Studio 2022 with the Desktop development with C++ workload,
+CMake, Git, Python and FFmpeg. Then build the rendering environment from the
+SoRoMoX checkout:
+
+```powershell
+uv sync --extra rendering
+```
+
+The adapter uses the Visual Studio 2022 x64 generator, builds the pinned
+Open3D 0.20 source with the shared MSVC runtime, and applies the common renderer
+patches before compilation. Windows build products are cached under
+`%USERPROFILE%\.cache\soromox\open3d`.
+
+Native Windows compilation and rendering still require CI validation for this
+patch revision.
+
+## Other platforms
+
+On other platforms, `uv` resolves a matching official development wheel when
+one is published. With `pip`, install that wheel before SoRoMoX:
 
 ```bash
 python -m pip install --upgrade --pre --only-binary=:all: --no-index \
@@ -84,25 +101,19 @@ python -m pip install --upgrade --pre --only-binary=:all: --no-index \
 python -m pip install -e ".[rendering]"
 ```
 
-Available wheel ABIs and architectures are controlled by upstream. As of
-September 16, 2026, the [main-devel assets](https://github.com/isl-org/Open3D/releases/tag/main-devel)
-include only one Open3D 0.20 Linux ARM64 wheel:
-`open3d-0.20.0+d32b4fc-cp310-cp310-manylinux_2_35_aarch64.whl`.
-Its `cp310-cp310` tags target CPython 3.10 specifically; this is a limitation of
-the published ARM64 wheels, not Open3D's overall Python support. SoRoMoX keeps
-Linux ARM64 CPython 3.11–3.14 on the available 0.19.0 wheels through a `uv`
-constraint until matching 0.20 wheels are published.
-
-On Windows, also install a current GPU driver, the Microsoft Visual C++
-Redistributable, and FFmpeg on `PATH` for MP4 export. Native Windows rendering
-has not been validated for this checkout.
+Available wheel ABIs and architectures are controlled by upstream. Stable
+Open3D 0.20 wheels are available for Linux ARM64 on CPython 3.11–3.14, so those
+environments now resolve the official 0.20 release. Linux x86-64 uses the local
+source adapter so it receives the renderer patches.
 
 ## Validation
 
 The current pin, `d32b4fce639b3cde284184072796480ef9b528d1`
 (Open3D 0.20.0, Filament 1.76.0), was source-built and tested on Apple M4 Max,
 macOS 27.0, Xcode 27.0 (27A266a), Metal 32023.921, and Python 3.12.11.
-The installed wheel reported `0.20.0+d32b4fc.soromox2`.
+The validated wheel before the UV patch reported
+`0.20.0+d32b4fc.soromox2`. Patched wheels report
+`0.20.0+d32b4fc.soromox3` and still require native macOS validation.
 
 The three native macOS integration checks passed: RGB `uint8` readback and
 color-grading selection, a 320 × 240 tentacle PNG and 60-frame H.264 MP4,
@@ -118,8 +129,9 @@ SOROMOX_RUN_RENDERING_INTEGRATION=1 uv run --no-sync python -m pytest -q \
   tests/rendering/test_open3d_macos_integration.py
 ```
 
-Ubuntu native validation runs in CI. Results for this revision must pass before
-merging; macOS checks do not validate the Linux patch set or other Python ABIs.
+Ubuntu and Windows native builds run in CI. Results for this revision must pass
+before merging; macOS checks do not validate the Linux or Windows patch sets or
+other Python ABIs.
 
 The Ubuntu integration checks render non-uniform RGB pixels, encode and probe a
 three-frame H.264 MP4, open and close a real modern GUI window under Xvfb, and
@@ -169,6 +181,13 @@ the required fixes.
 
 ## Temporary patches and upstreaming
 
+`legacy_mesh_uv_initialization.patch` initializes UV0 for legacy triangle
+meshes without triangle UVs. Open3D uses a `TexturedVertex` buffer for this path
+and advertises UV0 to Filament, while the buffer comes from `malloc`; without
+the patch, those UV bytes are undefined. This can produce heap-dependent
+triangles or lighting artifacts with software Vulkan and may affect any
+Filament backend.
+
 `neutral_tone_mapping.patch` restores linear, ACES, legacy ACES, Filmic and
 Display Range selection through Filament's current `ToneMapper` API, and exposes
 PBR Neutral; see [Open3D issue #7557](https://github.com/isl-org/Open3D/issues/7557).
@@ -176,7 +195,7 @@ SoRoMoX selects Filmic for its default lit rendering: neutral greys
 and readable midtones without the legacy ACES highlight tint. The technical
 preset selects linear mapping to keep its background white. Upstream's
 Uchimura/Reinhard fallback is unchanged. Wheels with these fixes use the
-`.soromox2` suffix; run `uv sync --extra rendering` to update an older build.
+`.soromox3` suffix; run `uv sync --extra rendering` to update an older build.
 The color-grading regression test was run with native Metal on Python 3.12;
 Ubuntu CI also runs it with surfaceless EGL.
 
@@ -221,4 +240,4 @@ must exactly match `OPEN3D_REVISION`.
 
 The adapter's metadata hook is static and platform-neutral. Dependency solvers
 can therefore inspect the local source mapping while resolving a universal lock
-without launching a native macOS or Linux build.
+without launching a native macOS, Linux or Windows build.

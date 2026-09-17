@@ -27,7 +27,10 @@ RUNTIME_REQUIREMENTS = (
     "nbformat>=5.7.0",
     "configargparse",
 )
-COMMON_PATCHES = [HERE / "neutral_tone_mapping.patch"]
+COMMON_PATCHES = [
+    HERE / "neutral_tone_mapping.patch",
+    HERE / "legacy_mesh_uv_initialization.patch",
+]
 MACOS_PATCHES = [*COMMON_PATCHES]
 LINUX_PATCHES = [
     *COMMON_PATCHES,
@@ -56,7 +59,7 @@ def _pinned_commit():
 
 def _version():
     """Return the patched wheel version without consulting the platform."""
-    return f"{BASE_VERSION}+{_pinned_commit()[:7]}.soromox2"
+    return f"{BASE_VERSION}+{_pinned_commit()[:7]}.soromox3"
 
 
 def _recipe_fingerprint(patches):
@@ -82,6 +85,34 @@ def _run(*args, cwd=None):
         OSError: The executable or working directory cannot be accessed.
     """
     subprocess.run([str(arg) for arg in args], cwd=cwd, check=True)
+
+
+def _prepare_source(cache, source, commit, patches):
+    """Fetch the pinned Open3D source and apply each requested patch once."""
+    cache.mkdir(parents=True, exist_ok=True)
+    if not source.exists():
+        _run("git", "init", source)
+        _run("git", "-C", source, "fetch", "--depth=1", REPOSITORY, commit)
+        _run("git", "-C", source, "checkout", "--detach", "FETCH_HEAD")
+    actual = subprocess.check_output(
+        ["git", "-C", str(source), "rev-parse", "HEAD"], text=True
+    ).strip()
+    if actual != commit:
+        raise RuntimeError(
+            f"Source directory is at {actual}, but the pinned revision is {commit}. "
+            "Use a fresh build cache or update the override checkout."
+        )
+    for patch in patches:
+        applied = (
+            subprocess.run(
+                ["git", "-C", str(source), "apply", "--reverse", "--check", str(patch)],
+                capture_output=True,
+            ).returncode
+            == 0
+        )
+        if not applied:
+            _run("git", "-C", source, "apply", "--check", patch)
+            _run("git", "-C", source, "apply", patch)
 
 
 def _build_macos():
@@ -122,7 +153,7 @@ def _build_macos():
         "python": sys.implementation.cache_tag,
         "shaders": "compiled",
     }
-    pattern = f"open3d-*+{commit[:7]}.soromox2-cp{sys.version_info.major}{sys.version_info.minor}-*.whl"
+    pattern = f"open3d-*+{commit[:7]}.soromox3-cp{sys.version_info.major}{sys.version_info.minor}-*.whl"
     existing = list(wheels.glob(pattern))
     if (
         existing
@@ -132,38 +163,7 @@ def _build_macos():
         return existing[0]
     # Fail before a long build if Apple's optional compiler is unavailable.
     _run("xcrun", "-sdk", "macosx", "metal", "--version")
-    cache.mkdir(parents=True, exist_ok=True)
-    if not source.exists():
-        _run("git", "init", source)
-        _run(
-            "git",
-            "-C",
-            source,
-            "fetch",
-            "--depth=1",
-            REPOSITORY,
-            commit,
-        )
-        _run("git", "-C", source, "checkout", "--detach", "FETCH_HEAD")
-    actual = subprocess.check_output(
-        ["git", "-C", str(source), "rev-parse", "HEAD"], text=True
-    ).strip()
-    if actual != commit:
-        raise RuntimeError(
-            f"Source directory is at {actual}, but the pinned revision is {commit}. "
-            "Use a fresh build cache or update the override checkout."
-        )
-    for patch in MACOS_PATCHES:
-        applied = (
-            subprocess.run(
-                ["git", "-C", str(source), "apply", "--reverse", "--check", str(patch)],
-                capture_output=True,
-            ).returncode
-            == 0
-        )
-        if not applied:
-            _run("git", "-C", source, "apply", "--check", patch)
-            _run("git", "-C", source, "apply", patch)
+    _prepare_source(cache, source, commit, MACOS_PATCHES)
     # Homebrew CMake avoids stale Python entry-point scripts on PATH.
     brew = shutil.which("brew")
     if not brew:
@@ -204,7 +204,7 @@ def _build_macos():
         "-DUSE_SYSTEM_BLAS=ON",
         f"-DCMAKE_PREFIX_PATH={prefix('openblas')}",
         f"-DCMAKE_CXX_FLAGS=-I{prefix('openblas')}/include -Wno-error=unused-private-field",
-        f"-DOPEN3D_GIT_HASH={commit[:7]}.soromox2",
+        f"-DOPEN3D_GIT_HASH={commit[:7]}.soromox3",
         f"-DPython3_EXECUTABLE={sys.executable}",
     ]
     _run(cmake, "-S", source, "-B", build, "-G", "Ninja", *flags)
@@ -258,30 +258,7 @@ def _build_linux():
     ):
         return existing[0]
 
-    cache.mkdir(parents=True, exist_ok=True)
-    if not source.exists():
-        _run("git", "init", source)
-        _run("git", "-C", source, "fetch", "--depth=1", REPOSITORY, commit)
-        _run("git", "-C", source, "checkout", "--detach", "FETCH_HEAD")
-    actual = subprocess.check_output(
-        ["git", "-C", str(source), "rev-parse", "HEAD"], text=True
-    ).strip()
-    if actual != commit:
-        raise RuntimeError(
-            f"Source directory is at {actual}, but the pinned revision is {commit}. "
-            "Use a fresh build cache or update the override checkout."
-        )
-    for patch in LINUX_PATCHES:
-        applied = (
-            subprocess.run(
-                ["git", "-C", str(source), "apply", "--reverse", "--check", str(patch)],
-                capture_output=True,
-            ).returncode
-            == 0
-        )
-        if not applied:
-            _run("git", "-C", source, "apply", "--check", patch)
-            _run("git", "-C", source, "apply", patch)
+    _prepare_source(cache, source, commit, LINUX_PATCHES)
 
     cmake = os.environ.get("SOROMOX_CMAKE", shutil.which("cmake") or "cmake")
     flags = [
@@ -308,7 +285,7 @@ def _build_linux():
         # supported diagnostics retain their normal error handling.
         "-DCMAKE_CXX_FLAGS=-include cstddef -include cstdint "
         "-Wno-unknown-warning-option -Wno-invalid-specialization -Wno-nontrivial-memcall",
-        f"-DOPEN3D_GIT_HASH={commit[:7]}.soromox2",
+        f"-DOPEN3D_GIT_HASH={commit[:7]}.soromox3",
         f"-DPython3_EXECUTABLE={sys.executable}",
     ]
     _run(cmake, "-S", source, "-B", build, "-G", "Ninja", *flags)
@@ -322,14 +299,106 @@ def _build_linux():
     return built[0]
 
 
+def _build_windows():
+    """Build or reuse patched Open3D for Windows x86-64 CPython."""
+    if sys.platform != "win32" or platform.machine() not in ("AMD64", "x86_64"):
+        raise RuntimeError(
+            "The SoRoMoX Windows Open3D adapter currently supports Windows x86-64."
+        )
+    commit = _pinned_commit()
+    fingerprint = _recipe_fingerprint(COMMON_PATCHES)
+    cache = Path(
+        os.environ.get("SOROMOX_OPEN3D_CACHE", Path.home() / ".cache/soromox/open3d")
+    )
+    cache /= (
+        f"windows-{commit[:7]}-{fingerprint}-"
+        f"{sys.implementation.cache_tag}-{platform.machine()}"
+    )
+    source = Path(os.environ.get("SOROMOX_OPEN3D_SOURCE_DIR", cache / "source"))
+    build = Path(os.environ.get("SOROMOX_OPEN3D_BUILD_DIR", cache / "build"))
+    wheels = build / "lib/python_package/pip_package"
+    manifest = build / "soromox-build.json"
+    provenance = {
+        "commit": commit,
+        "patches": fingerprint,
+        "python": sys.implementation.cache_tag,
+        "platform": "windows-x86_64",
+    }
+    pattern = (
+        f"open3d-{_version()}-cp{sys.version_info.major}{sys.version_info.minor}-*.whl"
+    )
+    existing = list(wheels.glob(pattern))
+    if (
+        existing
+        and manifest.exists()
+        and json.loads(manifest.read_text()) == provenance
+    ):
+        return existing[0]
+
+    _prepare_source(cache, source, commit, COMMON_PATCHES)
+    cmake = os.environ.get("SOROMOX_CMAKE", shutil.which("cmake") or "cmake")
+    flags = [
+        "-DBUILD_SHARED_LIBS=ON",
+        "-DSTATIC_WINDOWS_RUNTIME=OFF",
+        "-DBUILD_GUI=ON",
+        "-DBUILD_EXAMPLES=OFF",
+        "-DBUILD_WEBRTC=OFF",
+        "-DBUILD_JUPYTER_EXTENSION=OFF",
+        "-DBUILD_CUDA_MODULE=OFF",
+        "-DBUILD_SYCL_MODULE=OFF",
+        "-DBUILD_PYTORCH_OPS=OFF",
+        "-DBUILD_TENSORFLOW_OPS=OFF",
+        "-DBUILD_UNIT_TESTS=OFF",
+        "-DBUILD_BENCHMARKS=OFF",
+        "-DBUNDLE_OPEN3D_ML=OFF",
+        "-DBUILD_AZURE_KINECT=OFF",
+        "-DBUILD_LIBREALSENSE=OFF",
+        "-DWITH_STUBGEN=OFF",
+        f"-DOPEN3D_GIT_HASH={commit[:7]}.soromox3",
+        f"-DPython3_EXECUTABLE={sys.executable}",
+    ]
+    _run(
+        cmake,
+        "-S",
+        source,
+        "-B",
+        build,
+        "-G",
+        "Visual Studio 17 2022",
+        "-A",
+        "x64",
+        *flags,
+    )
+    jobs = os.environ.get("CMAKE_BUILD_PARALLEL_LEVEL", "8")
+    _run(
+        cmake,
+        "--build",
+        build,
+        "--config",
+        "Release",
+        "--target",
+        "pip-package",
+        "--parallel",
+        jobs,
+    )
+    built = list(wheels.glob(pattern))
+    if len(built) != 1:
+        raise RuntimeError(f"Expected one Open3D wheel in {wheels}, found {built}")
+    manifest.write_text(json.dumps(provenance, indent=2) + "\n")
+    return built[0]
+
+
 def _build():
     """Dispatch a native Open3D build without affecting metadata preparation."""
     if sys.platform == "darwin":
         return _build_macos()
     if sys.platform.startswith("linux"):
         return _build_linux()
+    if sys.platform == "win32":
+        return _build_windows()
     raise RuntimeError(
-        "The SoRoMoX Open3D source adapter supports macOS and Linux x86-64."
+        "The SoRoMoX Open3D source adapter supports macOS, Linux x86-64 and "
+        "Windows x86-64."
     )
 
 
