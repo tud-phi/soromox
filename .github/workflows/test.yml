@@ -14,10 +14,21 @@ on:
 
 jobs:
   rendering-ubuntu:
-    name: Native rendering (Ubuntu, Python 3.12)
+    name: Native rendering (Ubuntu ${{ matrix.architecture }}, Python 3.12)
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: x86-64
+            runner: ubuntu-latest
+          - architecture: ARM64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
+    env:
+      CMAKE_BUILD_PARALLEL_LEVEL: 4
+      SOROMOX_OPEN3D_CACHE: ${{ runner.temp }}/soromox/open3d
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -43,8 +54,8 @@ jobs:
       - name: Restore native Open3D build cache
         uses: actions/cache@v5
         with:
-          path: ~/.cache/soromox/open3d
-          key: rendering-ubuntu-open3d-py312-${{ hashFiles('tools/open3d/**') }}
+          path: ${{ env.SOROMOX_OPEN3D_CACHE }}
+          key: rendering-ubuntu-${{ matrix.architecture }}-open3d-py312-${{ hashFiles('tools/open3d/**') }}
 
       - name: Build Open3D and install rendering tests
         run: |
@@ -84,6 +95,7 @@ jobs:
     timeout-minutes: 180
     env:
       CMAKE_BUILD_PARALLEL_LEVEL: 4
+      SOROMOX_OPEN3D_CACHE: ${{ runner.temp }}/soromox/open3d
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -99,7 +111,7 @@ jobs:
       - name: Restore native Open3D build cache
         uses: actions/cache@v5
         with:
-          path: ~/.cache/soromox/open3d
+          path: ${{ env.SOROMOX_OPEN3D_CACHE }}
           key: rendering-windows-open3d-py312-${{ hashFiles('tools/open3d/**') }}
 
       - name: Build patched Open3D 0.20 and install rendering tests

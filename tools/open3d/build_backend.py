@@ -90,6 +90,7 @@ def _run(*args, cwd=None):
 def _prepare_source(cache, source, commit, patches):
     """Fetch the pinned Open3D source and apply each requested patch once."""
     cache.mkdir(parents=True, exist_ok=True)
+    source.parent.mkdir(parents=True, exist_ok=True)
     if not source.exists():
         _run("git", "init", source)
         _run("git", "-C", source, "fetch", "--depth=1", REPOSITORY, commit)
@@ -224,9 +225,11 @@ def _build_linux():
     if not sys.platform.startswith("linux") or platform.machine() not in (
         "x86_64",
         "AMD64",
+        "aarch64",
+        "arm64",
     ):
         raise RuntimeError(
-            "The SoRoMoX Linux Open3D adapter currently supports Linux x86-64."
+            "The SoRoMoX Linux Open3D adapter supports Linux x86-64 and ARM64."
         )
     commit = _pinned_commit()
     fingerprint = _recipe_fingerprint([*LINUX_PATCHES, LINUX_FILAMENT_PATCH])
@@ -245,7 +248,7 @@ def _build_linux():
         "commit": commit,
         "patches": fingerprint,
         "python": sys.implementation.cache_tag,
-        "platform": "linux-x86_64",
+        "platform": f"linux-{platform.machine()}",
     }
     pattern = (
         f"open3d-{_version()}-cp{sys.version_info.major}{sys.version_info.minor}-*.whl"
@@ -397,8 +400,8 @@ def _build():
     if sys.platform == "win32":
         return _build_windows()
     raise RuntimeError(
-        "The SoRoMoX Open3D source adapter supports macOS, Linux x86-64 and "
-        "Windows x86-64."
+        "The SoRoMoX Open3D source adapter supports macOS, Linux x86-64, "
+        "Linux ARM64 and Windows x86-64."
     )
 
 

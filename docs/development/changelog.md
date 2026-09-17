@@ -70,8 +70,8 @@ and include benchmark baseline and measurement context for performance claims.
 - Patched Open3D 0.20 legacy triangle-mesh buffers to initialize fallback UVs,
   preventing heap-dependent rendering artifacts on software Vulkan and other
   Filament backends. Windows x86-64 now uses the patched Open3D 0.20 source
-  adapter alongside macOS and Linux x86-64, and Linux ARM64 moves from Open3D
-  0.19 to the official 0.20 wheels.
+  adapter alongside macOS and Linux x86-64. Linux ARM64 now uses the same
+  patched source adapter instead of an unpatched official wheel.
 - Viser removes buried caps at matching swept-link contours, avoiding dark rings
   at continuous segment boundaries. Figure 11 and Figure 13 exports preserve
   transparent canvas and plot backgrounds.

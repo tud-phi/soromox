@@ -1,7 +1,7 @@
 # Open3D development build
 
 SoRoMoX builds an immutable, checked-in Open3D 0.20 revision on macOS, Linux
-x86-64 and Windows x86-64. The cross-platform PEP 517 adapter is
+x86-64, Linux ARM64 and Windows x86-64. The cross-platform PEP 517 adapter is
 [`build_backend.py`](build_backend.py); it applies the temporary renderer fixes
 in this directory and caches one native wheel per revision, patch set, Python
 ABI, operating system, and CPU architecture. Other platforms use official PyPI
@@ -101,10 +101,11 @@ python -m pip install --upgrade --pre --only-binary=:all: --no-index \
 python -m pip install -e ".[rendering]"
 ```
 
-Available wheel ABIs and architectures are controlled by upstream. Stable
-Open3D 0.20 wheels are available for Linux ARM64 on CPython 3.11–3.14, so those
-environments now resolve the official 0.20 release. Linux x86-64 uses the local
-source adapter so it receives the renderer patches.
+Available wheel ABIs and architectures are controlled by upstream. Linux ARM64
+uses the local source adapter alongside Linux x86-64 because Open3D 0.20's
+uninitialized legacy-mesh UV field is architecture-independent. Selecting the
+official ARM64 wheel would omit that fix and the other temporary renderer
+patches.
 
 ## Validation
 
@@ -129,9 +130,9 @@ SOROMOX_RUN_RENDERING_INTEGRATION=1 uv run --no-sync python -m pytest -q \
   tests/rendering/test_open3d_macos_integration.py
 ```
 
-Ubuntu and Windows native builds run in CI. Results for this revision must pass
-before merging; macOS checks do not validate the Linux or Windows patch sets or
-other Python ABIs.
+Ubuntu x86-64, Ubuntu ARM64 and Windows native builds run in CI. Results for
+this revision must pass before merging; macOS checks do not validate the Linux
+or Windows patch sets or other Python ABIs.
 
 The Ubuntu integration checks render non-uniform RGB pixels, encode and probe a
 three-frame H.264 MP4, open and close a real modern GUI window under Xvfb, and
