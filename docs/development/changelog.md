@@ -25,11 +25,11 @@ and include benchmark baseline and measurement context for performance claims.
   `config.geometry.base_plate_style`. Opt-in
   `GroundPlaneConfig(height_reference="base_mounting_face")` places floors and
   backdrops at the base plate mounting face.
-- Added reproducible Open3D 0.20.0 development builds for macOS and Linux x86-64,
-  including Metal image capture, neutral color grading and selectable linear/ACES
-  tone mapping, and surfaceless EGL exports alongside GLX interactive viewing.
-  Ubuntu native-rendering tests and an upstream-revision check cover the
-  source-build workflow.
+- Added reproducible patched Open3D 0.20.0 builds for macOS, Linux x86-64,
+  Linux ARM64 and Windows x86-64, including Metal image capture, neutral color
+  grading and selectable linear/ACES tone mapping, and surfaceless EGL exports
+  alongside GLX interactive viewing. Ubuntu and Windows native-rendering tests
+  cover the source-build workflow.
 
 ### Changed
 

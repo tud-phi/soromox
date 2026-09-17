@@ -390,9 +390,10 @@ Unsupported requested features produce one warning per renderer and mode.
 | Matplotlib | Robot colors, line geometry, viewing direction, white background and standard axes | Scene appearance, ground planes, backdrops, materials, lighting, shadows, AO and exposure ignored |
 | OpenCV planar/HSA | BGR output, sRGB robot colors, line geometry and white background | Scene appearance, ground planes, backdrops, materials, lighting, shadows, AO and camera settings ignored |
 
-On the tested macOS development build, opening a legacy OpenGL preview after a
-modern Metal GUI window can crash upstream GLFW. SoRoMoX rejects that transition
-with a clear error; launch the animated preview in a fresh Python process.
+On the tested patched Open3D 0.20 macOS build, opening a legacy OpenGL preview
+after a modern Metal GUI window can crash upstream GLFW. SoRoMoX rejects that
+transition with a clear error; launch the animated preview in a fresh Python
+process.
 Modern image and video exports and static windows are available independently.
 
 Physical light units do not imply identical images: environment illumination,

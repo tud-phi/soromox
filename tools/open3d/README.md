@@ -1,18 +1,17 @@
-# Open3D development build
+# Patched Open3D 0.20 source build
 
-SoRoMoX builds an immutable, checked-in Open3D 0.20 revision on macOS, Linux
+SoRoMoX builds the immutable Open3D 0.20.0 release tag on macOS, Linux
 x86-64, Linux ARM64 and Windows x86-64. The cross-platform PEP 517 adapter is
 [`build_backend.py`](build_backend.py); it applies the temporary renderer fixes
 in this directory and caches one native wheel per revision, patch set, Python
 ABI, operating system, and CPU architecture. Other platforms use official PyPI
-or [Open3D main-devel](https://github.com/isl-org/Open3D/releases/tag/main-devel)
+or [Open3D v0.20.0 release](https://github.com/isl-org/Open3D/releases/tag/v0.20.0)
 wheels.
 
-`OPEN3D_REVISION` makes a lock reproducible. The scheduled
-`Check Open3D upstream revision` workflow compares that pin with upstream
-`main` each day and fails when upstream advances. Maintainers can then update
-the pin and rerun the native validation deliberately, keeping each build
-immutable without leaving the project on an old development snapshot.
+`OPEN3D_REVISION` records the exact commit behind the stable tag and makes the
+source build reproducible. Stable release upgrades are deliberate changes that
+also update `BASE_VERSION`, the lock file, patch applicability and native
+validation.
 
 ## Ubuntu installation
 
@@ -91,30 +90,27 @@ patch revision.
 
 ## Other platforms
 
-On other platforms, `uv` resolves a matching official development wheel when
-one is published. With `pip`, install that wheel before SoRoMoX:
+On other platforms, `uv` and `pip` resolve matching stable Open3D wheels from
+PyPI. Install SoRoMoX normally:
 
 ```bash
-python -m pip install --upgrade --pre --only-binary=:all: --no-index \
-  --find-links https://github.com/isl-org/Open3D/releases/expanded_assets/main-devel \
-  --no-deps open3d
 python -m pip install -e ".[rendering]"
 ```
 
-Available wheel ABIs and architectures are controlled by upstream. Linux ARM64
-uses the local source adapter alongside Linux x86-64 because Open3D 0.20's
+Available stable wheel ABIs and architectures are controlled by upstream. Linux
+ARM64 uses the local source adapter alongside Linux x86-64 because Open3D 0.20's
 uninitialized legacy-mesh UV field is architecture-independent. Selecting the
 official ARM64 wheel would omit that fix and the other temporary renderer
 patches.
 
 ## Validation
 
-The current pin, `d32b4fce639b3cde284184072796480ef9b528d1`
-(Open3D 0.20.0, Filament 1.76.0), was source-built and tested on Apple M4 Max,
-macOS 27.0, Xcode 27.0 (27A266a), Metal 32023.921, and Python 3.12.11.
-The validated wheel before the UV patch reported
-`0.20.0+d32b4fc.soromox2`. Patched wheels report
-`0.20.0+d32b4fc.soromox3` and still require native macOS validation.
+The current release-tag pin is
+`b6c5e196384ad71e75b6e6f9c5da22d046221f1d`. The preceding version-bump commit,
+`d32b4fce639b3cde284184072796480ef9b528d1` (Open3D 0.20.0, Filament 1.76.0),
+was source-built and tested on Apple M4 Max, macOS 27.0, Xcode 27.0 (27A266a),
+Metal 32023.921, and Python 3.12.11. Patched release-tag wheels report
+`0.20.0+b6c5e19.soromox3`; native CI rebuilds and validates the exact pin.
 
 The three native macOS integration checks passed: RGB `uint8` readback and
 color-grading selection, a 320 × 240 tentacle PNG and 60-frame H.264 MP4,
@@ -158,27 +154,22 @@ The integration tests run modern GUI and legacy visualizer checks in separate
 processes because their graphics teardown can interact. Applications should
 likewise avoid mixing the two Open3D GUI systems in one process.
 
-## Updating Open3D main
+## Updating Open3D releases
 
-Check whether the pin still matches upstream:
-
-```bash
-python tools/open3d/update_revision.py
-```
-
-When the scheduled check reports a new commit, update deliberately and rebuild:
+When adopting a newer stable Open3D release, update `OPEN3D_REVISION` to the
+full commit behind that release tag and update `BASE_VERSION` in
+`build_backend.py`. Then refresh the lock and build:
 
 ```bash
-python tools/open3d/update_revision.py --update
 uv lock --upgrade-package open3d --refresh-package open3d
 uv sync --extra rendering
 ```
 
 Re-run the Ubuntu integration tests and the supported-Python source-build matrix
 before merging the new pin. If a patch no longer applies, the adapter stops
-instead of silently producing a wheel with unreviewed behavior. This process is
-intended to follow Open3D `main` rapidly until the next stable release contains
-the required fixes.
+instead of silently producing a wheel with unreviewed behavior. Remove a patch
+only after the stable release contains its fix and the relevant native tests pass
+without it.
 
 ## Temporary patches and upstreaming
 

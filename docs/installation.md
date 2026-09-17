@@ -11,7 +11,7 @@
     - **NumPy**
 
 !!! warning "Python Version Compatibility"
-    - **Open3D Rendering**: Patched Open3D development source builds are tested
+    - **Open3D Rendering**: Patched Open3D 0.20 source builds are tested
       with Python 3.11–3.14 on Ubuntu x86-64. Python 3.12–3.14 are also tested
       on Apple Silicon.
     - **Python 3.14 on Windows**: There may currently exist an incompatibility of Python 3.14 on Windows with the package

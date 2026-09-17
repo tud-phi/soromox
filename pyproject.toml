@@ -402,11 +402,9 @@ skip-magic-trailing-comma = false
 # Auto-detect line ending
 line-ending = "auto"
 
-# Open3D development channel. macOS, Linux x86-64, Linux ARM64 and Windows
-# x86-64 build the checked-in main revision with the renderer fixes; other
-# platforms use upstream wheels.
-[tool.uv]
-find-links = ["https://github.com/isl-org/Open3D/releases/expanded_assets/main-devel"]
+# macOS, Linux x86-64, Linux ARM64 and Windows x86-64 build the checked-in
+# Open3D 0.20 release with the renderer fixes; other platforms use stable
+# upstream wheels.
 
 [tool.uv.sources]
 open3d = [

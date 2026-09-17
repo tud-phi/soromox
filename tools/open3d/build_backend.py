@@ -1,4 +1,4 @@
-"""Build the pinned Open3D main revision with SoRoMoX renderer fixes.
+"""Build the pinned Open3D 0.20 release with SoRoMoX renderer fixes.
 
 The metadata hook is intentionally platform-neutral: dependency resolution can
 inspect platform-specific source mappings while producing a universal lock
@@ -453,7 +453,7 @@ def prepare_metadata_for_build_wheel(metadata_directory, config_settings=None):
         "Metadata-Version: 2.4\n"
         "Name: open3d\n"
         f"Version: {version}\n"
-        "Summary: Open3D development build for SoRoMoX rendering\n"
+        "Summary: Patched Open3D 0.20 build for SoRoMoX rendering\n"
         "Requires-Python: >=3.10\n"
         f"{requirements}"
     )
