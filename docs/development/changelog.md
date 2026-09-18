@@ -13,36 +13,7 @@ and include benchmark baseline and measurement context for performance claims.
 
 ### Added
 
-- Added a UMArm operational-space example using
-  `OperationalSpaceImpedanceControlTracker` and balanced antagonistic pressure
-  inputs to track a base-parallel circle.
-- Added shared scene settings for lighting, materials, shadows, ground planes and
-  curved backdrops with adjustable bend height and curvature easing. Technical,
-  neutral/bright/dark studio, flat and clay presets include an Open3D/Viser
-  tentacle gallery with upright and `--mounting hanging` views, separate capture
-  paths and a centered frontal camera. Shared robot mounts include disk, beveled disk, truncated
-  cone and flared collar shapes, selected with
-  `config.geometry.base_plate_style`. Opt-in
-  `GroundPlaneConfig(height_reference="base_mounting_face")` places floors and
-  backdrops at the base plate mounting face.
-- Added reproducible patched Open3D 0.20.0 builds for macOS, Linux x86-64,
-  Linux ARM64 and Windows x86-64, including Metal image capture, neutral color
-  grading, selectable linear/ACES tone mapping, and Vulkan image/video exports
-  and modern interactive viewing. Ubuntu and Windows native-rendering tests cover
-  the source-build workflow.
-
 ### Changed
-
-- Regenerated the backend and preset galleries, including hanging views, and
-  Section V paper videos, snapshots and website media with neutral studio styling.
-  Hanging studio scenes retain the curved wall-to-ceiling backdrop.
-- Open3D static `show()` and image exports use the modern renderer. Animated
-  previews use the same camera projection, retain efficient legacy geometry
-  updates and warn about appearance differences. Viser applies or approximates
-  shared scene settings. Matplotlib and OpenCV ignore scene appearance and use
-  white backgrounds; Matplotlib also uses standard plotting axes.
-- Open3D simulation and control examples export trajectory videos by default,
-  avoiding modern-to-legacy graphics-context transitions on macOS.
 
 ### Performance
 
@@ -50,49 +21,131 @@ and include benchmark baseline and measurement context for performance claims.
 
 ### Breaking changes
 
-- Renderer constructors accept shared defaults through `config=RendererConfig(...)`;
-  appearance, geometry and output constructor arguments move into its sections.
-  Public settings live in `soromox.rendering.config` and are also exported from
-  `soromox.rendering`; direct camera, color and video configuration imports must
-  use the new modules. Per-call camera, color and video overrides replace sections.
-- Default output is 800 × 600 with 80 backbone and 48 cross-section samples.
-  The automatic camera distance factor is 1.5 instead of 10.0. Ground
-  planes use world alignment (+Z spatial, +Y planar); base alignment is optional.
-  OpenCV sequence options are keyword-only, with a required recording path.
-  Open3D and Viser use flared collar mounts by default; `base_plate_style="disk"`
-  selects a cylindrical mount.
-- Open3D sequences with `record_path` synchronously export through the modern
-  renderer and return without interactive playback. `record_every_n` reduces both
-  frame count and FPS; playback controls do not affect exported frames.
-
 ### Fixed
-
-- Patched Open3D 0.20 legacy triangle-mesh buffers to initialize fallback UVs,
-  preventing heap-dependent rendering artifacts on software Vulkan and other
-  Filament backends. Windows x86-64 now uses the patched Open3D 0.20 source
-  adapter alongside macOS and Linux x86-64. Linux ARM64 now uses the same
-  patched source adapter instead of an unpatched official wheel.
-- Viser removes buried caps at matching swept-link contours, avoiding dark rings
-  at continuous segment boundaries. Figure 11 and Figure 13 exports preserve
-  transparent canvas and plot backgrounds.
-
-- Preset lights now follow the ground normal, and the −z backdrop keeps its wall
-  behind the scene. Tilted normals no longer flip the backdrop and lights when
-  crossing the XY plane. Explicit world lights retain their coordinates. Gallery
-  mounting-height selection preserves each preset's ground color and visibility.
-
-- Modern Open3D swept surfaces share smooth normals at matching link ends,
-  removing artificial inter-segment seams while preserving cross-section steps.
-- Open3D static viewing checks Linux window creation in a separate process and
-  reports native display failures with their logs before initializing the viewer.
-- Matplotlib video exports respect configured pixel dimensions regardless of the
-  global figure DPI setting.
-- Matplotlib static ground surfaces no longer cover robot lines above the floor;
-  rounded line joins remove visible gaps between sampled backbone segments.
 
 ### Documentation
 
 ### Contributors
+
+## [0.5.0] - 2026-09-18
+
+This release introduces shared renderer configuration and studio scenes, upgrades
+Open3D support, and adds UMArm operational-space tracking. Renderer API and default
+changes are listed below; see the [full changes since v0.4.1](https://github.com/tud-phi/soromox/compare/v0.4.1...v0.5.0).
+
+### Added
+
+- Shared lighting, materials, shadows and curved backdrops, with technical,
+  neutral/bright/dark studio, flat and clay presets for Open3D and Viser.
+  Preset lights and backdrops follow the ground orientation for upright, hanging
+  and tilted scenes. Mount options now include beveled disks, truncated cones
+  and flared collars; `GroundPlaneConfig(height_reference="base_mounting_face")`
+  aligns scenery with the mounting face. See
+  [PR #210](https://github.com/tud-phi/soromox/pull/210) and
+  [PR #212](https://github.com/tud-phi/soromox/pull/212).
+- A UMArm operational-space circle-tracking example using
+  `OperationalSpaceImpedanceControlTracker` and balanced antagonistic pressures,
+  extending the joint-space tracking examples available in v0.4.1; see
+  [PR #211](https://github.com/tud-phi/soromox/pull/211).
+- A reproducible Figure 13 assembler for the safety-control and reinforcement
+  learning studies, exporting PDF, SVG and PNG with a source-hash manifest; see
+  the [paper reproduction instructions](https://github.com/tud-phi/soromox/blob/v0.5.0/paper_results/README.md).
+
+### Changed
+
+- Source checkouts using `uv` now build pinned, patched Open3D 0.20.0 on macOS,
+  Linux x86-64/ARM64 and Windows x86-64. The build supports Metal rendering on
+  macOS and Vulkan image/video exports on Linux and Windows, with neutral color
+  grading, selectable linear/ACES tone mapping and a fix for uninitialized mesh
+  texture coordinates. Plain `pip install soromox[rendering]` uses PyPI packages;
+  see the [installation guide](../installation.md),
+  [PR #213](https://github.com/tud-phi/soromox/pull/213) and
+  [PR #214](https://github.com/tud-phi/soromox/pull/214).
+- Open3D static `show()` now uses the modern renderer, matching image exports.
+  Interactive animation retains the legacy renderer with matching camera
+  projection and warnings about appearance differences. Simulation and control
+  examples export videos by default. Viser adapts the shared scene settings;
+  Matplotlib and OpenCV use white backgrounds and ignore scene appearance.
+- Refreshed Section V videos, snapshots and website media with studio styling.
+  Figures 11 and 13 improve trajectory visibility, reference-surface contrast,
+  legend labels and transparent backgrounds; see
+  [PR #212](https://github.com/tud-phi/soromox/pull/212).
+- Section Vf policy rollouts now default to 20 seconds instead of 7; the step
+  count derives from duration and control FPS unless `--n-steps` is supplied.
+
+### Breaking changes
+
+- Renderer constructor settings move into `config=RendererConfig(...)`, with
+  `scene`, `camera`, `colors`, `geometry` and `output` sections. For example,
+  replace `Open3DRenderer(robot, width=1920, height=1080)` with:
+
+  ```python
+  from soromox.rendering import Open3DRenderer, RendererConfig, RenderOutputConfig
+
+  renderer = Open3DRenderer(
+      robot,
+      config=RendererConfig(output=RenderOutputConfig(width=1920, height=1080)),
+  )
+  ```
+
+  Camera and color modules move from `rendering.camera_config` and
+  `rendering.color_config` to `rendering.config.camera` and
+  `rendering.config.colors`. Import public configuration types, including
+  `VideoEncodingConfig`, from `soromox.rendering` or `soromox.rendering.config`.
+  Per-call camera, color and video overrides replace entire configuration
+  sections; see the [configuration guide](../api/rendering/configuration.md).
+- Output defaults are now shared: 800 × 600 pixels, 80 backbone samples and
+  48 cross-section samples. Compared with v0.4.1, Open3D and Viser output shrinks
+  from 1920 × 1200, OpenCV output changes from 700 × 700, Matplotlib and OpenCV
+  backbone sampling increases from 50 to 80, and Open3D cross-section sampling
+  increases from 20 to 48. Set `config.output` and `config.geometry` explicitly
+  to retain previous dimensions and sampling.
+- The automatic camera distance factor changes from 10.0 to 1.5. Ground planes
+  default to world alignment (+Z spatial, +Y planar); select
+  `GroundPlaneConfig(alignment="base")` for base alignment. Open3D and Viser
+  default to flared collar mounts; use `config.geometry.base_plate_style="disk"`
+  for the previous cylindrical shape.
+- Open3D `render_sequence(..., record_path=...)` now exports synchronously through
+  the modern renderer and returns without interactive playback. `record_every_n`
+  reduces both frame count and FPS; playback controls do not affect exports.
+  OpenCV sequence options become keyword-only and require `record_path`.
+- Extras that include Open3D now require `open3d>=0.20`, up from `>=0.18`.
+  Checkout-based `uv` installs additionally need native build tools and graphics
+  dependencies for the patched source build; see the
+  [installation guide](../installation.md).
+- Renamed the joint-space example `track_mckibben_umarm.py` to
+  `track_umarm_with_feedforward_compensation.py` in
+  `examples/control/configuration_space/`.
+
+### Fixed
+
+- Removed artificial seams and dark rings at matching swept-link boundaries in
+  Open3D and Viser by smoothing normals and removing buried end caps, while
+  preserving actual cross-section steps.
+- Open3D static viewing probes Linux window creation in a separate process and
+  reports native display failures with logs before initializing the viewer.
+- Matplotlib video exports honor configured pixel dimensions independently of
+  global DPI. Static ground surfaces no longer hide robot lines above the floor,
+  and rounded joins remove gaps between backbone segments.
+
+### Documentation
+
+- Added a [preset gallery](../api/rendering/presets.md) with upright and hanging
+  Open3D/Viser comparisons, and expanded the
+  [configuration guide](../api/rendering/configuration.md) with shared settings
+  and backend differences.
+
+### Contributors
+
+- Thanks to [@Johannap1](https://github.com/Johannap1) for identifying unused
+  ground-plane code, native window-creation failures and Open3D segment seams in
+  [PR #210](https://github.com/tud-phi/soromox/pull/210).
+- Thanks to [@zuorunze](https://github.com/zuorunze) for reviewing the UMArm
+  pressure-coordinate formulation and validating the tracking example in
+  [PR #211](https://github.com/tud-phi/soromox/pull/211).
+- Thanks to [@vdperfetta01](https://github.com/vdperfetta01) for suggestions that
+  improved trajectory visibility, reference surfaces and figure legends in
+  [PR #212](https://github.com/tud-phi/soromox/pull/212).
 
 ## [0.4.1] - 2026-09-06
 
@@ -148,7 +201,7 @@ and include benchmark baseline and measurement context for performance claims.
   for GVS; relative to batch size 1, GVS throughput reaches 679.7× for one
   segment and 133.6× for 32 segments at batch size 1,024. The 32-segment case
   peaks at batch size 512 and is 1.2% lower at 1,024; see the [benchmark
-  protocol](../../paper_results/secIVb_parallel_rollouts_gpu/README.md) and
+  protocol](https://github.com/tud-phi/soromox/blob/v0.4.1/paper_results/secIVb_parallel_rollouts_gpu/README.md) and
   [PR #205](https://github.com/tud-phi/soromox/pull/205).
 
 ### Breaking changes
