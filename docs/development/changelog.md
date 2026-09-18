@@ -13,23 +13,46 @@ and include benchmark baseline and measurement context for performance claims.
 
 ### Added
 
+### Changed
+
+### Performance
+
+### Deprecated
+
+### Breaking changes
+
+### Fixed
+
+### Documentation
+
+### Contributors
+
+## [0.5.0] - 2026-09-18
+
+### Added
+
 - Added a UMArm operational-space example using
   `OperationalSpaceImpedanceControlTracker` and balanced antagonistic pressure
-  inputs to track a base-parallel circle.
+  inputs to track a base-parallel circle; see
+  [PR #211](https://github.com/tud-phi/soromox/pull/211).
 - Added shared scene settings for lighting, materials, shadows, ground planes and
   curved backdrops with adjustable bend height and curvature easing. Technical,
   neutral/bright/dark studio, flat and clay presets include an Open3D/Viser
   tentacle gallery with upright and `--mounting hanging` views, separate capture
-  paths and a centered frontal camera. Shared robot mounts include disk, beveled disk, truncated
-  cone and flared collar shapes, selected with
+  paths and a centered frontal camera. Shared robot mounts include disk, beveled
+  disk, truncated cone and flared collar shapes, selected with
   `config.geometry.base_plate_style`. Opt-in
   `GroundPlaneConfig(height_reference="base_mounting_face")` places floors and
-  backdrops at the base plate mounting face.
+  backdrops at the base plate mounting face; see
+  [PR #210](https://github.com/tud-phi/soromox/pull/210) and
+  [PR #212](https://github.com/tud-phi/soromox/pull/212).
 - Added reproducible patched Open3D 0.20.0 builds for macOS, Linux x86-64,
   Linux ARM64 and Windows x86-64, including Metal image capture, neutral color
   grading, selectable linear/ACES tone mapping, and Vulkan image/video exports
   and modern interactive viewing. Ubuntu and Windows native-rendering tests cover
-  the source-build workflow.
+  the source-build workflow; see
+  [PR #213](https://github.com/tud-phi/soromox/pull/213) and
+  [PR #214](https://github.com/tud-phi/soromox/pull/214).
 
 ### Changed
 
@@ -44,10 +67,6 @@ and include benchmark baseline and measurement context for performance claims.
 - Open3D simulation and control examples export trajectory videos by default,
   avoiding modern-to-legacy graphics-context transitions on macOS.
 
-### Performance
-
-### Deprecated
-
 ### Breaking changes
 
 - Renderer constructors accept shared defaults through `config=RendererConfig(...)`;
@@ -55,6 +74,9 @@ and include benchmark baseline and measurement context for performance claims.
   Public settings live in `soromox.rendering.config` and are also exported from
   `soromox.rendering`; direct camera, color and video configuration imports must
   use the new modules. Per-call camera, color and video overrides replace sections.
+  For example, replace `Open3DRenderer(robot, width=1920, height=1080)` with
+  `Open3DRenderer(robot, config=RendererConfig(output=RenderOutputConfig(width=1920, height=1080)))`;
+  see the [shared configuration guide](../api/rendering/configuration.md).
 - Default output is 800 × 600 with 80 backbone and 48 cross-section samples.
   The automatic camera distance factor is 1.5 instead of 10.0. Ground
   planes use world alignment (+Z spatial, +Y planar); base alignment is optional.
@@ -75,12 +97,10 @@ and include benchmark baseline and measurement context for performance claims.
 - Viser removes buried caps at matching swept-link contours, avoiding dark rings
   at continuous segment boundaries. Figure 11 and Figure 13 exports preserve
   transparent canvas and plot backgrounds.
-
 - Preset lights now follow the ground normal, and the −z backdrop keeps its wall
   behind the scene. Tilted normals no longer flip the backdrop and lights when
   crossing the XY plane. Explicit world lights retain their coordinates. Gallery
   mounting-height selection preserves each preset's ground color and visibility.
-
 - Modern Open3D swept surfaces share smooth normals at matching link ends,
   removing artificial inter-segment seams while preserving cross-section steps.
 - Open3D static viewing checks Linux window creation in a separate process and
@@ -92,7 +112,22 @@ and include benchmark baseline and measurement context for performance claims.
 
 ### Documentation
 
+- Documented shared renderer configuration, backend differences, studio presets,
+  and upright and hanging galleries in the
+  [rendering guide](../api/rendering/configuration.md) and
+  [preset gallery](../api/rendering/presets.md).
+
 ### Contributors
+
+- Thanks to [@Johannap1](https://github.com/Johannap1) for identifying unused
+  ground-plane code, native window-creation failures and Open3D segment seams in
+  [PR #210](https://github.com/tud-phi/soromox/pull/210).
+- Thanks to [@zuorunze](https://github.com/zuorunze) for reviewing the UMArm
+  pressure-coordinate formulation and validating the tracking example in
+  [PR #211](https://github.com/tud-phi/soromox/pull/211).
+- Thanks to [@vdperfetta01](https://github.com/vdperfetta01) for suggestions that
+  improved trajectory visibility, reference surfaces and figure legends in
+  [PR #212](https://github.com/tud-phi/soromox/pull/212).
 
 ## [0.4.1] - 2026-09-06
 
@@ -148,7 +183,7 @@ and include benchmark baseline and measurement context for performance claims.
   for GVS; relative to batch size 1, GVS throughput reaches 679.7× for one
   segment and 133.6× for 32 segments at batch size 1,024. The 32-segment case
   peaks at batch size 512 and is 1.2% lower at 1,024; see the [benchmark
-  protocol](../../paper_results/secIVb_parallel_rollouts_gpu/README.md) and
+  protocol](https://github.com/tud-phi/soromox/blob/v0.4.1/paper_results/secIVb_parallel_rollouts_gpu/README.md) and
   [PR #205](https://github.com/tud-phi/soromox/pull/205).
 
 ### Breaking changes
