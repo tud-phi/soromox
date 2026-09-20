@@ -13,7 +13,13 @@ and include benchmark baseline and measurement context for performance claims.
 
 ### Added
 
+- Python 3.15 support, with numerical tests and patched Open3D source-build
+  and rendering checks in Ubuntu CI.
+
 ### Changed
+
+- Refreshed the numerical and rendering dependency lock for Python 3.15,
+  including compatible Viser and `rpds-py` releases.
 
 ### Performance
 
@@ -22,6 +28,9 @@ and include benchmark baseline and measurement context for performance claims.
 ### Breaking changes
 
 ### Fixed
+
+- Recognized the current patched Open3D 0.20 `.soromox3` build in the macOS
+  rendering guard, allowing image/video export and modern windows.
 
 ### Documentation
 

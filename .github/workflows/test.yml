@@ -14,7 +14,7 @@ on:
 
 jobs:
   rendering-ubuntu:
-    name: Native rendering (Ubuntu ${{ matrix.architecture }}, Python 3.12)
+    name: Native rendering (Ubuntu ${{ matrix.architecture }}, Python ${{ matrix.python }})
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     strategy:
       fail-fast: false
@@ -22,8 +22,13 @@ jobs:
         include:
           - architecture: x86-64
             runner: ubuntu-latest
+            python: '3.12'
           - architecture: ARM64
             runner: ubuntu-24.04-arm
+            python: '3.12'
+          - architecture: x86-64
+            runner: ubuntu-latest
+            python: '3.15'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
     env:
@@ -35,10 +40,11 @@ jobs:
         with:
           lfs: true
 
-      - name: Set up Python 3.12
+      - name: Set up Python ${{ matrix.python }}
         uses: actions/setup-python@v6
         with:
-          python-version: '3.12'
+          python-version: ${{ matrix.python }}
+          allow-prereleases: ${{ matrix.python == '3.15' }}
           cache: pip
 
       - name: Install Open3D build, graphics, display, and video dependencies
@@ -62,7 +68,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ${{ env.SOROMOX_OPEN3D_CACHE }}
-          key: rendering-ubuntu-${{ matrix.architecture }}-open3d-py312-${{ hashFiles('tools/open3d/**') }}
+          key: rendering-ubuntu-${{ matrix.architecture }}-open3d-py${{ matrix.python }}-${{ hashFiles('tools/open3d/**') }}
 
       - name: Build Open3D and install rendering tests
         run: |
@@ -134,7 +140,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ['3.11', '3.12', '3.13', '3.14']
+        python: ['3.11', '3.12', '3.13', '3.14', '3.15']
         # platform: [ubuntu-latest, macos-latest, windows-latest]
         platform: [ubuntu-latest]
     runs-on: ${{ matrix.platform }}
@@ -148,6 +154,7 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python }}
+          allow-prereleases: ${{ matrix.python == '3.15' }}
           cache: pip
 
       - name: Install video decoding dependency for paper figure tests

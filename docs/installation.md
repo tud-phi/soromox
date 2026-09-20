@@ -5,15 +5,23 @@
 ## 🔧 Requirements
 
 !!! note "System Requirements"
-    - **Python** >= 3.11
+    - **Python** 3.11–3.15
     - **JAX** >= 0.10.0
     - **Diffrax** >= 0.7.2
     - **NumPy**
 
 !!! warning "Python Version Compatibility"
+    - **Python 3.15**: Use current numerical dependencies or the updated
+      repository lockfile. Until Python 3.15 final is released, CI uses the
+      available release candidate. Some rendering and test dependencies build
+      from source and require C/C++ and, for some packages, Rust build tools.
+    - **PyTorch extras on Python 3.15**: PyTorch currently has no 3.15 wheels.
+      The `cuda13`, `rl`, `paper_results`, and `all` extras include PyTorch
+      directly or through Stable-Baselines3. Core simulation and the `warp`
+      extra can be installed independently.
     - **Open3D Rendering**: Patched Open3D 0.20 source builds are tested
-      with Python 3.11–3.14 on Ubuntu x86-64. Python 3.12–3.14 are also tested
-      on Apple Silicon.
+      with Python 3.11–3.14 on Ubuntu x86-64. Python 3.12–3.14 and 3.15.0rc2
+      are tested on Apple Silicon; Ubuntu CI also covers Python 3.15.
     - **Python 3.14 on Windows**: There may currently exist an incompatibility of Python 3.14 on Windows with the package
 
 ---
@@ -99,9 +107,18 @@ pip install soromox[rendering]
     and other platforms. On Ubuntu 26.04 x86-64, Python 3.11–3.14 pass real
     Vulkan image and MP4 export plus modern and animated viewers under Xvfb.
     Apple Silicon image, video, and modern-window checks pass with Python
-    3.12–3.14. Native Windows builds are validated in CI. Plain
+    3.12–3.14 and 3.15.0rc2. Native Windows builds are validated in CI. Plain
     `pip install soromox[rendering]` uses PyPI; use the source-checkout
     instructions for the patched Open3D build.
+
+    Python 3.15 requires the patched source build while upstream Open3D wheels
+    are unavailable. In a source checkout, use `uv sync --extra rendering`, or
+    install the local build before the rendering extra with pip:
+
+    ```bash
+    python -m pip install ./tools/open3d
+    python -m pip install -e ".[rendering]"
+    ```
 
 ### 📚 Examples Dependencies
 
