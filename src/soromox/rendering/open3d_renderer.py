@@ -1788,7 +1788,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                 The local build suffix identifies the validated patched build.
         """
         if sys.platform == "darwin" and not o3d.__version__.endswith(
-            (".soromox1", ".soromox2")
+            (".soromox1", ".soromox2", ".soromox3")
         ):
             raise RuntimeError(
                 "Modern Open3D rendering on macOS requires the source build "

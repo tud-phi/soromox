@@ -38,6 +38,23 @@ from soromox.rendering.open3d_renderer import (  # noqa: E402
 from soromox.systems.components import CrossSectionGeometry  # noqa: E402
 
 
+def test_modern_capture_accepts_patched_open3d_020_on_macos(monkeypatch):
+    monkeypatch.setattr(open3d_renderer_module.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        open3d_renderer_module.o3d, "__version__", "0.20.0+b6c5e19.soromox3"
+    )
+
+    Open3DRenderer._require_modern_capture_support()
+
+
+def test_modern_capture_rejects_unpatched_open3d_on_macos(monkeypatch):
+    monkeypatch.setattr(open3d_renderer_module.sys, "platform", "darwin")
+    monkeypatch.setattr(open3d_renderer_module.o3d, "__version__", "0.19.0")
+
+    with pytest.raises(RuntimeError, match="requires the source build"):
+        Open3DRenderer._require_modern_capture_support()
+
+
 class _AnimatingSpatialRobot:
     is_planar = False
     floating_base = False
