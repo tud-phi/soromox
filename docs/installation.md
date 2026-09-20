@@ -5,7 +5,7 @@
 ## 🔧 Requirements
 
 !!! note "System Requirements"
-    - **Python** 3.11–3.15
+    - **Python** >= 3.11
     - **JAX** >= 0.10.0
     - **Diffrax** >= 0.7.2
     - **NumPy**
@@ -75,10 +75,10 @@ SoRoMoX provides several optional dependency groups for different use cases:
 
 ### 🎨 Rendering Dependencies
 
-For 3D visualization and animation:
+For 3D visualization and animation, install from a source checkout:
 
 ```bash
-pip install soromox[rendering]
+uv sync --extra rendering
 ```
 
 **Includes:**
@@ -108,12 +108,12 @@ pip install soromox[rendering]
     Vulkan image and MP4 export plus modern and animated viewers under Xvfb.
     Apple Silicon image, video, and modern-window checks pass with Python
     3.12–3.14 and 3.15.0rc2. Native Windows builds are validated in CI. Plain
-    `pip install soromox[rendering]` uses PyPI; use the source-checkout
-    instructions for the patched Open3D build.
+    `pip install soromox[rendering]` uses PyPI and does not include the required
+    Open3D patches.
 
-    Python 3.15 requires the patched source build while upstream Open3D wheels
-    are unavailable. In a source checkout, use `uv sync --extra rendering`, or
-    install the local build before the rendering extra with pip:
+    The patched Open3D source build is required for all supported Python
+    versions. In a source checkout, use `uv sync --extra rendering`, or install
+    the local build before the rendering extra with pip:
 
     ```bash
     python -m pip install ./tools/open3d
