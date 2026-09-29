@@ -9,11 +9,14 @@ Soromox ships development benchmarking CLIs under `tools/benchmarks`:
 - `benchmark_derivative_paths.py` compares direct analytical derivative hooks,
   protected autograd fallbacks, and public APIs with custom JVPs enabled or disabled
   for PlanarPCS, PCS, and GVS systems.
-The publication's batched simulation benchmark lives with the Section IVb paper
-artifacts under `paper_results/secIVb_parallel_rollouts_gpu/`.
 
-All benchmark generators share the same system registry and integration defaults, so adding a new
-robot once makes it accessible throughout the benchmarking suite.
+The benchmarks reported in the paper are available in `paper_results/` for
+reproducibility:
+
+- [Sequential CPU rollouts (Section IVa)](https://github.com/tud-phi/soromox/tree/main/paper_results/secIVa_benchmarking_sequential_cpu)
+  compare SoRoMoX, SoRoSim, and PyElastica trajectories.
+- [Batched GPU rollouts (Section IVb)](https://github.com/tud-phi/soromox/tree/main/paper_results/secIVb_parallel_rollouts_gpu)
+  measure simulation throughput across batch sizes and model sizes.
 
 ## Prerequisites
 

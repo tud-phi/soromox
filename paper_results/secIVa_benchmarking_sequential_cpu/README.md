@@ -4,6 +4,12 @@ This case compares end-effector rollouts produced by SoRoMoX, PyElastica, and
 SoRoSim. Generator code, the committed paper data, and the canonical plots are
 kept in `code/`, `data/`, and `outputs/`, respectively.
 
+The paper reports three-second rollouts on an Intel Core Ultra 7 165H CPU with
+16 GB RAM. SoRoSim uses adaptive `ode45`; SoRoMoX uses `Tsit5` and PyElastica
+uses `PositionVerlet`, both with a fixed 0.1 ms step. See
+[Paper & Results](https://tud-phi.github.io/soromox/research/#sequential-cpu-rollouts)
+for the reported runtimes and trajectory agreement.
+
 Install the paper dependencies from the repository root:
 
 ```bash
@@ -14,7 +20,7 @@ Generate the SoRoMoX data:
 
 ```bash
 for script in paper_results/secIVa_benchmarking_sequential_cpu/code/soromox/*.py; do
-  uv run python "$script"
+  JAX_PLATFORMS=cpu uv run python "$script"
 done
 ```
 
