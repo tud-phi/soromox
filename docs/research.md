@@ -121,10 +121,13 @@ and 2.29° orientation RMSE.
   <figcaption>Paper results for configuration-space regulation/tracking and operational-space pose tracking.</figcaption>
 </figure>
 
-<video class="soromox-video" controls muted loop playsinline preload="metadata" poster="assets/paper/model-based-control-poster.jpg" aria-label="Operational-space model-based control demonstration">
+<!-- Poster paths are relative to the generated /research/ page; Zensical does not rewrite this attribute. -->
+<video class="soromox-video" controls muted loop playsinline preload="metadata" poster="../assets/paper/model-based-control-poster.jpg" aria-label="Operational-space model-based control demonstration">
   <source src="assets/paper/model-based-control.mp4" type="video/mp4">
-  Your browser cannot play this video. View the <a href="assets/paper/model-based-control.gif">animated GIF</a> instead.
+  Your browser does not support embedded video.
 </video>
+
+[Watch the MP4](assets/paper/model-based-control.mp4) · [View the animated GIF](assets/paper/model-based-control.gif)
 
 ### 4. Control-gain optimization
 
@@ -149,10 +152,12 @@ accepting a larger final goal distance.
 The video shows the HOCBF-constrained controller approaching the green goal
 among the purple obstacles.
 
-<video class="soromox-video" controls muted loop playsinline preload="metadata" poster="assets/paper/safety-constrained-control-poster.jpg" aria-label="HOCBF-constrained soft robot approaching a goal among obstacles">
+<video class="soromox-video" controls muted loop playsinline preload="metadata" poster="../assets/paper/safety-constrained-control-poster.jpg" aria-label="HOCBF-constrained soft robot approaching a goal among obstacles">
   <source src="assets/paper/safety-constrained-control.mp4" type="video/mp4">
-  Your browser cannot play this video. View the <a href="assets/paper/safety-constrained-control.gif">animated GIF</a> instead.
+  Your browser does not support embedded video.
 </video>
+
+[Watch the MP4](assets/paper/safety-constrained-control.mp4) · [View the animated GIF](assets/paper/safety-constrained-control.gif)
 
 ### 6. Parallel reinforcement learning
 
@@ -165,10 +170,12 @@ parallelization.
 
 The video shows the trained policy tracking the green target in one environment.
 
-<video class="soromox-video" controls muted loop playsinline preload="metadata" poster="assets/paper/parallel-rl-poster.jpg" aria-label="Trained reinforcement-learning policy tracking a target in one soft-robot environment">
+<video class="soromox-video" controls muted loop playsinline preload="metadata" poster="../assets/paper/parallel-rl-poster.jpg" aria-label="Trained reinforcement-learning policy tracking a target in one soft-robot environment">
   <source src="assets/paper/parallel-rl.mp4" type="video/mp4">
-  Your browser cannot play this video. View the <a href="assets/paper/parallel-rl.gif">animated GIF</a> instead.
+  Your browser does not support embedded video.
 </video>
+
+[Watch the MP4](assets/paper/parallel-rl.mp4) · [View the animated GIF](assets/paper/parallel-rl.gif)
 
 SoRoMoX can roll out many soft-robot environments in parallel, accelerating the
 experience collection that dominates reinforcement-learning training. The
@@ -176,10 +183,12 @@ experience collection that dominates reinforcement-learning training. The
 64 independently simulated environments, with each robot rendered as a swept
 surface.
 
-<video class="soromox-video" controls muted loop playsinline preload="metadata" poster="assets/paper/parallel-rl-trained-64-envs-poster.jpg" aria-label="Trained reinforcement-learning policy in 64 parallel soft-robot environments">
+<video class="soromox-video" controls muted loop playsinline preload="metadata" poster="../assets/paper/parallel-rl-trained-64-envs-poster.jpg" aria-label="Trained reinforcement-learning policy in 64 parallel soft-robot environments">
   <source src="assets/paper/parallel-rl-trained-64-envs.mp4" type="video/mp4">
-  Your browser cannot play this video. View the <a href="assets/paper/parallel-rl-trained-64-envs.gif">animated GIF</a> instead.
+  Your browser does not support embedded video.
 </video>
+
+[Watch the MP4](assets/paper/parallel-rl-trained-64-envs.mp4) · [View the animated GIF](assets/paper/parallel-rl-trained-64-envs.gif)
 
 ## Reproducing the results
 

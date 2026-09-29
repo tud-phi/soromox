@@ -182,7 +182,7 @@ reinforcement learning.
 ### Parallel reinforcement learning
 
 <p align="center">
-  <img src="docs/assets/paper/parallel-rl.gif" alt="Comparison of initialized and trained reinforcement-learning policies for a tendon-driven PCS robot" width="760"/>
+  <img src="docs/assets/paper/parallel-rl-trained-64-envs.gif" alt="Trained reinforcement-learning policy in an 8-by-8 grid of 64 parallel tendon-driven PCS robot environments" width="760"/>
 </p>
 
 See all six studies on the

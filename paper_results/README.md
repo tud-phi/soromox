@@ -20,6 +20,11 @@ publication figures/videos under `outputs/`.
 outputs. Trained model checkpoints are stored with Git LFS; section data and
 paper figures remain regular Git objects unless their size requires otherwise.
 
+The [rendering overview](rendering/README.md) compares the four core backends
+and all six visual presets. Its captures, generator, and LaTeX inclusion snippet
+live under `rendering/`; the composed PDF, SVG, and PNG are saved as
+`final_outputs/renderers_and_presets.*`.
+
 The model-based-control application composite is regenerated directly from the
 canonical Section Vc data and operational snapshots. Control-gain optimization
 remains a separate Section Vd figure:
