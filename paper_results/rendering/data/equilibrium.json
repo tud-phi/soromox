@@ -1,0 +1,36 @@
+{
+  "tension_N": [
+    6.153846153846153,
+    0.0
+  ],
+  "q": [
+    -4.913379433142427e-16,
+    0.06856739272378728,
+    -2.1087979353774045,
+    -0.11876220794012854,
+    3.652545166970019,
+    -0.007979355713097332,
+    -0.09914276739795808,
+    0.05637330859943091,
+    -0.0976414346849738
+  ],
+  "residual_l2": 4.578258855663686e-16,
+  "min_squared_natural_frequency": 58.05001741041979,
+  "max_linearized_eigenvalue_real": -1.8894926941666537,
+  "max_out_of_plane_m": 1.3278187077951696e-16,
+  "model": "Section Va fitted two-segment GVS soft tentacle",
+  "mounting": "hanging; yaw -60 degrees about gravity",
+  "equation": "elastic_force(q) + gravitational_force(q) - actuation_matrix(q) @ tension = 0",
+  "tendon_termination": "both tendons end at segment 1; segment 2 is passive",
+  "parameter_files_sha256": {
+    "E_hat.npy": "a06b0b9ff9cf9b2dd210b7d66523a38bf801c0b8f396f1550673b835f2d5545b",
+    "nu_hat.npy": "9be656d9933fe055cd59b7d5b00ec3d8c2568b5a6bb69066c2f0e0ac0b0b553e",
+    "rho_hat.npy": "c8512e9db4aea0b05e2f33f93e08f0eaebb8d00d71bbf4313d88321b82c99df9"
+  },
+  "solver": "SciPy hybr with JAX Jacobian; 21 continuation steps from zero tension",
+  "material": {
+    "E": 315093.77022832143,
+    "nu": 0.45000000000000445,
+    "rho": 1317.6607097101673
+  }
+}

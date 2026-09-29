@@ -27,6 +27,9 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Fetch documentation media from Git LFS
+        run: git lfs pull --include="docs/assets/**" --exclude=""
+
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
