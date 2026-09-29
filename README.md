@@ -137,15 +137,15 @@ maps complete scripts to the supported models and workflows.
 
 ## Performance
 
-For the paper's sequential CPU rollouts, SoRoMoX is up to 18.1× faster than
-SoRoSim in matched PCS and GVS cases:
+SoRoMoX runs sequential CPU simulations up to **27.0× faster than SoRoSim**
+in the paper's matched PCS and GVS benchmarks:
 
 | Formulation | Case | SoRoSim (s) | SoRoMoX (s) | Speedup |
 | --- | --- | ---: | ---: | ---: |
-| FEM/PCS | Planar | 75.73 | 4.18 | 18.1× |
-| FEM/PCS | Spatial | 78.65 | 13.26 | 5.9× |
-| FEM/GVS | Spatial | 55.54 | 36.33 | 1.5× |
-| FEM/GVS | Tendons | 75.80 | 36.47 | 2.1× |
+| PCS | Planar | 75.73 | 2.81 | 27.0× |
+| PCS | Spatial | 78.65 | 6.53 | 12.0× |
+| GVS | Spatial | 55.54 | 10.63 | 5.2× |
+| GVS | Tendon-driven | 75.80 | 11.72 | 6.5× |
 
 <p align="center">
   <img src="docs/assets/paper/gpu-batch-scaling.png" alt="GPU batch simulation throughput scaling through 1,024 environments for articulated, PCS, and GVS models" width="760"/>

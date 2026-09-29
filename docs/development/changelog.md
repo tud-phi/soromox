@@ -34,6 +34,11 @@ and include benchmark baseline and measurement context for performance claims.
 
 ### Documentation
 
+- Updated the [sequential CPU rollout results](../research.md#sequential-cpu-rollouts)
+  to match the latest paper version, reporting up to 27.0× speedup over SoRoSim for
+  three-second rollouts on an Intel Core Ultra 7 165H CPU, with solver context
+  and tip-position agreement.
+
 ### Contributors
 
 ## [0.5.0] - 2026-09-18

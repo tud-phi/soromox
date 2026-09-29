@@ -33,15 +33,37 @@ built around this model layer.
 
 ### Sequential CPU rollouts
 
-The paper reports wall-clock time for three seconds of simulated motion. The
-table below retains the matched PCS and GVS comparison with SoRoSim:
+The paper reports wall-clock time for three seconds of simulated motion on an
+Intel Core Ultra 7 165H CPU with 16 GB RAM. SoRoMoX is up to 27.0× faster than
+SoRoSim across the four cases:
 
-| Formulation | Case | SoRoSim (s) | SoRoMoX (s) | Speedup |
-| --- | --- | ---: | ---: | ---: |
-| FEM/PCS | Planar | 75.73 | 4.18 | 18.1× |
-| FEM/PCS | Spatial | 78.65 | 13.26 | 5.9× |
-| FEM/GVS | Spatial | 55.54 | 36.33 | 1.5× |
-| FEM/GVS | Tendons | 75.80 | 36.47 | 2.1× |
+| Case | PyElastica (s) | SoRoSim (s) | SoRoMoX (s) | Speedup over SoRoSim |
+| --- | ---: | ---: | ---: | ---: |
+| Planar PCS | 2.25 | 75.73 | 2.81 | 27.0× |
+| Spatial PCS | 2.45 | 78.65 | 6.53 | 12.0× |
+| Spatial GVS | — | 55.54 | 10.63 | 5.2× |
+| Tendon-driven GVS | 11.40 | 75.80 | 11.72 | 6.5× |
+
+The case labels describe the strain-based models in SoRoMoX and SoRoSim, which
+use two piecewise elements. PyElastica uses a discrete Cosserat-rod model with
+10–100 elements. SoRoSim uses MATLAB's adaptive `ode45` solver; SoRoMoX uses
+`Tsit5` with a fixed 0.1 ms step. PyElastica uses the second-order symplectic
+`PositionVerlet` solver with the same fixed step size.
+
+The paper also compares SoRoSim and SoRoMoX tip positions at identical saved
+timestamps, without temporal or phase alignment:
+
+| Case | Tip-position RMSE (mm) | RMSE / beam length (%) |
+| --- | ---: | ---: |
+| Planar PCS | 2.75 | 0.46 |
+| Spatial PCS | 7.21 | 1.20 |
+| Spatial GVS | 0.86 | 0.14 |
+| Tendon-driven GVS | 5.82 | 0.97 |
+
+These RMSE values correspond to 0.14–1.20% of the 0.6 m beam length. The largest
+instantaneous tip-position difference is 14.14 mm for spatial PCS.
+See the [CPU benchmark reproduction instructions](https://github.com/tud-phi/soromox/tree/main/paper_results/secIVa_benchmarking_sequential_cpu)
+for the simulation scripts, saved trajectories, and plotting command.
 
 ### Batched GPU rollouts
 
