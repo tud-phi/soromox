@@ -22,7 +22,6 @@ from elastica import (
     RodSelfContact,
 )
 from elastica._calculus import _isnan_check
-from elastica.timestepper import extend_stepper_interface
 from muscles import ApplyMuscleGroups, MuscleGroup
 from tendon import Tendon1, Tendon2
 
@@ -262,9 +261,6 @@ class BaseArmEnvElastica:
 
     def reset_finalize(self):
         self.arm_sim.finalize()
-        self.arm_do_step, self.arm_stages_and_updates = extend_stepper_interface(
-            self.arm_stepper, self.arm_sim
-        )
         self.time_tracker = np.float64(0.0)
         return self.get_state()
 
@@ -303,9 +299,7 @@ class BaseArmEnvElastica:
             for tendon_group, force in zip(self.tendon_groups, action):
                 tendon_group.apply_activation(force)
 
-            self.time_tracker = self.arm_do_step(
-                self.arm_stepper,
-                self.arm_stages_and_updates,
+            self.time_tracker = self.arm_stepper.step(
                 self.arm_sim,
                 self.time_tracker,
                 self.dt,
@@ -327,52 +321,57 @@ class BaseArmEnvElastica:
         return obs, time
 
 
-arm = BaseArmEnvElastica(sim_duration=3)
-arm.reset()
+def main():
+    arm = BaseArmEnvElastica(sim_duration=3)
+    arm.reset()
 
-input = np.array([1, 1])
+    input = np.array([1, 1])
 
-start = time.perf_counter()
+    start = time.perf_counter()
 
-obs, time_sim = arm.simulate(input)
+    obs, time_sim = arm.simulate(input)
 
-elapsed = time.perf_counter() - start
-print(f"Elapsed time: {elapsed:.6f} seconds")
+    elapsed = time.perf_counter() - start
+    print(f"Elapsed time: {elapsed:.6f} seconds")
 
-print(obs.shape)
-print(time_sim.shape)
+    print(obs.shape)
+    print(time_sim.shape)
 
-import matplotlib.pyplot as plt
+    import matplotlib.pyplot as plt
 
-plt.figure(figsize=(8, 6))
+    plt.figure(figsize=(8, 6))
 
-plt.subplot(3, 1, 1)
-plt.plot(time_sim, obs[:, 0])
-plt.ylabel("x [m]")
-plt.grid(True)
+    plt.subplot(3, 1, 1)
+    plt.plot(time_sim, obs[:, 0])
+    plt.ylabel("x [m]")
+    plt.grid(True)
 
-plt.subplot(3, 1, 2)
-plt.plot(time_sim, obs[:, 1])
-plt.ylabel("y [m]")
-plt.grid(True)
+    plt.subplot(3, 1, 2)
+    plt.plot(time_sim, obs[:, 1])
+    plt.ylabel("y [m]")
+    plt.grid(True)
 
-plt.subplot(3, 1, 3)
-plt.plot(time_sim, obs[:, 2])
-plt.ylabel("z [m]")
-plt.xlabel("time [s]")
-plt.grid(True)
+    plt.subplot(3, 1, 3)
+    plt.plot(time_sim, obs[:, 2])
+    plt.ylabel("z [m]")
+    plt.xlabel("time [s]")
+    plt.grid(True)
 
-plt.tight_layout()
-plt.show()
+    plt.tight_layout()
+    plt.show()
 
-x = obs[:, 0]
-y = obs[:, 1]
-z = obs[:, 2]
+    x = obs[:, 0]
+    y = obs[:, 1]
+    z = obs[:, 2]
 
-df = pd.DataFrame({"time": time_sim, "x": x, "y": y, "z": z})
+    df = pd.DataFrame({"time": time_sim, "x": x, "y": y, "z": z})
 
-# Save to Excel
+    # Save to Excel
 
-DATA_DIR.mkdir(parents=True, exist_ok=True)
-file_path = DATA_DIR / "end_effector_position_tendon_driven_pyelastica.xlsx"
-df.to_excel(file_path, index=False)
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    file_path = DATA_DIR / "end_effector_position_tendon_driven_pyelastica.xlsx"
+    df.to_excel(file_path, index=False)
+
+
+if __name__ == "__main__":
+    main()

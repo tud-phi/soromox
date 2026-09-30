@@ -1,3 +1,6 @@
+# Shared implementation with COOMM (https://github.com/hanson-hschang/COOMM).
+# Copyright (c) 2022 Heng-Sheng Chang; see LICENSE-COOMM.txt.
+
 import numpy as np
 from numba import njit
 

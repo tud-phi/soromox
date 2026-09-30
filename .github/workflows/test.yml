@@ -13,6 +13,34 @@ on:
       - main
 
 jobs:
+  pyelastica-benchmarks:
+    name: PyElastica benchmarks (${{ matrix.pyelastica }}, Python 3.12)
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        pyelastica: ['0.3.3.post2', '1.0.0']
+    env:
+      MPLBACKEND: Agg
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install project with selected PyElastica version
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[test]" "pyelastica==${{ matrix.pyelastica }}"
+
+      - name: Test benchmark imports, construction, and short rollouts
+        run: python -m pytest -q tests/paper_results/secIVa/test_simulate_pyelastica.py
+
   rendering-ubuntu:
     name: Native rendering (Ubuntu ${{ matrix.architecture }}, Python ${{ matrix.python }})
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
