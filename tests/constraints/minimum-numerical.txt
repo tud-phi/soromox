@@ -1,0 +1,4 @@
+# Minimum numerical versions exercised by CI.
+# Keep these aligned with the lower bounds in pyproject.toml.
+jax==0.10.0
+diffrax==0.7.2
