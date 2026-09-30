@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 BACKEND_PATH = (
-    Path(__file__).resolve().parents[2] / "tools" / "open3d" / "build_backend.py"
+    Path(__file__).resolve().parents[2] / "third_party" / "open3d" / "build_backend.py"
 )
 SPEC = importlib.util.spec_from_file_location(
     "soromox_open3d_build_backend", BACKEND_PATH

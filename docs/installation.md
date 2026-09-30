@@ -102,7 +102,7 @@ uv sync --extra rendering
     documented compiler, Vulkan, Xvfb, and FFmpeg packages. macOS needs Xcode
     with its Metal Toolchain and Homebrew `cmake`, `ninja`, `openblas`,
     `glslang`, and `spirv-cross`. See the
-    [build instructions](https://github.com/tud-phi/soromox/tree/main/tools/open3d)
+    [build instructions](https://github.com/tud-phi/soromox/tree/main/third_party/open3d)
     for prerequisites, environment variables, cache controls, validation commands,
     and other platforms. On Ubuntu 26.04 x86-64, Python 3.11–3.14 pass real
     Vulkan image and MP4 export plus modern and animated viewers under Xvfb.
@@ -116,7 +116,7 @@ uv sync --extra rendering
     the local build before the rendering extra with pip:
 
     ```bash
-    python -m pip install ./tools/open3d
+    python -m pip install ./third_party/open3d
     python -m pip install -e ".[rendering]"
     ```
 

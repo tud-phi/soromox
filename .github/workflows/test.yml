@@ -68,12 +68,12 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ${{ env.SOROMOX_OPEN3D_CACHE }}
-          key: rendering-ubuntu-${{ matrix.architecture }}-open3d-py${{ matrix.python }}-${{ hashFiles('tools/open3d/**') }}
+          key: rendering-ubuntu-${{ matrix.architecture }}-open3d-py${{ matrix.python }}-${{ hashFiles('third_party/open3d/**') }}
 
       - name: Build Open3D and install rendering tests
         run: |
           python -m pip install --upgrade pip
-          python -m pip install ./tools/open3d
+          python -m pip install ./third_party/open3d
           python -m pip install -e ".[rendering,test]"
 
       - name: Test Open3D configuration adaptation
@@ -122,12 +122,12 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ${{ env.SOROMOX_OPEN3D_CACHE }}
-          key: rendering-windows-open3d-py312-${{ hashFiles('tools/open3d/**') }}
+          key: rendering-windows-open3d-py312-${{ hashFiles('third_party/open3d/**') }}
 
       - name: Build patched Open3D 0.20 and install rendering tests
         run: |
           python -m pip install --upgrade pip
-          python -m pip install ./tools/open3d
+          python -m pip install ./third_party/open3d
           python -m pip install -e ".[rendering,test]"
 
       - name: Verify patched Open3D package
@@ -168,7 +168,19 @@ jobs:
           python -m pip install -e ".[test]"
 
       - name: Run non-system tests
-        run: python -m pytest --ignore=tests/systems -m "not memory_intensive"
+        run: python -m pytest --ignore=tests/systems --ignore=tests/paper_results -m "not memory_intensive"
+
+      # The full paper_results extra requires PyTorch, which has no Python 3.15 wheels.
+      - name: Install paper-results dependencies
+        if: matrix.python != '3.15'
+        run: |
+          python -m pip install -e ".[paper_results]"
+
+      - name: Run paper-results tests
+        if: matrix.python != '3.15'
+        env:
+          MPLBACKEND: Agg
+        run: python -m pytest tests/paper_results -m "not memory_intensive"
 
       - name: Run remaining system tests
         run: |
@@ -213,6 +225,8 @@ jobs:
     name: test (minimum numerical dependencies, Python 3.11)
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
+    env:
+      PIP_CONSTRAINT: ${{ github.workspace }}/tests/constraints/minimum-numerical.txt
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -233,15 +247,34 @@ jobs:
       - name: Install project with minimum numerical dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e ".[test]" "jax==0.10.0" "diffrax==0.7.2"
+          python -m pip install -e ".[test]"
 
       - name: Verify minimum dependency versions
         run: |
-          python -c "import diffrax; assert diffrax.__version__ == '0.7.2'"
-          python -c "import jax; assert jax.__version__ == '0.10.0'"
+          python - <<'PY'
+          import os
+          from importlib.metadata import version
+          from pathlib import Path
+
+          for line in Path(os.environ["PIP_CONSTRAINT"]).read_text().splitlines():
+              if line and not line.startswith("#"):
+                  package, expected = line.split("==")
+                  actual = version(package)
+                  assert actual == expected, f"{package}: expected {expected}, found {actual}"
+          PY
+          python -m pip check
 
       - name: Run non-system tests
-        run: python -m pytest --ignore=tests/systems -m "not memory_intensive"
+        run: python -m pytest --ignore=tests/systems --ignore=tests/paper_results -m "not memory_intensive"
+
+      - name: Install paper-results dependencies
+        run: |
+          python -m pip install -e ".[paper_results]"
+
+      - name: Run paper-results tests
+        env:
+          MPLBACKEND: Agg
+        run: python -m pytest tests/paper_results -m "not memory_intensive"
 
       - name: Run remaining system tests
         run: |

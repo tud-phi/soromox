@@ -167,7 +167,7 @@ def _build_macos():
     brew = shutil.which("brew")
     if not brew:
         raise RuntimeError(
-            "Install CMake, Ninja and OpenBLAS; see tools/open3d/README.md."
+            "Install CMake, Ninja and OpenBLAS; see third_party/open3d/README.md."
         )
 
     def prefix(name):

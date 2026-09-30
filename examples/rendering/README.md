@@ -1,6 +1,6 @@
 # Shared scene presets in Open3D and Viser
 
-Install the [rendering dependencies](../../tools/open3d/README.md). From the
+Install the [rendering dependencies](../../third_party/open3d/README.md). From the
 repository root, generate the six presets in either backend:
 
 ```bash

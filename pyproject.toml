@@ -173,6 +173,7 @@ examples = [
     "viser",
 ]
 paper_results = [
+    "coomm @ git+https://github.com/mstoelzle/COOMM.git@0df454a44e70be941941be3c6b521b1cd891aef3",
     "cbfpy",
     "gymnasium",
     "ipython",
@@ -186,7 +187,7 @@ paper_results = [
     "optimistix",
     "pandas",
     "plotly",
-    "pyelastica",
+    "pyelastica>=0.3.3.post2,<2",
     "seaborn",
     "stable-baselines3",
     "trimesh",
@@ -223,12 +224,13 @@ test = [
     "warp-lang>=1.16.0",
 ]
 all = [
+    "coomm @ git+https://github.com/mstoelzle/COOMM.git@0df454a44e70be941941be3c6b521b1cd891aef3",
     "bump2version",
     "cbfpy",
     "check-manifest",
     "codecov",
     "coverage[toml]",
-    "pyelastica",
+    "pyelastica>=0.3.3.post2,<2",
     "gymnasium",
     "ipython",
     "matplotlib",
@@ -244,7 +246,7 @@ all = [
     "pandas",
     "plotly",
     "pre-commit",
-    "pyelastica",
+    "pyelastica>=0.3.3.post2,<2",
     "pytest",
     "pytest-cov",
     "pytest-html",
@@ -313,6 +315,7 @@ ignore = [
   "paper_results/**",
   "tests/**",
   "tools/**",
+  "third_party/**",
   "uv.lock",
 ]
 
@@ -409,5 +412,5 @@ line-ending = "auto"
 
 [tool.uv.sources]
 open3d = [
-    { path = "tools/open3d", marker = "sys_platform == 'darwin' or sys_platform == 'win32' or (sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'aarch64' or platform_machine == 'arm64') and platform_python_implementation == 'CPython')" },
+    { path = "third_party/open3d", marker = "sys_platform == 'darwin' or sys_platform == 'win32' or (sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'aarch64' or platform_machine == 'arm64') and platform_python_implementation == 'CPython')" },
 ]

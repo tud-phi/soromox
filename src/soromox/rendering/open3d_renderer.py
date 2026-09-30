@@ -890,7 +890,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                 lower per-frame update cost of unmerged single-robot scenes."""
         if not OPEN3D_AVAILABLE:
             raise ImportError(
-                "Open3D is not installed. Install the rendering dependencies; see tools/open3d/README.md"
+                "Open3D is not installed. Install the rendering dependencies; see third_party/open3d/README.md"
             )
 
         super().__init__(robot, config=config)
@@ -1794,7 +1794,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                 "Modern Open3D rendering on macOS requires the source build "
                 "with the Metal readback fix. "
                 "The unpatched development wheel can abort during capture. "
-                "See tools/open3d/README.md and run uv sync --extra rendering."
+                "See third_party/open3d/README.md and run uv sync --extra rendering."
             )
 
     @contextmanager
@@ -2440,7 +2440,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         """
         if not OPEN3D_AVAILABLE:
             raise ImportError(
-                "Open3D is not installed. Install the rendering dependencies; see tools/open3d/README.md"
+                "Open3D is not installed. Install the rendering dependencies; see third_party/open3d/README.md"
             )
 
         scene_data = self._prepare_scene_data(

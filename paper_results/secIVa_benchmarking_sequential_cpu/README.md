@@ -27,7 +27,7 @@ done
 Generate the PyElastica data:
 
 ```bash
-for script in paper_results/secIVa_benchmarking_sequential_cpu/code/pyelastica/*.py; do
+for script in paper_results/secIVa_benchmarking_sequential_cpu/code/pyelastica/simulate_*_pyelastica.py; do
   uv run python "$script"
 done
 ```
@@ -50,3 +50,21 @@ uv run python paper_results/secIVa_benchmarking_sequential_cpu/code/plot_benchma
 
 The generators replace same-named files in `data/`. Use a clean worktree or
 copy the committed canonical data before intentionally regenerating it.
+
+## PyElastica compatibility
+
+All three generators are compatible with **PyElastica 1.0.0** and have also
+been verified with 0.3.3.post2. They use the public `PositionVerlet.step()` API.
+The tendon model uses COOMM while preserving force inputs in newtons and
+constant stored tendon area.
+
+Run the short rollout tests with:
+
+```bash
+uv sync --extra test --extra paper_results
+MPLBACKEND=Agg uv run python -m pytest -q tests/paper_results/secIVa/test_simulate_pyelastica.py
+```
+
+COOMM installs automatically from the Git revision pinned in
+[`pyproject.toml`](../../pyproject.toml), which contains the compatibility fixes
+from [upstream PR #11](https://github.com/hanson-hschang/COOMM/pull/11).
