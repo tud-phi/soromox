@@ -157,10 +157,10 @@ jobs:
           allow-prereleases: ${{ matrix.python == '3.15' }}
           cache: pip
 
-      - name: Install video decoding dependency for paper figure tests
+      - name: Install graphics and video runtimes for paper-results tests
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg
+          sudo apt-get install -y ffmpeg libegl1 libgl1
 
       - name: Install project with test extras
         run: |
@@ -239,10 +239,10 @@ jobs:
           python-version: '3.11'
           cache: pip
 
-      - name: Install video decoding dependency for paper figure tests
+      - name: Install graphics and video runtimes for paper-results tests
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg
+          sudo apt-get install -y ffmpeg libegl1 libgl1
 
       - name: Install project with minimum numerical dependencies
         run: |
