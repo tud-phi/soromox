@@ -29,6 +29,9 @@ and include benchmark baseline and measurement context for performance claims.
 
 ### Fixed
 
+- Restored the Section IVa PyElastica benchmarks using COOMM, with
+  PyElastica 1.0 support and short rollout tests in CI; see
+  [PR #220](https://github.com/tud-phi/soromox/pull/220).
 - Recognized the current patched Open3D 0.20 `.soromox3` build in the macOS
   rendering guard, allowing image/video export and modern windows.
 
