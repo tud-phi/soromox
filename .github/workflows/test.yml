@@ -13,34 +13,6 @@ on:
       - main
 
 jobs:
-  pyelastica-benchmarks:
-    name: PyElastica benchmarks (${{ matrix.pyelastica }}, Python 3.12)
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        pyelastica: ['0.3.3.post2', '1.0.0']
-    env:
-      MPLBACKEND: Agg
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v6
-        with:
-          python-version: '3.12'
-          cache: pip
-
-      - name: Install project with selected PyElastica version
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install -e ".[test]" "pyelastica==${{ matrix.pyelastica }}"
-
-      - name: Test benchmark imports, construction, and short rollouts
-        run: python -m pytest -q tests/paper_results/secIVa/test_simulate_pyelastica.py
-
   rendering-ubuntu:
     name: Native rendering (Ubuntu ${{ matrix.architecture }}, Python ${{ matrix.python }})
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
@@ -196,7 +168,19 @@ jobs:
           python -m pip install -e ".[test]"
 
       - name: Run non-system tests
-        run: python -m pytest --ignore=tests/systems -m "not memory_intensive"
+        run: python -m pytest --ignore=tests/systems --ignore=tests/paper_results -m "not memory_intensive"
+
+      # The full paper_results extra requires PyTorch, which has no Python 3.15 wheels.
+      - name: Install paper-results dependencies
+        if: matrix.python != '3.15'
+        run: |
+          python -m pip install -e ".[paper_results]"
+
+      - name: Run paper-results tests
+        if: matrix.python != '3.15'
+        env:
+          MPLBACKEND: Agg
+        run: python -m pytest tests/paper_results -m "not memory_intensive"
 
       - name: Run remaining system tests
         run: |
@@ -269,7 +253,16 @@ jobs:
           python -c "import jax; assert jax.__version__ == '0.10.0'"
 
       - name: Run non-system tests
-        run: python -m pytest --ignore=tests/systems -m "not memory_intensive"
+        run: python -m pytest --ignore=tests/systems --ignore=tests/paper_results -m "not memory_intensive"
+
+      - name: Install paper-results dependencies
+        run: |
+          python -m pip install -e ".[paper_results]" "jax==0.10.0" "diffrax==0.7.2"
+
+      - name: Run paper-results tests
+        env:
+          MPLBACKEND: Agg
+        run: python -m pytest tests/paper_results -m "not memory_intensive"
 
       - name: Run remaining system tests
         run: |

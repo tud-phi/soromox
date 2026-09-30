@@ -499,6 +499,19 @@ wheels = [
 ]
 
 [[package]]
+name = "coomm"
+version = "0.1.1"
+source = { git = "https://github.com/mstoelzle/COOMM.git?rev=0df454a44e70be941941be3c6b521b1cd891aef3#0df454a44e70be941941be3c6b521b1cd891aef3" }
+dependencies = [
+    { name = "matplotlib" },
+    { name = "numba", version = "0.65.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "numba", version = "0.67.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "numpy", version = "2.5.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "pyelastica" },
+]
+
+[[package]]
 name = "coverage"
 version = "7.13.5"
 source = { registry = "https://pypi.org/simple" }
@@ -4103,6 +4116,7 @@ all = [
     { name = "cbfpy" },
     { name = "check-manifest" },
     { name = "codecov" },
+    { name = "coomm" },
     { name = "coverage", extra = ["toml"] },
     { name = "gymnasium" },
     { name = "ipython" },
@@ -4177,6 +4191,7 @@ examples = [
 ]
 paper-results = [
     { name = "cbfpy" },
+    { name = "coomm" },
     { name = "gymnasium" },
     { name = "ipython" },
     { name = "ipywidgets" },
@@ -4219,9 +4234,7 @@ test = [
     { name = "matplotlib" },
     { name = "opencv-python" },
     { name = "optax" },
-    { name = "pandas" },
     { name = "plotly" },
-    { name = "pyelastica" },
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "pytest-html" },
@@ -4246,6 +4259,8 @@ requires-dist = [
     { name = "codecov", marker = "extra == 'all'" },
     { name = "codecov", marker = "extra == 'dev'" },
     { name = "codecov", marker = "extra == 'test'" },
+    { name = "coomm", marker = "extra == 'all'", git = "https://github.com/mstoelzle/COOMM.git?rev=0df454a44e70be941941be3c6b521b1cd891aef3" },
+    { name = "coomm", marker = "extra == 'paper-results'", git = "https://github.com/mstoelzle/COOMM.git?rev=0df454a44e70be941941be3c6b521b1cd891aef3" },
     { name = "coverage", extras = ["toml"], marker = "extra == 'all'" },
     { name = "coverage", extras = ["toml"], marker = "extra == 'dev'" },
     { name = "coverage", extras = ["toml"], marker = "extra == 'test'" },
@@ -4300,7 +4315,6 @@ requires-dist = [
     { name = "optimistix", marker = "extra == 'paper-results'" },
     { name = "pandas", marker = "extra == 'all'" },
     { name = "pandas", marker = "extra == 'paper-results'" },
-    { name = "pandas", marker = "extra == 'test'" },
     { name = "plotly", marker = "extra == 'all'" },
     { name = "plotly", marker = "extra == 'examples'" },
     { name = "plotly", marker = "extra == 'paper-results'" },
@@ -4308,9 +4322,8 @@ requires-dist = [
     { name = "plotly", marker = "extra == 'test'" },
     { name = "pre-commit", marker = "extra == 'all'" },
     { name = "pre-commit", marker = "extra == 'dev'" },
-    { name = "pyelastica", marker = "extra == 'all'" },
-    { name = "pyelastica", marker = "extra == 'paper-results'" },
-    { name = "pyelastica", marker = "extra == 'test'" },
+    { name = "pyelastica", marker = "extra == 'all'", specifier = ">=0.3.3.post2,<2" },
+    { name = "pyelastica", marker = "extra == 'paper-results'", specifier = ">=0.3.3.post2,<2" },
     { name = "pytest", marker = "extra == 'all'" },
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "pytest", marker = "extra == 'test'" },

@@ -5,6 +5,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from coomm.actuations.muscles.muscle import ApplyMuscleGroups, MuscleGroup
 from elastica import (
     AnalyticalLinearDamper,
     BaseSystemCollection,
@@ -22,7 +23,6 @@ from elastica import (
     RodSelfContact,
 )
 from elastica._calculus import _isnan_check
-from muscles import ApplyMuscleGroups, MuscleGroup
 from tendon import Tendon1, Tendon2
 
 DATA_DIR = Path(__file__).resolve().parents[2] / "data"
@@ -249,8 +249,11 @@ class BaseArmEnvElastica:
             ApplyMuscleGroups,
             muscle_groups=self.tendon_groups,
             step_skip=self.step_skip,
-            COLLECT_DATA_FOR_POSTPROCESSING=self.COLLECT_DATA_FOR_PROCESSING,
-            callback_params_list=self.tendon_post_processing_list,
+            callback_params_list=(
+                self.tendon_post_processing_list
+                if self.COLLECT_DATA_FOR_PROCESSING
+                else None
+            ),
         )
 
         self.arm_sim.constrain(self.arm).using(

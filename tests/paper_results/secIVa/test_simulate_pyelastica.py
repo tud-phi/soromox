@@ -82,6 +82,7 @@ def test_tendon_generator_constructs_and_applies_forces(
     for group, force in zip(arm.tendon_groups, [1.0, 0.5]):
         muscle = group.muscles[0]
         np.testing.assert_allclose(muscle.muscle_force, force)
+        np.testing.assert_array_equal(muscle.muscle_area, muscle.rest_muscle_area)
         assert np.isfinite(group.external_force).all()
         assert np.isfinite(group.external_couple).all()
         assert np.linalg.norm(group.external_force) > 0
@@ -92,3 +93,8 @@ def test_tendon_generator_constructs_and_applies_forces(
         for callback in arm.tendon_post_processing_list:
             assert callback["internal_force"]
             assert np.isfinite(np.asarray(callback["internal_force"])).all()
+    else:
+        assert all(
+            not callback.get("internal_force")
+            for callback in arm.tendon_post_processing_list
+        )
