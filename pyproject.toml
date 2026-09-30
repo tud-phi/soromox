@@ -315,6 +315,7 @@ ignore = [
   "paper_results/**",
   "tests/**",
   "tools/**",
+  "third_party/**",
   "uv.lock",
 ]
 
@@ -411,5 +412,5 @@ line-ending = "auto"
 
 [tool.uv.sources]
 open3d = [
-    { path = "tools/open3d", marker = "sys_platform == 'darwin' or sys_platform == 'win32' or (sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'aarch64' or platform_machine == 'arm64') and platform_python_implementation == 'CPython')" },
+    { path = "third_party/open3d", marker = "sys_platform == 'darwin' or sys_platform == 'win32' or (sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'aarch64' or platform_machine == 'arm64') and platform_python_implementation == 'CPython')" },
 ]

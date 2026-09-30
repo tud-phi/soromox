@@ -96,12 +96,12 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ${{ env.SOROMOX_OPEN3D_CACHE }}
-          key: rendering-ubuntu-${{ matrix.architecture }}-open3d-py${{ matrix.python }}-${{ hashFiles('tools/open3d/**') }}
+          key: rendering-ubuntu-${{ matrix.architecture }}-open3d-py${{ matrix.python }}-${{ hashFiles('third_party/open3d/**') }}
 
       - name: Build Open3D and install rendering tests
         run: |
           python -m pip install --upgrade pip
-          python -m pip install ./tools/open3d
+          python -m pip install ./third_party/open3d
           python -m pip install -e ".[rendering,test]"
 
       - name: Test Open3D configuration adaptation
@@ -150,12 +150,12 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ${{ env.SOROMOX_OPEN3D_CACHE }}
-          key: rendering-windows-open3d-py312-${{ hashFiles('tools/open3d/**') }}
+          key: rendering-windows-open3d-py312-${{ hashFiles('third_party/open3d/**') }}
 
       - name: Build patched Open3D 0.20 and install rendering tests
         run: |
           python -m pip install --upgrade pip
-          python -m pip install ./tools/open3d
+          python -m pip install ./third_party/open3d
           python -m pip install -e ".[rendering,test]"
 
       - name: Verify patched Open3D package
