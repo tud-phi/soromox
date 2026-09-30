@@ -1,0 +1,36 @@
+{
+  "source_file": "docs/research.md",
+  "source_section": "Sequential CPU rollouts",
+  "source_url": "https://github.com/tud-phi/soromox/blob/d150efbfea488cba63b22e05a10d1614dda27ba5/docs/research.md#sequential-cpu-rollouts",
+  "source_table": "Table IV",
+  "simulation_duration_s": 3.0,
+  "hardware": "Intel Core Ultra 7 165H (1.40 GHz), 16 GB RAM",
+  "notes": "Reported scalar wall-clock times from docs/research.md; repeated-run samples and uncertainty are unavailable. Not newly measured.",
+  "cases": [
+    {
+      "label": "Planar PCS",
+      "sorosim_s": 75.73,
+      "soromox_s": 2.81
+    },
+    {
+      "label": "Spatial PCS",
+      "sorosim_s": 78.65,
+      "soromox_s": 6.53
+    },
+    {
+      "label": "Spatial GVS",
+      "sorosim_s": 55.54,
+      "soromox_s": 10.63
+    },
+    {
+      "label": "Tendon-driven GVS",
+      "sorosim_s": 75.8,
+      "soromox_s": 11.72
+    }
+  ],
+  "source_commit": "d150efbfea488cba63b22e05a10d1614dda27ba5",
+  "solvers": {
+    "SoRoSim": "Dormand-Prince ode45 (adaptive)",
+    "SoRoMoX": "Tsitouras Tsit5 (fixed 0.1 ms step)"
+  }
+}
