@@ -9,8 +9,11 @@ import optimistix as optx
 from soromox.actuation import ThreadlikeActuator, ThreadlikeRouting
 from soromox.rendering import Open3DRenderer
 from soromox.rendering.config import (
+    BackboneColorConfig,
+    CameraConfig,
     GeometryConfig,
     GroundPlaneConfig,
+    RendererColorConfig,
     RendererConfig,
     SceneConfig,
 )
@@ -30,10 +33,76 @@ VIDEO_OUTPUT = Path(__file__).resolve().parent / "videos" / f"{Path(__file__).st
 jax.config.update("jax_enable_x64", True)
 # jax.config.update("jax_platform_name", "gpu")  # or "cpu"
 
+# Demonstration settings: reduced viscous damping lets the elastic recoil and
+# the unactuated tip's lag remain visible after each pull.
+MATERIAL_DAMPING = 2e3
+MOTION_TIMES = jnp.array(
+    [
+        0.0,
+        0.35,
+        0.50,
+        1.15,
+        1.45,
+        2.05,
+        2.35,
+        3.0,
+        3.30,
+        3.95,
+        4.25,
+        4.9,
+        5.2,
+        5.9,
+        6.2,
+        6.4,
+    ]
+)
+# Tendon tensions in newtons. Alternate the bending direction, pull both
+# tendons to curl forward, and release between bursts to excite free motion.
+MOTION_TENSIONS = jnp.array(
+    [
+        [3.0, 0.0],
+        [3.0, 0.0],
+        [0.0, 0.0],
+        [0.0, 0.0],
+        [0.0, 3.5],
+        [0.0, 3.5],
+        [2.8, 2.8],
+        [3.5, 0.0],
+        [0.0, 0.0],
+        [0.0, 0.0],
+        [0.0, 3.5],
+        [3.5, 0.0],
+        [2.8, 2.8],
+        [0.0, 3.5],
+        [0.0, 3.5],
+        [0.0, 0.0],
+    ]
+)
+
 print("JAX default backend:", jax.default_backend())
 print("JAX devices:", jax.devices())
 
 ### SOFT ROBOT UTILITIES FUNCTIONS ###
+
+
+def tendon_motion(state: SystemState):
+    """Smooth, nonnegative pulls followed by an unforced swing from 6.4 s."""
+    index = jnp.clip(
+        jnp.searchsorted(MOTION_TIMES, state.t, side="right") - 1,
+        0,
+        len(MOTION_TIMES) - 2,
+    )
+    phase = jnp.clip(
+        (state.t - MOTION_TIMES[index])
+        / (MOTION_TIMES[index + 1] - MOTION_TIMES[index]),
+        0.0,
+        1.0,
+    )
+    blend = phase**2 * (3.0 - 2.0 * phase)
+    tension = (1.0 - blend) * MOTION_TENSIONS[index] + blend * MOTION_TENSIONS[
+        index + 1
+    ]
+    return tension, None
 
 
 # STATIC EQUILIBRIUM EQUATION SOLVER
@@ -65,7 +134,7 @@ link1 = LinkSpec.circular(
     young_modulus=3.04e5,
     shear_modulus=3.04e5 / 2.9,
     density=1310.0,
-    material_damping_coefficient=1e4,
+    material_damping_coefficient=MATERIAL_DAMPING,
     length=0.0250 + 0.2550 + 0.0250,
     radius=LinearProfile(0.01541, 0.00642),
     reference_strain=[0, 0, 0, 1, 0, 0],
@@ -76,7 +145,7 @@ link2 = LinkSpec.circular(
     young_modulus=3.04e5,
     shear_modulus=3.04e5 / 2.9,
     density=1310.0,
-    material_damping_coefficient=1e4,
+    material_damping_coefficient=MATERIAL_DAMPING,
     length=0.0550,
     radius=LinearProfile(0.00642, 0.00480),
     reference_strain=[0, 0, 0, 1, 0, 0],
@@ -100,7 +169,9 @@ num_gauss_points = [8, 8]
 g = [0.0, 0.0, -9.81]
 
 
-tendon_angles = jnp.deg2rad(jnp.array([30.0, 150.0]))
+# Rotate the tendon pair a quarter turn around the hanging backbone so
+# alternating pulls swing along world X, across the camera's field of view.
+tendon_angles = jnp.deg2rad(jnp.array([120.0, 240.0]))
 tendon_directions = jnp.stack(
     (jnp.zeros_like(tendon_angles), jnp.cos(tendon_angles), jnp.sin(tendon_angles)),
     axis=-1,
@@ -181,7 +252,7 @@ D = robot.damping_matrix(q0)
 B = robot.actuation_matrix(q0)
 C = robot.coriolis_matrix(q0, q0dot)
 
-u = jnp.asarray([1, 0.00], dtype=q0.dtype)
+u = MOTION_TENSIONS[0].astype(q0.dtype)
 tau = robot.actuation_force(q0, u)
 
 
@@ -217,10 +288,25 @@ if Open3DRenderer is None:
 renderer = Open3DRenderer(
     robot,
     config=RendererConfig(
-        geometry=GeometryConfig(num_points=50),
-        scene=SceneConfig.technical(
+        # Match the single-tentacle color in the rendering preset gallery.
+        colors=RendererColorConfig(
+            backbone=BackboneColorConfig(
+                robot_colors=[(0.65, 0.38, 0.78)], segment_palette=None
+            ),
+            base_plate_color=(0.16, 0.18, 0.18),
+        ),
+        camera=CameraConfig(
+            fov=35,
+            position=(0.0, -0.70, -0.44),
+            look_at=(0.0, 0.0, -0.16),
+        ),
+        geometry=GeometryConfig(num_points=100, cross_section_resolution=32),
+        scene=SceneConfig.studio(
             ground=GroundPlaneConfig(
-                surface=False, height_reference="base_mounting_face"
+                grid=False,
+                color=(0.58, 0.58, 0.58),
+                height_reference="base_mounting_face",
+                normal=(0.0, 0.0, -1.0),
             )
         ),
     ),
@@ -244,16 +330,18 @@ renderer.show(q0)
 
 # Simulation time parameters
 t0 = 0.0
-t1 = 2.0
+t1 = 10.0  # Includes 3.6 seconds of passive swinging after the final release.
 solver_dt = 1e-4
 skip_step = 100  # how many time steps to skip in between video frames
 save_dt = solver_dt * skip_step
 
 
-initial_state = SystemState(t=t0, y=jnp.concatenate([q0, q0dot]))
-trajectory = robot.rollout_to(
+# Begin with stored elastic energy in a bent equilibrium. The time-dependent
+# controller supplies tensions only; all motion comes from the robot dynamics.
+initial_state = SystemState(t=t0, y=jnp.concatenate([q_stat, q0dot]))
+trajectory = robot.rollout_closed_loop_to(
     initial_state=initial_state,
-    u=u,
+    controller=tendon_motion,
     t1=t1,
     solver_dt=solver_dt,
     save_dt=save_dt,
@@ -320,6 +408,17 @@ p_marker_4_ts = g_marker_4_ts[:, :3, 3] + g_marker_4_ts[:, :3, :3] @ jnp.array(
     [0.008, 0.0, 0.0]
 )
 
+
+plt.figure()
+plt.plot(ts, trajectory.u[:, 0], label="Tendon 1")
+plt.plot(ts, trajectory.u[:, 1], label="Tendon 2")
+plt.axvspan(float(MOTION_TIMES[-1]), t1, color="gray", alpha=0.15, label="Free swing")
+plt.xlabel("Time [s]")
+plt.ylabel("Tendon tension [N]")
+plt.legend()
+plt.grid(True)
+plt.tight_layout()
+plt.show()
 
 plt.figure()
 plt.plot(ts, g_ee_ts[:, 0, 3], label="End-effector x [m]")
