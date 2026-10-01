@@ -332,7 +332,7 @@ renderer.show(q0)
 t0 = 0.0
 t1 = 10.0  # Includes 3.6 seconds of passive swinging after the final release.
 solver_dt = 1e-4
-skip_step = 100  # how many time steps to skip in between video frames
+skip_step = 100  # Integration steps per saved sample (100 Hz).
 save_dt = solver_dt * skip_step
 
 
@@ -449,6 +449,10 @@ plt.show()
 # Plot the robot configuration upon time
 # =====================================================
 renderer.render_sequence(
-    ts=ts, q_ts=q_ts, playback_speed=1.0, record_path=str(VIDEO_OUTPUT)
+    ts=ts,
+    q_ts=q_ts,
+    playback_speed=1.0,
+    record_every_n=2,  # Export at 50 fps while retaining 100 Hz samples for plots.
+    record_path=str(VIDEO_OUTPUT),
 )
 print(f"Saved {VIDEO_OUTPUT}")
