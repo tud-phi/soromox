@@ -68,3 +68,34 @@ MPLBACKEND=Agg uv run python -m pytest -q tests/paper_results/secIVa/test_simula
 COOMM installs automatically from the Git revision pinned in
 [`pyproject.toml`](../../pyproject.toml), which contains the compatibility fixes
 from [upstream PR #11](https://github.com/hanson-hschang/COOMM/pull/11).
+
+## Runtime comparison
+
+Recreate the publication-style grouped bar chart from the four-case wall-clock
+time table in [`docs/research.md`](../../docs/research.md#sequential-cpu-rollouts),
+updated in commit `3b3815c` (paper Table IV):
+
+```bash
+uv run --extra paper_results python paper_results/secIVa_benchmarking_sequential_cpu/code/plot_benchmark_cpu_runtime.py
+```
+
+This writes `outputs/benchmark_cpu_runtime.pdf`, `.svg`, and a 300 dpi `.png`.
+All three formats have transparent figure, axes, and legend backgrounds.
+Pass `--force` to replace existing figures. The transcribed values and source
+metadata are stored in `data/benchmark_cpu_runtime.json`; simulations are not rerun.
+The figure uses `paper.mplstyle`, the shared blue/orange palette, Computer Modern
+serif fonts rendered with LaTeX, and a linear axis starting at zero. Runtimes,
+units, and speedup ratios use LaTeX math formatting. Regeneration requires LaTeX
+and `dvipng`, as used by Matplotlib's TeX renderer. SVG text is saved as paths
+to preserve the typography when imported into other applications.
+A bar chart is used because the table contains scalar timings without repeated
+measurements or uncertainty estimates needed for box plots or error bars.
+
+Suggested caption: Sequential CPU computation time for a 3 s simulation with
+adaptive Dormand-Prince `ode45` for SoRoSim and fixed-step Tsitouras `Tsit5`
+(0.1 ms) for SoRoMoX on an Intel Core Ultra 7 165H CPU. Labels above bars give
+reported runtimes in seconds; annotations give the SoRoMoX speedup, calculated
+as the SoRoSim runtime divided by the SoRoMoX runtime. Lower runtime is better.
+Values are reproduced from the updated table in `docs/research.md`; the exact
+source commit is recorded in the data JSON. The spatial GVS case
+corresponds to the repository's `complex-gvs` rollout.
