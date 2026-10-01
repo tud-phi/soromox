@@ -80,6 +80,7 @@ uv run --extra paper_results python paper_results/secIVa_benchmarking_sequential
 ```
 
 This writes `outputs/benchmark_cpu_runtime.pdf`, `.svg`, and a 300 dpi `.png`.
+All three formats have transparent figure, axes, and legend backgrounds.
 Pass `--force` to replace existing figures. The transcribed values and source
 metadata are stored in `data/benchmark_cpu_runtime.json`; simulations are not rerun.
 The figure uses `paper.mplstyle`, the shared blue/orange palette, Computer Modern

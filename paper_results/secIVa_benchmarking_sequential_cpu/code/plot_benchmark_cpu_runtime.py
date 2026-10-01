@@ -37,6 +37,10 @@ def plot_benchmark_cpu_runtime(data: dict) -> plt.Figure:
             "legend.fontsize": 10,
             "figure.dpi": 150,
             "savefig.dpi": 300,
+            "figure.facecolor": "none",
+            "axes.facecolor": "none",
+            "savefig.transparent": True,
+            "legend.facecolor": "none",
             "text.usetex": True,
             "svg.fonttype": "path",
         }
@@ -110,7 +114,12 @@ def main() -> None:
     fig = plot_benchmark_cpu_runtime(data)
     args.output_dir.mkdir(parents=True, exist_ok=True)
     for path in outputs:
-        fig.savefig(path, bbox_inches="tight", pad_inches=0.04)
+        fig.savefig(path, bbox_inches="tight", pad_inches=0.04, transparent=True)
+        if path.suffix == ".svg":
+            path.write_text(
+                "\n".join(line.rstrip() for line in path.read_text().splitlines())
+                + "\n"
+            )
         print(path)
     plt.close(fig)
 
