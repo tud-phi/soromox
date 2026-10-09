@@ -16,11 +16,6 @@
       back to a release candidate until GitHub publishes its final builds.
       Some rendering and test dependencies build
       from source and require C/C++ and, for some packages, Rust build tools.
-    - **PyTorch extras on Python 3.15**: Wheels are available from PyTorch's
-      official indexes, but not yet PyPI. In this checkout, `uv sync` selects
-      CUDA 13 wheels on Linux and the CPU index on macOS/Windows for the
-      `cuda13`, `rl`, `paper_results`, and `all` extras that require PyTorch.
-      With pip, install PyTorch first as shown below.
     - **Open3D Rendering**: Patched Open3D 0.20 source builds are tested
       with Python 3.11–3.14 on Ubuntu x86-64. Python 3.12–3.14 and 3.15.0
       are tested on Apple Silicon; Ubuntu CI also covers Python 3.15.
@@ -75,6 +70,18 @@
 
 SoRoMoX provides several optional dependency groups for different use cases:
 
+!!! note "PyTorch extras with pip on Python 3.15"
+    Source-checkout `uv sync` commands already select the required PyTorch index.
+    With pip, first install PyTorch before the `rl`, `cuda13`, `paper_results`,
+    or `all` extra, since Python 3.15 wheels are not yet on PyPI:
+
+    ```bash
+    python -m pip install "torch==2.14.1" --index-url https://download.pytorch.org/whl/cpu
+    ```
+
+    For Linux CUDA 13, replace `/cpu` with `/cu130`, then follow the usual
+    installation commands for your extra.
+
 ### 🎨 Rendering Dependencies
 
 For 3D visualization and animation, install from a source checkout:
@@ -113,6 +120,9 @@ uv sync --extra rendering
     `pip install soromox[rendering]` uses PyPI and does not include the required
     Open3D patches.
 
+    If importing Open3D and PyTorch together on macOS causes an OpenMP error,
+    see the [Open3D troubleshooting instructions](https://github.com/tud-phi/soromox/tree/main/third_party/open3d#macos-openmp-runtimes).
+
     The patched Open3D source build is required for all supported Python
     versions. In a source checkout, use `uv sync --extra rendering`, or install
     the local build before the rendering extra with pip:
@@ -140,41 +150,6 @@ pip install soromox[examples]
 - `plotly` - Interactive plotting and visualization
 - `seaborn` - Statistical data visualization
 - `viser` - Web-based interactive rendering
-
-### PyTorch on Python 3.15
-
-Source-checkout `uv sync` commands select the official PyTorch index through
-`pyproject.toml`. For pip installations on Python 3.15, install PyTorch from
-its official index before installing a SoRoMoX extra that needs it:
-
-```bash
-# CPU on Linux/Windows, or the macOS build (including MPS support).
-python -m pip install "torch==2.14.1" --index-url https://download.pytorch.org/whl/cpu
-python -m pip install -e ".[rl]"
-```
-
-For the Linux CUDA 13 stack:
-
-```bash
-python -m pip install "torch==2.14.1" --index-url https://download.pytorch.org/whl/cu130
-python -m pip install -e ".[cuda13]"
-```
-
-The `paper_results` and `all` extras also need the patched Open3D build
-described above. Use `uv sync` for the locked source-checkout installation.
-
-!!! note "macOS OpenMP runtimes"
-    Homebrew OpenBLAS (used by Open3D) and PyTorch can load separate copies of
-    `libomp.dylib`, causing `OMP: Error #15` when imported in the same process.
-    Launch that process with PyTorch's library directory first in the loader
-    search path so both use one runtime. For example, after syncing the
-    `paper_results` and `test` extras:
-
-    ```bash
-    soromox_torch_lib="$(uv run --no-sync python -c 'from importlib.util import find_spec; from pathlib import Path; print(Path(find_spec("torch").origin).parent / "lib")')"
-    DYLD_LIBRARY_PATH="$soromox_torch_lib${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}" \
-      uv run --no-sync python -m pytest tests/paper_results
-    ```
 
 ### 🛠️ Development Dependencies
 
