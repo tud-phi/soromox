@@ -173,6 +173,8 @@ examples = [
     "viser",
 ]
 paper_results = [
+    # Declare Torch directly so uv can select its Python 3.15 wheel index.
+    "torch>=2.14.1; python_version >= '3.15'",
     "coomm @ git+https://github.com/mstoelzle/COOMM.git@0df454a44e70be941941be3c6b521b1cd891aef3",
     "cbfpy",
     "gymnasium",
@@ -203,6 +205,7 @@ rendering = [
     "viser",
 ]
 rl = [
+    "torch>=2.14.1; python_version >= '3.15'",
     "gymnasium",
     "matplotlib",
     "stable-baselines3",
@@ -224,6 +227,7 @@ test = [
     "warp-lang>=1.16.0",
 ]
 all = [
+    "torch>=2.14.1; python_version >= '3.15'",
     "coomm @ git+https://github.com/mstoelzle/COOMM.git@0df454a44e70be941941be3c6b521b1cd891aef3",
     "bump2version",
     "cbfpy",
@@ -411,6 +415,21 @@ line-ending = "auto"
 # upstream wheels.
 
 [tool.uv.sources]
+torch = [
+    # PyPI does not yet publish CPython 3.15 wheels. Keep the Linux CUDA 13 stack.
+    { index = "pytorch-cu130", marker = "python_version >= '3.15' and sys_platform == 'linux'" },
+    { index = "pytorch-cpu", marker = "python_version >= '3.15' and (sys_platform == 'darwin' or sys_platform == 'win32')" },
+]
 open3d = [
     { path = "third_party/open3d", marker = "sys_platform == 'darwin' or sys_platform == 'win32' or (sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'aarch64' or platform_machine == 'arm64') and platform_python_implementation == 'CPython')" },
 ]
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true

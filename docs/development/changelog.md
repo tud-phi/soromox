@@ -14,12 +14,17 @@ and include benchmark baseline and measurement context for performance claims.
 ### Added
 
 - Python 3.15 support, with numerical tests and patched Open3D source-build
-  and rendering checks in Ubuntu CI.
+  and rendering checks in Ubuntu CI. The Python 3.15 native-rendering job also
+  runs the complete paper-results test suite.
 
 ### Changed
 
 - Refreshed the numerical and rendering dependency lock for Python 3.15,
-  including compatible Viser and `rpds-py` releases.
+  including compatible Viser, `rpds-py`, Matplotlib, `msgspec`, Numba, and
+  llvmlite releases.
+- Python 3.15 source-checkout installs select official PyTorch wheels from
+  its CUDA 13 index on Linux and CPU index on macOS/Windows, enabling the RL
+  and paper-results extras before equivalent wheels are available on PyPI.
 
 ### Performance
 
@@ -28,6 +33,9 @@ and include benchmark baseline and measurement context for performance claims.
 ### Breaking changes
 
 ### Fixed
+
+- Matched the Open3D adapter's static dependency metadata to the pinned native
+  wheel so building it does not change the lockfile's dependency metadata.
 
 - Restored the Section IVa PyElastica benchmarks using COOMM, with
   PyElastica 1.0 support and short rollout tests in CI; see

@@ -12,15 +12,17 @@
 
 !!! warning "Python Version Compatibility"
     - **Python 3.15**: Use current numerical dependencies or the updated
-      repository lockfile. Until Python 3.15 final is released, CI uses the
-      available release candidate. Some rendering and test dependencies build
+      repository lockfile. Python 3.15.0 final is available; CI can still fall
+      back to a release candidate until GitHub publishes its final builds.
+      Some rendering and test dependencies build
       from source and require C/C++ and, for some packages, Rust build tools.
-    - **PyTorch extras on Python 3.15**: PyTorch currently has no 3.15 wheels.
-      The `cuda13`, `rl`, `paper_results`, and `all` extras include PyTorch
-      directly or through Stable-Baselines3. Core simulation and the `warp`
-      extra can be installed independently.
+    - **PyTorch extras on Python 3.15**: Wheels are available from PyTorch's
+      official indexes, but not yet PyPI. In this checkout, `uv sync` selects
+      CUDA 13 wheels on Linux and the CPU index on macOS/Windows for the
+      `cuda13`, `rl`, `paper_results`, and `all` extras that require PyTorch.
+      With pip, install PyTorch first as shown below.
     - **Open3D Rendering**: Patched Open3D 0.20 source builds are tested
-      with Python 3.11–3.14 on Ubuntu x86-64. Python 3.12–3.14 and 3.15.0rc2
+      with Python 3.11–3.14 on Ubuntu x86-64. Python 3.12–3.14 and 3.15.0
       are tested on Apple Silicon; Ubuntu CI also covers Python 3.15.
     - **Python 3.14 on Windows**: There may currently exist an incompatibility of Python 3.14 on Windows with the package
 
@@ -107,7 +109,7 @@ uv sync --extra rendering
     and other platforms. On Ubuntu 26.04 x86-64, Python 3.11–3.14 pass real
     Vulkan image and MP4 export plus modern and animated viewers under Xvfb.
     Apple Silicon image, video, and modern-window checks pass with Python
-    3.12–3.14 and 3.15.0rc2. Native Windows builds are validated in CI. Plain
+    3.12–3.14 and 3.15.0. Native Windows builds are validated in CI. Plain
     `pip install soromox[rendering]` uses PyPI and does not include the required
     Open3D patches.
 
@@ -138,6 +140,41 @@ pip install soromox[examples]
 - `plotly` - Interactive plotting and visualization
 - `seaborn` - Statistical data visualization
 - `viser` - Web-based interactive rendering
+
+### PyTorch on Python 3.15
+
+Source-checkout `uv sync` commands select the official PyTorch index through
+`pyproject.toml`. For pip installations on Python 3.15, install PyTorch from
+its official index before installing a SoRoMoX extra that needs it:
+
+```bash
+# CPU on Linux/Windows, or the macOS build (including MPS support).
+python -m pip install "torch==2.14.1" --index-url https://download.pytorch.org/whl/cpu
+python -m pip install -e ".[rl]"
+```
+
+For the Linux CUDA 13 stack:
+
+```bash
+python -m pip install "torch==2.14.1" --index-url https://download.pytorch.org/whl/cu130
+python -m pip install -e ".[cuda13]"
+```
+
+The `paper_results` and `all` extras also need the patched Open3D build
+described above. Use `uv sync` for the locked source-checkout installation.
+
+!!! note "macOS OpenMP runtimes"
+    Homebrew OpenBLAS (used by Open3D) and PyTorch can load separate copies of
+    `libomp.dylib`, causing `OMP: Error #15` when imported in the same process.
+    Launch that process with PyTorch's library directory first in the loader
+    search path so both use one runtime. For example, after syncing the
+    `paper_results` and `test` extras:
+
+    ```bash
+    soromox_torch_lib="$(uv run --no-sync python -c 'from importlib.util import find_spec; from pathlib import Path; print(Path(find_spec("torch").origin).parent / "lib")')"
+    DYLD_LIBRARY_PATH="$soromox_torch_lib${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}" \
+      uv run --no-sync python -m pytest tests/paper_results
+    ```
 
 ### 🛠️ Development Dependencies
 
