@@ -27,8 +27,10 @@ wp.set_module_options({"enable_backward": False})
 SPATIAL_DIM = 6
 
 
-@wp.kernel(enable_backward=False)
-def floating_persistent_chain_kernel(
+@wp.func
+def floating_persistent_chain_at(
+    environment: int,
+    lane: int,
     joint_adjoint: wp.array2d[wp.float64],
     joint_adjoint_dot: wp.array2d[wp.float64],
     joint_tangent: wp.array2d[wp.float64],
@@ -105,7 +107,6 @@ def floating_persistent_chain_kernel(
     Returns:
         None. Workspaces and outputs are updated in place.
     """
-    environment, lane = wp.tid()
     num_dofs = velocity.shape[1]
     num_cells = num_cells_array[0]
     num_quadrature = num_quadrature_array[0]
@@ -120,7 +121,6 @@ def floating_persistent_chain_kernel(
     transported_source_velocity_shared = wp.tile_zeros(
         shape=(SPATIAL_DIM,), dtype=wp.float64, storage="shared"
     )
-
     entry = lane
     while entry < SPATIAL_DIM * num_dofs:
         row = entry // num_dofs
@@ -167,7 +167,6 @@ def floating_persistent_chain_kernel(
         gravity_force[environment, column] = wp.float64(0.0)
         column += lane_stride
     wp.tile_scatter_masked(barrier, 0, int(0), lane == 0)
-
     row = lane
     while row < SPATIAL_DIM:
         derivative = wp.float64(0.0)
@@ -186,14 +185,12 @@ def floating_persistent_chain_kernel(
         jacobian_dot_qd_first[state_base_row + row, 0] = derivative
         row += lane_stride
     wp.tile_scatter_masked(barrier, 0, int(0), lane == 0)
-
     current_is_first = bool(True)
     segment = int(0)
     while segment < num_segments:
         segment_dofs = base_dofs + active_dofs[segment]
         joint_base_row = (environment * num_segments + segment) * SPATIAL_DIM
         destination_is_first = not current_is_first
-
         entry = lane
         while entry < SPATIAL_DIM * segment_dofs:
             row = entry // segment_dofs
@@ -227,7 +224,6 @@ def floating_persistent_chain_kernel(
                 value,
             )
             entry += lane_stride
-
         if lane_stride == 1:
             source_row = int(0)
             while source_row < SPATIAL_DIM:
@@ -272,7 +268,6 @@ def floating_persistent_chain_kernel(
                 source_velocity_value,
                 source_row < SPATIAL_DIM,
             )
-
         state_row = lane
         while state_row < SPATIAL_DIM:
             derivative_value = wp.float64(0.0)
@@ -308,11 +303,7 @@ def floating_persistent_chain_kernel(
                 gravity_value += joint_adjoint[
                     joint_base_row + state_row, k
                 ] * _vector_value(
-                    gravity_first,
-                    gravity_second,
-                    current_is_first,
-                    state_base_row,
-                    k,
+                    gravity_first, gravity_second, current_is_first, state_base_row, k
                 )
                 k += 1
             _write_vector_value(
@@ -342,14 +333,12 @@ def floating_persistent_chain_kernel(
             state_row += lane_stride
         wp.tile_scatter_masked(barrier, 0, int(0), lane == 0)
         current_is_first = destination_is_first
-
         cell = int(0)
         while cell < num_cells:
             destination_is_first = not current_is_first
             cell_base_row = (
                 (environment * num_segments + segment) * num_cells + cell
             ) * SPATIAL_DIM
-
             entry = lane
             while entry < SPATIAL_DIM * segment_dofs:
                 row = entry // segment_dofs
@@ -388,7 +377,6 @@ def floating_persistent_chain_kernel(
                     value,
                 )
                 entry += lane_stride
-
             if lane_stride == 1:
                 source_row = int(0)
                 while source_row < SPATIAL_DIM:
@@ -433,7 +421,6 @@ def floating_persistent_chain_kernel(
                     source_velocity_value,
                     source_row < SPATIAL_DIM,
                 )
-
             if lane_stride == 1:
                 target = int(0)
                 while target < SPATIAL_DIM:
@@ -464,7 +451,6 @@ def floating_persistent_chain_kernel(
                     transported_value,
                     target < SPATIAL_DIM,
                 )
-
             state_row = lane
             while state_row < SPATIAL_DIM:
                 transported_source_velocity = Vec6d(
@@ -545,7 +531,6 @@ def floating_persistent_chain_kernel(
                 state_row += lane_stride
             wp.tile_scatter_masked(barrier, 0, int(0), lane == 0)
             current_is_first = destination_is_first
-
             if cell < num_quadrature:
                 quadrature_item = segment * num_quadrature + cell
                 num_inertia_pairs = segment_dofs * (segment_dofs + 1) // 2
@@ -580,7 +565,6 @@ def floating_persistent_chain_kernel(
                     if output_row != output_column:
                         inertia[environment, output_column, output_row] += value
                     entry += lane_stride
-
                 column = lane
                 while column < segment_dofs:
                     wrench = _coadjoint_wrench(
@@ -624,6 +608,205 @@ def floating_persistent_chain_kernel(
             wp.tile_scatter_masked(barrier, 0, int(0), lane == 0)
             cell += 1
         segment += 1
+
+
+@wp.kernel(enable_backward=False)
+def floating_persistent_chain_kernel(
+    joint_adjoint: wp.array2d[wp.float64],
+    joint_adjoint_dot: wp.array2d[wp.float64],
+    joint_tangent: wp.array2d[wp.float64],
+    joint_tangent_dot_qd: wp.array2d[wp.float64],
+    joint_velocity: wp.array2d[wp.float64],
+    cell_adjoint: wp.array2d[wp.float64],
+    cell_tangent_local: wp.array2d[wp.float64],
+    cell_link_velocity: wp.array2d[wp.float64],
+    cell_step_velocity: wp.array2d[wp.float64],
+    cell_tangent_velocity_dot: wp.array2d[wp.float64],
+    global_to_local: wp.array2d[wp.int32],
+    active_dofs: wp.array[wp.int32],
+    base_pose: wp.array2d[wp.float64],
+    velocity: wp.array2d[wp.float64],
+    inertia_upper_rows: wp.array[wp.int32],
+    inertia_upper_columns: wp.array[wp.int32],
+    weighted_masses: wp.array2d[wp.float64],
+    gravity_world: wp.array[wp.float64],
+    num_cells_array: wp.array[wp.int32],
+    num_quadrature_array: wp.array[wp.int32],
+    lanes_per_block: wp.array[wp.int32],
+    jacobian_first: wp.array2d[wp.float64],
+    jacobian_dot_qd_first: wp.array2d[wp.float64],
+    velocity_first: wp.array2d[wp.float64],
+    gravity_first: wp.array2d[wp.float64],
+    jacobian_second: wp.array2d[wp.float64],
+    jacobian_dot_qd_second: wp.array2d[wp.float64],
+    velocity_second: wp.array2d[wp.float64],
+    gravity_second: wp.array2d[wp.float64],
+    inertia: wp.array3d[wp.float64],
+    coriolis_qd: wp.array2d[wp.float64],
+    gravity_force: wp.array2d[wp.float64],
+):
+    """Traverse one augmented floating GVS chain per cooperative block.
+
+    Joint and cell Lie operators are shared with the fixed pipeline. The
+    floating entry specializes root initialization, shifted internal columns,
+    augmented causal widths, and full dynamics accumulation.
+
+    Args:
+        joint_adjoint: Flattened joint inverse adjoints.
+        joint_adjoint_dot: Flattened joint-adjoint derivatives.
+        joint_tangent: Internal joint tangents.
+        joint_tangent_dot_qd: Joint tangent-derivative actions.
+        joint_velocity: Internal joint spatial velocities.
+        cell_adjoint: Flattened cell inverse adjoints.
+        cell_tangent_local: Cell tangents in padded local coordinates.
+        cell_link_velocity: Internal link velocities per cell.
+        cell_step_velocity: Internal Magnus-step velocities per cell.
+        cell_tangent_velocity_dot: Cell tangent-derivative actions.
+        global_to_local: Internal active-to-local link-coordinate map.
+        active_dofs: Cumulative internal coordinate count by segment.
+        base_pose: Runtime scalar-last quaternion poses with shape ``(E, 7)``.
+        velocity: Total angular-first generalized velocities.
+        inertia_upper_rows: Packed augmented upper-inertia row indices.
+        inertia_upper_columns: Packed augmented upper-inertia column indices.
+        weighted_masses: Quadrature-weighted diagonal spatial inertias.
+        gravity_world: World-frame spatial gravity.
+        num_cells_array: One-entry array containing cells per segment.
+        num_quadrature_array: One-entry array containing quadrature count.
+        lanes_per_block: One-entry array containing cooperative lanes.
+        jacobian_first: First caller-owned Jacobian workspace.
+        jacobian_dot_qd_first: First derivative-action workspace.
+        velocity_first: First spatial-velocity workspace.
+        gravity_first: First local-gravity workspace.
+        jacobian_second: Second Jacobian workspace.
+        jacobian_dot_qd_second: Second derivative-action workspace.
+        velocity_second: Second spatial-velocity workspace.
+        gravity_second: Second local-gravity workspace.
+        inertia: Batched augmented inertia output.
+        coriolis_qd: Batched augmented convective-force output.
+        gravity_force: Batched augmented generalized-gravity output.
+
+    Returns:
+        None. Workspaces and outputs are updated in place.
+    """
+    environment, lane = wp.tid()
+    floating_persistent_chain_at(
+        environment,
+        lane,
+        joint_adjoint,
+        joint_adjoint_dot,
+        joint_tangent,
+        joint_tangent_dot_qd,
+        joint_velocity,
+        cell_adjoint,
+        cell_tangent_local,
+        cell_link_velocity,
+        cell_step_velocity,
+        cell_tangent_velocity_dot,
+        global_to_local,
+        active_dofs,
+        base_pose,
+        velocity,
+        inertia_upper_rows,
+        inertia_upper_columns,
+        weighted_masses,
+        gravity_world,
+        num_cells_array,
+        num_quadrature_array,
+        lanes_per_block,
+        jacobian_first,
+        jacobian_dot_qd_first,
+        velocity_first,
+        gravity_first,
+        jacobian_second,
+        jacobian_dot_qd_second,
+        velocity_second,
+        gravity_second,
+        inertia,
+        coriolis_qd,
+        gravity_force,
+    )
+
+
+@wp.struct
+class FloatingPersistentChainArrays:
+    joint_adjoint: wp.array2d[wp.float64]
+    joint_adjoint_dot: wp.array2d[wp.float64]
+    joint_tangent: wp.array2d[wp.float64]
+    joint_tangent_dot_qd: wp.array2d[wp.float64]
+    joint_velocity: wp.array2d[wp.float64]
+    cell_adjoint: wp.array2d[wp.float64]
+    cell_tangent_local: wp.array2d[wp.float64]
+    cell_link_velocity: wp.array2d[wp.float64]
+    cell_step_velocity: wp.array2d[wp.float64]
+    cell_tangent_velocity_dot: wp.array2d[wp.float64]
+    global_to_local: wp.array2d[wp.int32]
+    active_dofs: wp.array[wp.int32]
+    base_pose: wp.array2d[wp.float64]
+    velocity: wp.array2d[wp.float64]
+    inertia_upper_rows: wp.array[wp.int32]
+    inertia_upper_columns: wp.array[wp.int32]
+    weighted_masses: wp.array2d[wp.float64]
+    gravity_world: wp.array[wp.float64]
+    num_cells_array: wp.array[wp.int32]
+    num_quadrature_array: wp.array[wp.int32]
+    lanes_per_block: wp.array[wp.int32]
+    jacobian_first: wp.array2d[wp.float64]
+    jacobian_dot_qd_first: wp.array2d[wp.float64]
+    velocity_first: wp.array2d[wp.float64]
+    gravity_first: wp.array2d[wp.float64]
+    jacobian_second: wp.array2d[wp.float64]
+    jacobian_dot_qd_second: wp.array2d[wp.float64]
+    velocity_second: wp.array2d[wp.float64]
+    gravity_second: wp.array2d[wp.float64]
+    inertia: wp.array3d[wp.float64]
+    coriolis_qd: wp.array2d[wp.float64]
+    gravity_force: wp.array2d[wp.float64]
+
+
+@wp.kernel(enable_backward=False)
+def packed_floating_persistent_chain_kernel(
+    worlds: wp.array(dtype=FloatingPersistentChainArrays),
+    work: wp.array(dtype=wp.vec3i),
+):
+    item, lane = wp.tid()
+    entry = work[item]
+    d = worlds[entry[0]]
+    floating_persistent_chain_at(
+        0,
+        lane,
+        d.joint_adjoint,
+        d.joint_adjoint_dot,
+        d.joint_tangent,
+        d.joint_tangent_dot_qd,
+        d.joint_velocity,
+        d.cell_adjoint,
+        d.cell_tangent_local,
+        d.cell_link_velocity,
+        d.cell_step_velocity,
+        d.cell_tangent_velocity_dot,
+        d.global_to_local,
+        d.active_dofs,
+        d.base_pose,
+        d.velocity,
+        d.inertia_upper_rows,
+        d.inertia_upper_columns,
+        d.weighted_masses,
+        d.gravity_world,
+        d.num_cells_array,
+        d.num_quadrature_array,
+        d.lanes_per_block,
+        d.jacobian_first,
+        d.jacobian_dot_qd_first,
+        d.velocity_first,
+        d.gravity_first,
+        d.jacobian_second,
+        d.jacobian_dot_qd_second,
+        d.velocity_second,
+        d.gravity_second,
+        d.inertia,
+        d.coriolis_qd,
+        d.gravity_force,
+    )
 
 
 def launch_floating_persistent_chain(
@@ -752,3 +935,6 @@ __all__ = [
     "floating_persistent_chain_kernel",
     "launch_floating_persistent_chain",
 ]
+
+
+__all__ += ["FloatingPersistentChainArrays", "packed_floating_persistent_chain_kernel"]

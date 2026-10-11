@@ -123,6 +123,7 @@ nav:
     - Contributing: development/contributing.md
     - Extending SoRoMoX: development/extending.md
     - System Benchmarking: development/benchmarking.md
+    - Packed GVS Warp Kernels: development/packed-gvs-warp.md
     - Changelog: development/changelog.md
   - Authors & Maintainers: authors.md
 

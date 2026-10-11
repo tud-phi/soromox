@@ -6,6 +6,14 @@
     kinematics, dynamics, or actuation pipelines with preallocated Warp
     buffers.
 
+## Heterogeneous worlds
+
+Typed packed kernels and explicit-index numerical functions are available for
+joints, cells, chains, kinematics and actuation. See the
+[packed kernel guide](../../../development/packed-gvs-warp.md) for descriptor
+layouts, launch dimensions, and optional forward optimizations. Existing
+homogeneous kernel signatures remain supported.
+
 ## Linear-threadlike actuation
 
 `GVSThreadlikeOperands.from_model(robot)` exposes the ordered built-in linear

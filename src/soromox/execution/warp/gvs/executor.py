@@ -97,6 +97,7 @@ def _local_dynamics_terms(
     operands: GVSOperands | GVSFloatingOperands,
     q_internal: Array,
     qd_internal: Array,
+    fixed_joint_terms: tuple[Array, ...] | None = None,
 ) -> tuple[Array, ...]:
     """Evaluate the shared joint and link-cell operators once.
 
@@ -104,18 +105,24 @@ def _local_dynamics_terms(
         operands: Fixed or floating GVS runtime operands.
         q_internal: Batched internal generalized coordinates.
         qd_internal: Batched internal generalized velocities.
+        fixed_joint_terms: Optional batch-shaped invariant joint operators
+            supplied by the prepared immutable-operand executor.
 
     Returns:
         Joint operators followed by cell operators in chain-kernel order.
     """
-    joint_terms = _evaluate_joint_terms(
-        q_internal,
-        qd_internal,
-        operands.joint_basis,
-        operands.joint_reference,
-        operands.joint_local_to_global,
-        operands.joint_global_to_local,
-        cooperative=operands.block_dim > 1,
+    joint_terms = (
+        fixed_joint_terms
+        if fixed_joint_terms is not None
+        else _evaluate_joint_terms(
+            q_internal,
+            qd_internal,
+            operands.joint_basis,
+            operands.joint_reference,
+            operands.joint_local_to_global,
+            operands.joint_global_to_local,
+            cooperative=operands.block_dim > 1,
+        )
     )
     q_link = _gather_local(q_internal, operands.link_local_to_global)
     qd_link = _gather_local(qd_internal, operands.link_local_to_global)
@@ -123,7 +130,11 @@ def _local_dynamics_terms(
 
 
 def execute_dynamics_terms(
-    operands: GVSOperands | GVSFloatingOperands, q: Array, qd: Array
+    operands: GVSOperands | GVSFloatingOperands,
+    q: Array,
+    qd: Array,
+    *,
+    fixed_joint_terms: tuple[Array, ...] | None = None,
 ) -> tuple[Array, Array, Array]:
     """Assemble batched fixed or floating GVS dynamics in Warp.
 
@@ -135,6 +146,8 @@ def execute_dynamics_terms(
         operands: Fixed or floating shape-generic GVS runtime operands.
         q: FP64 generalized coordinates in the model's storage layout.
         qd: FP64 generalized velocities in the model's velocity layout.
+        fixed_joint_terms: Optional batch-shaped joint operators for immutable
+            fixed joints. Normally supplied by ``prepare_dynamics_terms``.
 
     Returns:
         Batched inertia, convective-force, and gravity-force terms.
@@ -153,7 +166,7 @@ def execute_dynamics_terms(
         cell_link_velocity,
         cell_step_velocity,
         cell_tangent_velocity_dot,
-    ) = _local_dynamics_terms(operands, q_internal, qd_internal)
+    ) = _local_dynamics_terms(operands, q_internal, qd_internal, fixed_joint_terms)
 
     batch_size = q.shape[0]
     num_segments = operands.num_segments

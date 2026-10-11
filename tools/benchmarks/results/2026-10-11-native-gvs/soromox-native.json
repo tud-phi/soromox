@@ -1,0 +1,440 @@
+{
+  "gpu": "NVIDIA GeForce RTX 5090",
+  "jax": "0.11.1",
+  "warp": "1.16.0",
+  "cache_trial": false,
+  "cases": [
+    {
+      "case": "small",
+      "worlds": 32,
+      "dofs": 8,
+      "terms": {
+        "us": 190.55820303037763,
+        "samples_us": [
+          367.89249861612916,
+          167.250691447407,
+          197.11439963430166,
+          183.84940922260284,
+          190.55820303037763
+        ]
+      },
+      "forward": {
+        "us": 212.86139963194728,
+        "samples_us": [
+          292.5451030023396,
+          209.09729646518826,
+          212.86139963194728,
+          214.70260107889771,
+          200.54300548508763
+        ]
+      },
+      "outputs": "/tmp/soromox-native-small-32.npz",
+      "validation": {
+        "terms_bitwise_equal": true,
+        "max_acceleration_abs_error": 1.1368683772161603e-13,
+        "relative_acceleration_inf_error": 2.099182708517509e-16,
+        "inertia_condition_number": 8092.54045129427,
+        "normalized_solve_residuals": [
+          1.182003634458635e-17,
+          1.1820036344586351e-17
+        ]
+      }
+    },
+    {
+      "case": "small",
+      "worlds": 128,
+      "dofs": 8,
+      "terms": {
+        "us": 177.3099065758288,
+        "samples_us": [
+          287.8100029192865,
+          177.3099065758288,
+          179.24710409715772,
+          175.89549534022808,
+          176.9921975210309
+        ]
+      },
+      "forward": {
+        "us": 220.152095425874,
+        "samples_us": [
+          310.56690495461226,
+          213.04029505699873,
+          220.152095425874,
+          231.71380162239075,
+          216.10799012705684
+        ]
+      },
+      "outputs": "/tmp/soromox-native-small-128.npz",
+      "validation": {
+        "terms_bitwise_equal": true,
+        "max_acceleration_abs_error": 1.1368683772161603e-13,
+        "relative_acceleration_inf_error": 2.099182708517509e-16,
+        "inertia_condition_number": 8092.54045129427,
+        "normalized_solve_residuals": [
+          1.182003634458635e-17,
+          1.1820036344586351e-17
+        ]
+      }
+    },
+    {
+      "case": "small",
+      "worlds": 512,
+      "dofs": 8,
+      "terms": {
+        "us": 292.2985004261136,
+        "samples_us": [
+          335.4232059791684,
+          294.5803105831146,
+          283.7443957105279,
+          270.1084944419563,
+          292.2985004261136
+        ]
+      },
+      "forward": {
+        "us": 314.635899849236,
+        "samples_us": [
+          359.2059016227722,
+          322.3923034965992,
+          314.635899849236,
+          297.06989880651236,
+          314.5157010294497
+        ]
+      },
+      "outputs": "/tmp/soromox-native-small-512.npz",
+      "validation": {
+        "terms_bitwise_equal": true,
+        "max_acceleration_abs_error": 1.1368683772161603e-13,
+        "relative_acceleration_inf_error": 2.099182708517509e-16,
+        "inertia_condition_number": 8092.54045129427,
+        "normalized_solve_residuals": [
+          1.182003634458635e-17,
+          1.1820036344586351e-17
+        ]
+      }
+    },
+    {
+      "case": "moving",
+      "worlds": 32,
+      "dofs": 10,
+      "terms": {
+        "us": 173.12150448560715,
+        "samples_us": [
+          269.4802009500563,
+          174.1536078043282,
+          153.774197679013,
+          173.12150448560715,
+          159.5002948306501
+        ]
+      },
+      "forward": {
+        "us": 219.83939222991467,
+        "samples_us": [
+          316.4792084135115,
+          246.46800011396408,
+          219.83939222991467,
+          203.1325944699347,
+          210.92890528962016
+        ]
+      },
+      "outputs": "/tmp/soromox-native-moving-32.npz",
+      "validation": {
+        "terms_bitwise_equal": true,
+        "max_acceleration_abs_error": 0.0,
+        "relative_acceleration_inf_error": 0.0,
+        "inertia_condition_number": 44713592.94759282,
+        "normalized_solve_residuals": [
+          4.717196292603251e-18,
+          4.717196292603251e-18
+        ]
+      }
+    },
+    {
+      "case": "moving",
+      "worlds": 128,
+      "dofs": 10,
+      "terms": {
+        "us": 177.9266051016748,
+        "samples_us": [
+          266.66329940781,
+          173.38430043309927,
+          181.05630297213793,
+          170.956295914948,
+          177.9266051016748
+        ]
+      },
+      "forward": {
+        "us": 217.3052984289825,
+        "samples_us": [
+          288.2843022234738,
+          230.4845955222845,
+          209.0191002935171,
+          207.41219632327557,
+          217.3052984289825
+        ]
+      },
+      "outputs": "/tmp/soromox-native-moving-128.npz",
+      "validation": {
+        "terms_bitwise_equal": true,
+        "max_acceleration_abs_error": 0.0,
+        "relative_acceleration_inf_error": 0.0,
+        "inertia_condition_number": 44713592.94759282,
+        "normalized_solve_residuals": [
+          4.717196292603251e-18,
+          4.717196292603251e-18
+        ]
+      }
+    },
+    {
+      "case": "moving",
+      "worlds": 512,
+      "dofs": 10,
+      "terms": {
+        "us": 285.2697973139584,
+        "samples_us": [
+          323.66960076615214,
+          284.65009527280927,
+          277.1569066680968,
+          293.944391887635,
+          285.2697973139584
+        ]
+      },
+      "forward": {
+        "us": 326.9408945925534,
+        "samples_us": [
+          380.33740129321814,
+          307.05160461366177,
+          321.0005001164973,
+          335.0196988321841,
+          326.9408945925534
+        ]
+      },
+      "outputs": "/tmp/soromox-native-moving-512.npz",
+      "validation": {
+        "terms_bitwise_equal": true,
+        "max_acceleration_abs_error": 0.0,
+        "relative_acceleration_inf_error": 0.0,
+        "inertia_condition_number": 44713592.94759282,
+        "normalized_solve_residuals": [
+          4.717196292603251e-18,
+          4.717196292603251e-18
+        ]
+      }
+    },
+    {
+      "case": "large8",
+      "worlds": 32,
+      "dofs": 144,
+      "terms": {
+        "us": 1434.5225063152611,
+        "samples_us": [
+          1496.1918932385743,
+          1428.1947980634868,
+          1434.757700189948,
+          1434.5225063152611,
+          1425.9204966947436
+        ]
+      },
+      "forward": {
+        "us": 2361.759601626545,
+        "samples_us": [
+          2433.5360038094223,
+          2361.759601626545,
+          2379.2985011823475,
+          2360.4382993653417,
+          2356.49369424209
+        ]
+      },
+      "outputs": "/tmp/soromox-native-large8-32.npz",
+      "validation": {
+        "terms_bitwise_equal": true,
+        "max_acceleration_abs_error": 3.648219717433676e-06,
+        "relative_acceleration_inf_error": 1.603341460207378e-11,
+        "inertia_condition_number": 164857328.99708724,
+        "normalized_solve_residuals": [
+          3.735183851527862e-18,
+          3.0632182394469543e-18
+        ]
+      }
+    },
+    {
+      "case": "large8",
+      "worlds": 128,
+      "dofs": 144,
+      "terms": {
+        "us": 1433.2070015370846,
+        "samples_us": [
+          1477.3617964237928,
+          1431.6436019726098,
+          1437.9278058186173,
+          1433.2070015370846,
+          1432.8618068248034
+        ]
+      },
+      "forward": {
+        "us": 2430.5999046191573,
+        "samples_us": [
+          2466.8411002494395,
+          2417.88950515911,
+          2430.5999046191573,
+          2431.865897960961,
+          2428.3874896354973
+        ]
+      },
+      "outputs": "/tmp/soromox-native-large8-128.npz",
+      "validation": {
+        "terms_bitwise_equal": true,
+        "max_acceleration_abs_error": 4.679731546275434e-06,
+        "relative_acceleration_inf_error": 2.0566764591859273e-11,
+        "inertia_condition_number": 164857328.99708724,
+        "normalized_solve_residuals": [
+          1.9913543422077364e-18,
+          4.272756341192585e-18
+        ]
+      }
+    },
+    {
+      "case": "large8",
+      "worlds": 512,
+      "dofs": 144,
+      "terms": {
+        "us": 4239.322699140757,
+        "samples_us": [
+          4274.513595737517,
+          4233.5047968663275,
+          4236.210708040744,
+          4239.322699140757,
+          4243.705095723271
+        ]
+      },
+      "forward": {
+        "us": 6141.595693770796,
+        "samples_us": [
+          6169.632100500166,
+          6141.595693770796,
+          6138.692796230316,
+          6144.949502777308,
+          6134.5885042101145
+        ]
+      },
+      "outputs": "/tmp/soromox-native-large8-512.npz",
+      "validation": {
+        "terms_bitwise_equal": true,
+        "max_acceleration_abs_error": 6.01434499003517e-06,
+        "relative_acceleration_inf_error": 2.643220371961935e-11,
+        "inertia_condition_number": 164857328.99708724,
+        "normalized_solve_residuals": [
+          2.5770274953153637e-18,
+          3.522044758945944e-18
+        ]
+      }
+    },
+    {
+      "case": "large16",
+      "worlds": 32,
+      "dofs": 288,
+      "terms": {
+        "us": 7771.7059990391135,
+        "samples_us": [
+          7799.185800831765,
+          7768.23740452528,
+          7772.328599821776,
+          7756.934699136764,
+          7771.7059990391135
+        ]
+      },
+      "forward": {
+        "us": 12157.789198681712,
+        "samples_us": [
+          12246.469501405954,
+          12146.007793489844,
+          12169.495597481728,
+          12157.789198681712,
+          12154.274596832693
+        ]
+      },
+      "outputs": "/tmp/soromox-native-large16-32.npz",
+      "validation": {
+        "terms_bitwise_equal": true,
+        "max_acceleration_abs_error": 2.4260988084279234e-05,
+        "relative_acceleration_inf_error": 9.683748812865801e-11,
+        "inertia_condition_number": 822998428.004495,
+        "normalized_solve_residuals": [
+          3.9790910396081495e-18,
+          6.748503116631183e-18
+        ]
+      }
+    },
+    {
+      "case": "large16",
+      "worlds": 128,
+      "dofs": 288,
+      "terms": {
+        "us": 8600.480493623763,
+        "samples_us": [
+          8681.652694940567,
+          8593.60758913681,
+          8613.854204304516,
+          8600.480493623763,
+          8595.902496017516
+        ]
+      },
+      "forward": {
+        "us": 13380.997604690492,
+        "samples_us": [
+          13426.541001535952,
+          13373.084494378418,
+          13337.776705157012,
+          13380.997604690492,
+          13382.339396048337
+        ]
+      },
+      "outputs": "/tmp/soromox-native-large16-128.npz",
+      "validation": {
+        "terms_bitwise_equal": true,
+        "max_acceleration_abs_error": 1.5206023817881942e-06,
+        "relative_acceleration_inf_error": 6.069469000326498e-12,
+        "inertia_condition_number": 822998428.004495,
+        "normalized_solve_residuals": [
+          4.595574807855365e-18,
+          4.342426116081206e-18
+        ]
+      }
+    },
+    {
+      "case": "large16",
+      "worlds": 512,
+      "dofs": 288,
+      "terms": {
+        "us": 34012.938605155796,
+        "samples_us": [
+          34025.283297523856,
+          33958.1478969194,
+          34011.92519813776,
+          34039.70979852602,
+          34012.938605155796
+        ]
+      },
+      "forward": {
+        "us": 44231.158995535225,
+        "samples_us": [
+          44318.686705082655,
+          44204.72589554265,
+          44242.654205299914,
+          44231.158995535225,
+          44211.29219699651
+        ]
+      },
+      "outputs": "/tmp/soromox-native-large16-512.npz",
+      "validation": {
+        "terms_bitwise_equal": true,
+        "max_acceleration_abs_error": 9.443330327485455e-06,
+        "relative_acceleration_inf_error": 3.769295732334299e-11,
+        "inertia_condition_number": 822998428.004495,
+        "normalized_solve_residuals": [
+          4.417693272252097e-18,
+          3.969009169823421e-18
+        ]
+      }
+    }
+  ]
+}

@@ -38,6 +38,89 @@ wp.set_module_options({"enable_backward": False})
 SPATIAL_DIM = 6
 
 
+@wp.func
+def gvs_node_pose_twist_at(
+    environment: int,
+    joint_adjoint: wp.array2d[wp.float64],
+    joint_velocity: wp.array2d[wp.float64],
+    cell_adjoint: wp.array2d[wp.float64],
+    cell_link_velocity: wp.array2d[wp.float64],
+    base_transform: wp.array2d[wp.float64],
+    segment_lengths: wp.array[wp.float64],
+    num_cells_array: wp.array[wp.int32],
+    node_pose: wp.array2d[wp.float64],
+    node_twist: wp.array2d[wp.float64],
+):
+    """Propagate cell-boundary poses and one Jacobian direction.
+
+    ``joint_velocity`` and ``cell_link_velocity`` are the already-contracted
+    local tangent products produced by the GVS joint and cell term kernels.
+
+    Args:
+        joint_adjoint: Flattened inverse adjoints for every joint.
+        joint_velocity: Joint tangent products for the active direction.
+        cell_adjoint: Flattened inverse adjoints for every full link cell.
+        cell_link_velocity: Cell tangent products for the active direction.
+        base_transform: Absolute fixed-base transform.
+        segment_lengths: Physical segment lengths.
+        num_cells_array: One-entry padded cell count.
+        node_pose: Cell-boundary pose output.
+        node_twist: Cell-boundary spatial JVP output.
+
+    Returns:
+        None. ``node_pose`` and ``node_twist`` are written in place.
+    """
+    num_segments = segment_lengths.shape[0]
+    num_cells = num_cells_array[0]
+    current_pose = wp.mat44d()
+    current_twist = Vec6d()
+    row = int(0)
+    while row < 4:
+        column = int(0)
+        while column < 4:
+            current_pose[row, column] = base_transform[row, column]
+            column += 1
+        row += 1
+    segment = int(0)
+    while segment < num_segments:
+        joint_base = (environment * num_segments + segment) * SPATIAL_DIM
+        current_pose = current_pose * _relative_pose_from_inverse_adjoint(
+            joint_adjoint, joint_base
+        )
+        joint_twist = Vec6d()
+        row = int(0)
+        while row < SPATIAL_DIM:
+            joint_twist[row] = joint_velocity[joint_base + row, 0]
+            row += 1
+        current_twist = _flattened_matrix_action(
+            joint_adjoint, joint_base, current_twist + joint_twist
+        )
+        node_item = (environment * num_segments + segment) * (num_cells + 1)
+        _store_node_pose(node_pose, node_item, current_pose)
+        _store_spatial_vector(node_twist, node_item, current_twist)
+        cell = int(0)
+        while cell < num_cells:
+            cell_base = (
+                (environment * num_segments + segment) * num_cells + cell
+            ) * SPATIAL_DIM
+            current_pose = current_pose * _relative_pose_from_inverse_adjoint(
+                cell_adjoint, cell_base
+            )
+            link_twist = Vec6d()
+            row = int(0)
+            while row < SPATIAL_DIM:
+                link_twist[row] = cell_link_velocity[cell_base + row, 0]
+                row += 1
+            current_twist = _flattened_matrix_action(
+                cell_adjoint, cell_base, current_twist + link_twist
+            )
+            node_item += 1
+            _store_node_pose(node_pose, node_item, current_pose)
+            _store_spatial_vector(node_twist, node_item, current_twist)
+            cell += 1
+        segment += 1
+
+
 @wp.kernel(enable_backward=False)
 def gvs_node_pose_twist_kernel(
     joint_adjoint: wp.array2d[wp.float64],
@@ -69,63 +152,59 @@ def gvs_node_pose_twist_kernel(
     Returns:
         None. ``node_pose`` and ``node_twist`` are written in place.
     """
-
     environment = wp.tid()
-    num_segments = segment_lengths.shape[0]
-    num_cells = num_cells_array[0]
-    current_pose = wp.mat44d()
-    current_twist = Vec6d()
-    row = int(0)
-    while row < 4:
-        column = int(0)
-        while column < 4:
-            current_pose[row, column] = base_transform[row, column]
-            column += 1
-        row += 1
+    gvs_node_pose_twist_at(
+        environment,
+        joint_adjoint,
+        joint_velocity,
+        cell_adjoint,
+        cell_link_velocity,
+        base_transform,
+        segment_lengths,
+        num_cells_array,
+        node_pose,
+        node_twist,
+    )
 
-    segment = int(0)
-    while segment < num_segments:
-        joint_base = (environment * num_segments + segment) * SPATIAL_DIM
-        current_pose = current_pose * _relative_pose_from_inverse_adjoint(
-            joint_adjoint, joint_base
-        )
-        joint_twist = Vec6d()
-        row = int(0)
-        while row < SPATIAL_DIM:
-            joint_twist[row] = joint_velocity[joint_base + row, 0]
-            row += 1
-        current_twist = _flattened_matrix_action(
-            joint_adjoint, joint_base, current_twist + joint_twist
-        )
-        node_item = (environment * num_segments + segment) * (num_cells + 1)
-        _store_node_pose(node_pose, node_item, current_pose)
-        _store_spatial_vector(node_twist, node_item, current_twist)
 
-        cell = int(0)
-        while cell < num_cells:
-            cell_base = (
-                (environment * num_segments + segment) * num_cells + cell
-            ) * SPATIAL_DIM
-            current_pose = current_pose * _relative_pose_from_inverse_adjoint(
-                cell_adjoint, cell_base
-            )
-            link_twist = Vec6d()
-            row = int(0)
-            while row < SPATIAL_DIM:
-                link_twist[row] = cell_link_velocity[cell_base + row, 0]
-                row += 1
-            current_twist = _flattened_matrix_action(
-                cell_adjoint, cell_base, current_twist + link_twist
-            )
-            node_item += 1
-            _store_node_pose(node_pose, node_item, current_pose)
-            _store_spatial_vector(node_twist, node_item, current_twist)
-            cell += 1
-        segment += 1
+@wp.struct
+class GvsNodePoseTwistArrays:
+    joint_adjoint: wp.array2d[wp.float64]
+    joint_velocity: wp.array2d[wp.float64]
+    cell_adjoint: wp.array2d[wp.float64]
+    cell_link_velocity: wp.array2d[wp.float64]
+    base_transform: wp.array2d[wp.float64]
+    segment_lengths: wp.array[wp.float64]
+    num_cells_array: wp.array[wp.int32]
+    node_pose: wp.array2d[wp.float64]
+    node_twist: wp.array2d[wp.float64]
 
 
 @wp.kernel(enable_backward=False)
-def gvs_pose_twist_samples_kernel(
+def packed_gvs_node_pose_twist_kernel(
+    worlds: wp.array(dtype=GvsNodePoseTwistArrays), work: wp.array(dtype=wp.vec3i)
+):
+    item = wp.tid()
+    entry = work[item]
+    d = worlds[entry[0]]
+    gvs_node_pose_twist_at(
+        0,
+        d.joint_adjoint,
+        d.joint_velocity,
+        d.cell_adjoint,
+        d.cell_link_velocity,
+        d.base_transform,
+        d.segment_lengths,
+        d.num_cells_array,
+        d.node_pose,
+        d.node_twist,
+    )
+
+
+@wp.func
+def gvs_pose_twist_samples_at(
+    environment: int,
+    sample: int,
     q: wp.array2d[wp.float64],
     qd: wp.array2d[wp.float64],
     s: wp.array2d[wp.float64],
@@ -176,8 +255,6 @@ def gvs_pose_twist_samples_kernel(
     Returns:
         None. ``poses`` and ``twists`` are written in place.
     """
-
-    environment, sample = wp.tid()
     num_segments = segment_lengths.shape[0]
     num_cells = num_cells_array[0]
     abscissa = s[environment, sample]
@@ -279,7 +356,6 @@ def gvs_pose_twist_samples_kernel(
         _load_spatial_vector(node_twist, node_item) + partial_twist,
     )
     inertial_twist = _rotate_spatial_to_inertial(pose, body_twist)
-
     row = int(0)
     while row < 4:
         column = int(0)
@@ -294,7 +370,148 @@ def gvs_pose_twist_samples_kernel(
 
 
 @wp.kernel(enable_backward=False)
-def gvs_sample_vjp_kernel(
+def gvs_pose_twist_samples_kernel(
+    q: wp.array2d[wp.float64],
+    qd: wp.array2d[wp.float64],
+    s: wp.array2d[wp.float64],
+    link_local_to_global: wp.array2d[wp.int32],
+    link_basis_rows: wp.array2d[wp.int32],
+    link_reference_z1: wp.array2d[wp.float64],
+    link_reference_z2: wp.array2d[wp.float64],
+    segment_lengths: wp.array[wp.float64],
+    segment_starts: wp.array[wp.float64],
+    integration_points: wp.array2d[wp.float64],
+    basis_type_index: wp.array[wp.int32],
+    basis_active_params: wp.array2d[wp.float64],
+    basis_order_params: wp.array2d[wp.float64],
+    magnus_points: wp.array[wp.float64],
+    scale_rotations_array: wp.array[wp.int32],
+    epsilons: wp.array[wp.float64],
+    num_cells_array: wp.array[wp.int32],
+    node_pose: wp.array2d[wp.float64],
+    node_twist: wp.array2d[wp.float64],
+    poses: wp.array4d[wp.float64],
+    twists: wp.array3d[wp.float64],
+):
+    """Evaluate poses and inertial twists ``J(q, s) @ qd`` at samples.
+
+    Args:
+        q: Batched active configurations ``(E, D)``.
+        qd: Batched generalized-velocity directions ``(E, D)``.
+        s: Per-environment sample abscissae ``(E, N)``.
+        link_local_to_global: Padded link-local to active-coordinate map.
+        link_basis_rows: Spatial row occupied by every local basis column.
+        link_reference_z1: Reference strain at first Magnus nodes.
+        link_reference_z2: Reference strain at second Magnus nodes.
+        segment_lengths: Physical segment lengths.
+        segment_starts: Cumulative segment-start coordinates.
+        integration_points: Normalized cell-boundary coordinates.
+        basis_type_index: Basis-family index for every segment.
+        basis_active_params: Per-row basis activation parameters.
+        basis_order_params: Per-row basis orders.
+        magnus_points: Normalized two-point Magnus coordinates.
+        scale_rotations_array: One-entry rotational-basis scaling flag.
+        epsilons: Exponential and tangent thresholds.
+        num_cells_array: One-entry padded cell count.
+        node_pose: Cell-boundary poses produced by the node recurrence.
+        node_twist: Cell-boundary spatial JVPs produced by the node recurrence.
+        poses: Sample pose output ``(E, N, 4, 4)``.
+        twists: Inertial-frame sample JVP output ``(E, N, 6)``.
+
+    Returns:
+        None. ``poses`` and ``twists`` are written in place.
+    """
+    environment, sample = wp.tid()
+    gvs_pose_twist_samples_at(
+        environment,
+        sample,
+        q,
+        qd,
+        s,
+        link_local_to_global,
+        link_basis_rows,
+        link_reference_z1,
+        link_reference_z2,
+        segment_lengths,
+        segment_starts,
+        integration_points,
+        basis_type_index,
+        basis_active_params,
+        basis_order_params,
+        magnus_points,
+        scale_rotations_array,
+        epsilons,
+        num_cells_array,
+        node_pose,
+        node_twist,
+        poses,
+        twists,
+    )
+
+
+@wp.struct
+class GvsPoseTwistSamplesArrays:
+    q: wp.array2d[wp.float64]
+    qd: wp.array2d[wp.float64]
+    s: wp.array2d[wp.float64]
+    link_local_to_global: wp.array2d[wp.int32]
+    link_basis_rows: wp.array2d[wp.int32]
+    link_reference_z1: wp.array2d[wp.float64]
+    link_reference_z2: wp.array2d[wp.float64]
+    segment_lengths: wp.array[wp.float64]
+    segment_starts: wp.array[wp.float64]
+    integration_points: wp.array2d[wp.float64]
+    basis_type_index: wp.array[wp.int32]
+    basis_active_params: wp.array2d[wp.float64]
+    basis_order_params: wp.array2d[wp.float64]
+    magnus_points: wp.array[wp.float64]
+    scale_rotations_array: wp.array[wp.int32]
+    epsilons: wp.array[wp.float64]
+    num_cells_array: wp.array[wp.int32]
+    node_pose: wp.array2d[wp.float64]
+    node_twist: wp.array2d[wp.float64]
+    poses: wp.array4d[wp.float64]
+    twists: wp.array3d[wp.float64]
+
+
+@wp.kernel(enable_backward=False)
+def packed_gvs_pose_twist_samples_kernel(
+    worlds: wp.array(dtype=GvsPoseTwistSamplesArrays), work: wp.array(dtype=wp.vec3i)
+):
+    item = wp.tid()
+    entry = work[item]
+    d = worlds[entry[0]]
+    gvs_pose_twist_samples_at(
+        0,
+        entry[1],
+        d.q,
+        d.qd,
+        d.s,
+        d.link_local_to_global,
+        d.link_basis_rows,
+        d.link_reference_z1,
+        d.link_reference_z2,
+        d.segment_lengths,
+        d.segment_starts,
+        d.integration_points,
+        d.basis_type_index,
+        d.basis_active_params,
+        d.basis_order_params,
+        d.magnus_points,
+        d.scale_rotations_array,
+        d.epsilons,
+        d.num_cells_array,
+        d.node_pose,
+        d.node_twist,
+        d.poses,
+        d.twists,
+    )
+
+
+@wp.func
+def gvs_sample_vjp_at(
+    environment: int,
+    sample: int,
     q: wp.array2d[wp.float64],
     s: wp.array2d[wp.float64],
     inertial_wrenches: wp.array3d[wp.float64],
@@ -344,8 +561,6 @@ def gvs_sample_vjp_kernel(
         None. ``node_wrench`` and ``generalized_force`` are accumulated in
         place.
     """
-
-    environment, sample = wp.tid()
     num_segments = segment_lengths.shape[0]
     num_cells = num_cells_array[0]
     abscissa = s[environment, sample]
@@ -430,8 +645,7 @@ def gvs_sample_vjp_kernel(
     exponential_coefficients = _forward_coefficients(angle_sq)
     translation = _translation(omega, linear, exponential_coefficients)
     body_wrench = _rotate_spatial_from_inertial(
-        pose,
-        _load_spatial_vector3d(inertial_wrenches, environment, sample),
+        pose, _load_spatial_vector3d(inertial_wrenches, environment, sample)
     )
     source_wrench = _adjoint_inverse_transpose_action(
         omega, translation, angle_sq, exponential_coefficients, body_wrench
@@ -440,7 +654,6 @@ def gvs_sample_vjp_kernel(
     while row < SPATIAL_DIM:
         wp.atomic_add(node_wrench, node_item, row, source_wrench[row])
         row += 1
-
     local = int(0)
     while local < link_local_to_global.shape[1]:
         global_index = link_local_to_global[segment, local]
@@ -484,6 +697,229 @@ def gvs_sample_vjp_kernel(
 
 
 @wp.kernel(enable_backward=False)
+def gvs_sample_vjp_kernel(
+    q: wp.array2d[wp.float64],
+    s: wp.array2d[wp.float64],
+    inertial_wrenches: wp.array3d[wp.float64],
+    link_local_to_global: wp.array2d[wp.int32],
+    link_basis_rows: wp.array2d[wp.int32],
+    link_reference_z1: wp.array2d[wp.float64],
+    link_reference_z2: wp.array2d[wp.float64],
+    segment_lengths: wp.array[wp.float64],
+    segment_starts: wp.array[wp.float64],
+    integration_points: wp.array2d[wp.float64],
+    basis_type_index: wp.array[wp.int32],
+    basis_active_params: wp.array2d[wp.float64],
+    basis_order_params: wp.array2d[wp.float64],
+    magnus_points: wp.array[wp.float64],
+    scale_rotations_array: wp.array[wp.int32],
+    epsilons: wp.array[wp.float64],
+    num_cells_array: wp.array[wp.int32],
+    node_pose: wp.array2d[wp.float64],
+    node_wrench: wp.array2d[wp.float64],
+    generalized_force: wp.array2d[wp.float64],
+):
+    """Seed node cotangents and partial-cell generalized forces.
+
+    Args:
+        q: Batched active configurations ``(E, D)``.
+        s: Per-environment sample abscissae ``(E, N)``.
+        inertial_wrenches: Inertial-frame sample cotangents ``(E, N, 6)``.
+        link_local_to_global: Padded link-local to active-coordinate map.
+        link_basis_rows: Spatial row occupied by every local basis column.
+        link_reference_z1: Reference strain at first Magnus nodes.
+        link_reference_z2: Reference strain at second Magnus nodes.
+        segment_lengths: Physical segment lengths.
+        segment_starts: Cumulative segment-start coordinates.
+        integration_points: Normalized cell-boundary coordinates.
+        basis_type_index: Basis-family index for every segment.
+        basis_active_params: Per-row basis activation parameters.
+        basis_order_params: Per-row basis orders.
+        magnus_points: Normalized two-point Magnus coordinates.
+        scale_rotations_array: One-entry rotational-basis scaling flag.
+        epsilons: Exponential and tangent thresholds.
+        num_cells_array: One-entry padded cell count.
+        node_pose: Cell-boundary poses produced by the node recurrence.
+        node_wrench: Cell-boundary cotangent accumulator.
+        generalized_force: Generalized-force accumulator ``(E, D)``.
+
+    Returns:
+        None. ``node_wrench`` and ``generalized_force`` are accumulated in
+        place.
+    """
+    environment, sample = wp.tid()
+    gvs_sample_vjp_at(
+        environment,
+        sample,
+        q,
+        s,
+        inertial_wrenches,
+        link_local_to_global,
+        link_basis_rows,
+        link_reference_z1,
+        link_reference_z2,
+        segment_lengths,
+        segment_starts,
+        integration_points,
+        basis_type_index,
+        basis_active_params,
+        basis_order_params,
+        magnus_points,
+        scale_rotations_array,
+        epsilons,
+        num_cells_array,
+        node_pose,
+        node_wrench,
+        generalized_force,
+    )
+
+
+@wp.struct
+class GvsSampleVjpArrays:
+    q: wp.array2d[wp.float64]
+    s: wp.array2d[wp.float64]
+    inertial_wrenches: wp.array3d[wp.float64]
+    link_local_to_global: wp.array2d[wp.int32]
+    link_basis_rows: wp.array2d[wp.int32]
+    link_reference_z1: wp.array2d[wp.float64]
+    link_reference_z2: wp.array2d[wp.float64]
+    segment_lengths: wp.array[wp.float64]
+    segment_starts: wp.array[wp.float64]
+    integration_points: wp.array2d[wp.float64]
+    basis_type_index: wp.array[wp.int32]
+    basis_active_params: wp.array2d[wp.float64]
+    basis_order_params: wp.array2d[wp.float64]
+    magnus_points: wp.array[wp.float64]
+    scale_rotations_array: wp.array[wp.int32]
+    epsilons: wp.array[wp.float64]
+    num_cells_array: wp.array[wp.int32]
+    node_pose: wp.array2d[wp.float64]
+    node_wrench: wp.array2d[wp.float64]
+    generalized_force: wp.array2d[wp.float64]
+
+
+@wp.kernel(enable_backward=False)
+def packed_gvs_sample_vjp_kernel(
+    worlds: wp.array(dtype=GvsSampleVjpArrays), work: wp.array(dtype=wp.vec3i)
+):
+    item = wp.tid()
+    entry = work[item]
+    d = worlds[entry[0]]
+    gvs_sample_vjp_at(
+        0,
+        entry[1],
+        d.q,
+        d.s,
+        d.inertial_wrenches,
+        d.link_local_to_global,
+        d.link_basis_rows,
+        d.link_reference_z1,
+        d.link_reference_z2,
+        d.segment_lengths,
+        d.segment_starts,
+        d.integration_points,
+        d.basis_type_index,
+        d.basis_active_params,
+        d.basis_order_params,
+        d.magnus_points,
+        d.scale_rotations_array,
+        d.epsilons,
+        d.num_cells_array,
+        d.node_pose,
+        d.node_wrench,
+        d.generalized_force,
+    )
+
+
+@wp.func
+def gvs_node_vjp_at(
+    environment: int,
+    joint_adjoint: wp.array2d[wp.float64],
+    joint_tangent: wp.array2d[wp.float64],
+    cell_adjoint: wp.array2d[wp.float64],
+    cell_tangent_local: wp.array2d[wp.float64],
+    link_local_to_global: wp.array2d[wp.int32],
+    segment_lengths: wp.array[wp.float64],
+    num_cells_array: wp.array[wp.int32],
+    node_wrench: wp.array2d[wp.float64],
+    generalized_force: wp.array2d[wp.float64],
+):
+    """Reverse the serial node recurrence on Warp CPU.
+
+    Args:
+        joint_adjoint: Flattened inverse adjoints for every joint.
+        joint_tangent: Joint tangents in active coordinates.
+        cell_adjoint: Flattened inverse adjoints for every full link cell.
+        cell_tangent_local: Full-cell tangents in padded local coordinates.
+        link_local_to_global: Padded link-local to active-coordinate map.
+        segment_lengths: Physical segment lengths.
+        num_cells_array: One-entry padded cell count.
+        node_wrench: Cell-boundary cotangent accumulator.
+        generalized_force: Generalized-force accumulator ``(E, D)``.
+
+    Returns:
+        None. ``node_wrench`` and ``generalized_force`` are accumulated in
+        place.
+    """
+    num_segments = segment_lengths.shape[0]
+    num_cells = num_cells_array[0]
+    segment = num_segments - 1
+    while segment >= 0:
+        node_start = (environment * num_segments + segment) * (num_cells + 1)
+        cell = num_cells - 1
+        while cell >= 0:
+            cell_base = (
+                (environment * num_segments + segment) * num_cells + cell
+            ) * SPATIAL_DIM
+            next_item = node_start + cell + 1
+            previous_item = next_item - 1
+            source_wrench = _flattened_matrix_transpose_action(
+                cell_adjoint, cell_base, _load_spatial_vector(node_wrench, next_item)
+            )
+            row = int(0)
+            while row < SPATIAL_DIM:
+                node_wrench[previous_item, row] += source_wrench[row]
+                row += 1
+            local = int(0)
+            while local < link_local_to_global.shape[1]:
+                global_index = link_local_to_global[segment, local]
+                if global_index >= 0:
+                    effort = wp.float64(0.0)
+                    row = int(0)
+                    while row < SPATIAL_DIM:
+                        effort += (
+                            cell_tangent_local[cell_base + row, local]
+                            * source_wrench[row]
+                        )
+                        row += 1
+                    generalized_force[environment, global_index] += effort
+                local += 1
+            cell -= 1
+        joint_base = (environment * num_segments + segment) * SPATIAL_DIM
+        source_wrench = _flattened_matrix_transpose_action(
+            joint_adjoint, joint_base, _load_spatial_vector(node_wrench, node_start)
+        )
+        global_index = int(0)
+        while global_index < generalized_force.shape[1]:
+            effort = wp.float64(0.0)
+            row = int(0)
+            while row < SPATIAL_DIM:
+                effort += (
+                    joint_tangent[joint_base + row, global_index] * source_wrench[row]
+                )
+                row += 1
+            generalized_force[environment, global_index] += effort
+            global_index += 1
+        if segment > 0:
+            previous_end = node_start - 1
+            row = int(0)
+            while row < SPATIAL_DIM:
+                node_wrench[previous_end, row] += source_wrench[row]
+                row += 1
+        segment -= 1
+
+
+@wp.kernel(enable_backward=False)
 def gvs_node_vjp_kernel(
     joint_adjoint: wp.array2d[wp.float64],
     joint_tangent: wp.array2d[wp.float64],
@@ -512,73 +948,59 @@ def gvs_node_vjp_kernel(
         None. ``node_wrench`` and ``generalized_force`` are accumulated in
         place.
     """
-
     environment = wp.tid()
-    num_segments = segment_lengths.shape[0]
-    num_cells = num_cells_array[0]
-    segment = num_segments - 1
-    while segment >= 0:
-        node_start = (environment * num_segments + segment) * (num_cells + 1)
-        cell = num_cells - 1
-        while cell >= 0:
-            cell_base = (
-                (environment * num_segments + segment) * num_cells + cell
-            ) * SPATIAL_DIM
-            next_item = node_start + cell + 1
-            previous_item = next_item - 1
-            source_wrench = _flattened_matrix_transpose_action(
-                cell_adjoint,
-                cell_base,
-                _load_spatial_vector(node_wrench, next_item),
-            )
-            row = int(0)
-            while row < SPATIAL_DIM:
-                node_wrench[previous_item, row] += source_wrench[row]
-                row += 1
-            local = int(0)
-            while local < link_local_to_global.shape[1]:
-                global_index = link_local_to_global[segment, local]
-                if global_index >= 0:
-                    effort = wp.float64(0.0)
-                    row = int(0)
-                    while row < SPATIAL_DIM:
-                        effort += (
-                            cell_tangent_local[cell_base + row, local]
-                            * source_wrench[row]
-                        )
-                        row += 1
-                    generalized_force[environment, global_index] += effort
-                local += 1
-            cell -= 1
+    gvs_node_vjp_at(
+        environment,
+        joint_adjoint,
+        joint_tangent,
+        cell_adjoint,
+        cell_tangent_local,
+        link_local_to_global,
+        segment_lengths,
+        num_cells_array,
+        node_wrench,
+        generalized_force,
+    )
 
-        joint_base = (environment * num_segments + segment) * SPATIAL_DIM
-        source_wrench = _flattened_matrix_transpose_action(
-            joint_adjoint,
-            joint_base,
-            _load_spatial_vector(node_wrench, node_start),
-        )
-        global_index = int(0)
-        while global_index < generalized_force.shape[1]:
-            effort = wp.float64(0.0)
-            row = int(0)
-            while row < SPATIAL_DIM:
-                effort += (
-                    joint_tangent[joint_base + row, global_index] * source_wrench[row]
-                )
-                row += 1
-            generalized_force[environment, global_index] += effort
-            global_index += 1
-        if segment > 0:
-            previous_end = node_start - 1
-            row = int(0)
-            while row < SPATIAL_DIM:
-                node_wrench[previous_end, row] += source_wrench[row]
-                row += 1
-        segment -= 1
+
+@wp.struct
+class GvsNodeVjpArrays:
+    joint_adjoint: wp.array2d[wp.float64]
+    joint_tangent: wp.array2d[wp.float64]
+    cell_adjoint: wp.array2d[wp.float64]
+    cell_tangent_local: wp.array2d[wp.float64]
+    link_local_to_global: wp.array2d[wp.int32]
+    segment_lengths: wp.array[wp.float64]
+    num_cells_array: wp.array[wp.int32]
+    node_wrench: wp.array2d[wp.float64]
+    generalized_force: wp.array2d[wp.float64]
 
 
 @wp.kernel(enable_backward=False)
-def gvs_cooperative_node_vjp_kernel(
+def packed_gvs_node_vjp_kernel(
+    worlds: wp.array(dtype=GvsNodeVjpArrays), work: wp.array(dtype=wp.vec3i)
+):
+    item = wp.tid()
+    entry = work[item]
+    d = worlds[entry[0]]
+    gvs_node_vjp_at(
+        0,
+        d.joint_adjoint,
+        d.joint_tangent,
+        d.cell_adjoint,
+        d.cell_tangent_local,
+        d.link_local_to_global,
+        d.segment_lengths,
+        d.num_cells_array,
+        d.node_wrench,
+        d.generalized_force,
+    )
+
+
+@wp.func
+def gvs_cooperative_node_vjp_at(
+    environment: int,
+    lane: int,
     joint_adjoint: wp.array2d[wp.float64],
     joint_tangent: wp.array2d[wp.float64],
     cell_adjoint: wp.array2d[wp.float64],
@@ -608,8 +1030,6 @@ def gvs_cooperative_node_vjp_kernel(
         None. ``node_wrench``, ``edge_wrench``, and ``generalized_force`` are
         updated in place.
     """
-
-    environment, lane = wp.tid()
     num_segments = segment_lengths.shape[0]
     num_cells = num_cells_array[0]
     barrier = wp.tile_zeros(shape=(1,), dtype=wp.int32, storage="shared")
@@ -651,13 +1071,10 @@ def gvs_cooperative_node_vjp_kernel(
                 global_index += wp.block_dim()
             wp.tile_scatter_masked(barrier, 0, int(0), lane == 0)
             cell -= 1
-
         joint_base = (environment * num_segments + segment) * SPATIAL_DIM
         if lane == 0:
             source_wrench = _flattened_matrix_transpose_action(
-                joint_adjoint,
-                joint_base,
-                _load_spatial_vector(node_wrench, node_start),
+                joint_adjoint, joint_base, _load_spatial_vector(node_wrench, node_start)
             )
             row = int(0)
             while row < SPATIAL_DIM:
@@ -680,6 +1097,91 @@ def gvs_cooperative_node_vjp_kernel(
             global_index += wp.block_dim()
         wp.tile_scatter_masked(barrier, 0, int(0), lane == 0)
         segment -= 1
+
+
+@wp.kernel(enable_backward=False)
+def gvs_cooperative_node_vjp_kernel(
+    joint_adjoint: wp.array2d[wp.float64],
+    joint_tangent: wp.array2d[wp.float64],
+    cell_adjoint: wp.array2d[wp.float64],
+    cell_tangent_local: wp.array2d[wp.float64],
+    link_global_to_local: wp.array2d[wp.int32],
+    segment_lengths: wp.array[wp.float64],
+    num_cells_array: wp.array[wp.int32],
+    node_wrench: wp.array2d[wp.float64],
+    edge_wrench: wp.array2d[wp.float64],
+    generalized_force: wp.array2d[wp.float64],
+):
+    """Reverse node cotangents cooperatively on CUDA.
+
+    Args:
+        joint_adjoint: Flattened inverse adjoints for every joint.
+        joint_tangent: Joint tangents in active coordinates.
+        cell_adjoint: Flattened inverse adjoints for every full link cell.
+        cell_tangent_local: Full-cell tangents in padded local coordinates.
+        link_global_to_local: Active-to-link-local coordinate map.
+        segment_lengths: Physical segment lengths.
+        num_cells_array: One-entry padded cell count.
+        node_wrench: Cell-boundary cotangent accumulator.
+        edge_wrench: Per-environment six-vector edge scratch.
+        generalized_force: Generalized-force accumulator ``(E, D)``.
+
+    Returns:
+        None. ``node_wrench``, ``edge_wrench``, and ``generalized_force`` are
+        updated in place.
+    """
+    environment, lane = wp.tid()
+    gvs_cooperative_node_vjp_at(
+        environment,
+        lane,
+        joint_adjoint,
+        joint_tangent,
+        cell_adjoint,
+        cell_tangent_local,
+        link_global_to_local,
+        segment_lengths,
+        num_cells_array,
+        node_wrench,
+        edge_wrench,
+        generalized_force,
+    )
+
+
+@wp.struct
+class GvsCooperativeNodeVjpArrays:
+    joint_adjoint: wp.array2d[wp.float64]
+    joint_tangent: wp.array2d[wp.float64]
+    cell_adjoint: wp.array2d[wp.float64]
+    cell_tangent_local: wp.array2d[wp.float64]
+    link_global_to_local: wp.array2d[wp.int32]
+    segment_lengths: wp.array[wp.float64]
+    num_cells_array: wp.array[wp.int32]
+    node_wrench: wp.array2d[wp.float64]
+    edge_wrench: wp.array2d[wp.float64]
+    generalized_force: wp.array2d[wp.float64]
+
+
+@wp.kernel(enable_backward=False)
+def packed_gvs_cooperative_node_vjp_kernel(
+    worlds: wp.array(dtype=GvsCooperativeNodeVjpArrays), work: wp.array(dtype=wp.vec3i)
+):
+    item, lane = wp.tid()
+    entry = work[item]
+    d = worlds[entry[0]]
+    gvs_cooperative_node_vjp_at(
+        0,
+        lane,
+        d.joint_adjoint,
+        d.joint_tangent,
+        d.cell_adjoint,
+        d.cell_tangent_local,
+        d.link_global_to_local,
+        d.segment_lengths,
+        d.num_cells_array,
+        d.node_wrench,
+        d.edge_wrench,
+        d.generalized_force,
+    )
 
 
 def launch_gvs_forward_kinematics_and_jvp(
@@ -950,4 +1452,95 @@ __all__ = [
     "launch_gvs_forward_kinematics_and_jvp",
     "launch_gvs_inertial_jacobian_vjp",
     "launch_inertial_jacobian_vjp",
+]
+
+
+__all__ += [
+    "GvsNodePoseTwistArrays",
+    "packed_gvs_node_pose_twist_kernel",
+    "GvsPoseTwistSamplesArrays",
+    "packed_gvs_pose_twist_samples_kernel",
+    "GvsSampleVjpArrays",
+    "packed_gvs_sample_vjp_kernel",
+    "GvsNodeVjpArrays",
+    "packed_gvs_node_vjp_kernel",
+    "GvsCooperativeNodeVjpArrays",
+    "packed_gvs_cooperative_node_vjp_kernel",
+]
+
+
+@wp.kernel(enable_backward=False)
+def packed_gvs_pose_twist_samples_warp_kernel(
+    worlds: wp.array(dtype=GvsPoseTwistSamplesArrays), work: wp.array(dtype=wp.vec3i)
+):
+    item, lane = wp.tid()
+    entry = work[item]
+    d = worlds[entry[0]]
+    sample = entry[1] + lane
+    if sample < d.s.shape[1]:
+        gvs_pose_twist_samples_at(
+            0,
+            sample,
+            d.q,
+            d.qd,
+            d.s,
+            d.link_local_to_global,
+            d.link_basis_rows,
+            d.link_reference_z1,
+            d.link_reference_z2,
+            d.segment_lengths,
+            d.segment_starts,
+            d.integration_points,
+            d.basis_type_index,
+            d.basis_active_params,
+            d.basis_order_params,
+            d.magnus_points,
+            d.scale_rotations_array,
+            d.epsilons,
+            d.num_cells_array,
+            d.node_pose,
+            d.node_twist,
+            d.poses,
+            d.twists,
+        )
+
+
+@wp.kernel(enable_backward=False)
+def packed_gvs_sample_vjp_warp_kernel(
+    worlds: wp.array(dtype=GvsSampleVjpArrays), work: wp.array(dtype=wp.vec3i)
+):
+    item, lane = wp.tid()
+    entry = work[item]
+    d = worlds[entry[0]]
+    sample = entry[1] + lane
+    if sample < d.s.shape[1]:
+        gvs_sample_vjp_at(
+            0,
+            sample,
+            d.q,
+            d.s,
+            d.inertial_wrenches,
+            d.link_local_to_global,
+            d.link_basis_rows,
+            d.link_reference_z1,
+            d.link_reference_z2,
+            d.segment_lengths,
+            d.segment_starts,
+            d.integration_points,
+            d.basis_type_index,
+            d.basis_active_params,
+            d.basis_order_params,
+            d.magnus_points,
+            d.scale_rotations_array,
+            d.epsilons,
+            d.num_cells_array,
+            d.node_pose,
+            d.node_wrench,
+            d.generalized_force,
+        )
+
+
+__all__ += [
+    "packed_gvs_pose_twist_samples_warp_kernel",
+    "packed_gvs_sample_vjp_warp_kernel",
 ]

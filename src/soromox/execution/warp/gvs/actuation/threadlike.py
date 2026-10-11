@@ -23,6 +23,48 @@ wp.set_module_options({"enable_backward": False})
 GVS_THREADLIKE_FORCE_BLOCK_DIM = 128
 
 
+@wp.func
+def prepare_gvs_threadlike_strain_at(
+    item: int,
+    q: wp.array2d[wp.float64],
+    link_local_to_global: wp.array2d[wp.int32],
+    link_basis: wp.array4d[wp.float64],
+    reference_strain: wp.array3d[wp.float64],
+    strain_workspace: wp.array4d[wp.float64],
+):
+    """Prepare each environment-segment-quadrature strain once.
+
+    Args:
+        q: Batched active configurations with shape ``(E, D)``.
+        link_local_to_global: Padded link-local to active-coordinate map.
+        link_basis: Length-scaled link basis with shape ``(S, Q, 6, L)``.
+        reference_strain: Reference strain with shape ``(S, Q, 6)``.
+        strain_workspace: Caller-owned output workspace ``(E, S, Q, 6)``.
+
+    Returns:
+        None. Prepared strains are written to ``strain_workspace``.
+    """
+    num_points = reference_strain.shape[1]
+    num_segments = reference_strain.shape[0]
+    point = item % num_points
+    item = item // num_points
+    segment = item % num_segments
+    environment = item // num_segments
+    row = int(0)
+    while row < 6:
+        value = reference_strain[segment, point, row]
+        local = int(0)
+        while local < link_local_to_global.shape[1]:
+            global_dof = link_local_to_global[segment, local]
+            if global_dof >= 0:
+                value += (
+                    link_basis[segment, point, row, local] * q[environment, global_dof]
+                )
+            local += 1
+        strain_workspace[environment, segment, point, row] = value
+        row += 1
+
+
 @wp.kernel(enable_backward=False)
 def prepare_gvs_threadlike_strain_kernel(
     q: wp.array2d[wp.float64],
@@ -44,26 +86,36 @@ def prepare_gvs_threadlike_strain_kernel(
         None. Prepared strains are written to ``strain_workspace``.
     """
     item = wp.tid()
-    num_points = reference_strain.shape[1]
-    num_segments = reference_strain.shape[0]
-    point = item % num_points
-    item = item // num_points
-    segment = item % num_segments
-    environment = item // num_segments
+    prepare_gvs_threadlike_strain_at(
+        item, q, link_local_to_global, link_basis, reference_strain, strain_workspace
+    )
 
-    row = int(0)
-    while row < 6:
-        value = reference_strain[segment, point, row]
-        local = int(0)
-        while local < link_local_to_global.shape[1]:
-            global_dof = link_local_to_global[segment, local]
-            if global_dof >= 0:
-                value += (
-                    link_basis[segment, point, row, local] * q[environment, global_dof]
-                )
-            local += 1
-        strain_workspace[environment, segment, point, row] = value
-        row += 1
+
+@wp.struct
+class PrepareGvsThreadlikeStrainArrays:
+    q: wp.array2d[wp.float64]
+    link_local_to_global: wp.array2d[wp.int32]
+    link_basis: wp.array4d[wp.float64]
+    reference_strain: wp.array3d[wp.float64]
+    strain_workspace: wp.array4d[wp.float64]
+
+
+@wp.kernel(enable_backward=False)
+def packed_prepare_gvs_threadlike_strain_kernel(
+    worlds: wp.array(dtype=PrepareGvsThreadlikeStrainArrays),
+    work: wp.array(dtype=wp.vec3i),
+):
+    item = wp.tid()
+    entry = work[item]
+    d = worlds[entry[0]]
+    prepare_gvs_threadlike_strain_at(
+        entry[1],
+        d.q,
+        d.link_local_to_global,
+        d.link_basis,
+        d.reference_strain,
+        d.strain_workspace,
+    )
 
 
 @wp.func
@@ -154,6 +206,80 @@ def _find_link_coordinate(
     return wp.vec2i(-1, -1)
 
 
+@wp.func
+def gvs_threadlike_matrix_at(
+    item: int,
+    strain_workspace: wp.array4d[wp.float64],
+    link_global_to_local: wp.array2d[wp.int32],
+    link_basis: wp.array4d[wp.float64],
+    physical_points: wp.array2d[wp.float64],
+    integration_weights: wp.array2d[wp.float64],
+    routing_intercepts: wp.array2d[wp.float64],
+    routing_slopes: wp.array2d[wp.float64],
+    path_start_segments: wp.array[wp.int32],
+    path_end_segments: wp.array[wp.int32],
+    coordinate_scales: wp.array[wp.float64],
+    epsilons: wp.array[wp.float64],
+    output: wp.array3d[wp.float64],
+):
+    """Integrate one complete environment-DOF-path matrix entry.
+
+    Args:
+        strain_workspace: Prepared quadrature strains ``(E, S, Q, 6)``.
+        link_global_to_local: Active-coordinate to link-local map.
+        link_basis: Length-scaled link basis ``(S, Q, 6, L)``.
+        physical_points: Global backbone coordinates ``(S, Q)``.
+        integration_weights: Physical quadrature weights ``(S, Q)``.
+        routing_intercepts: Linear-routing intercept vectors ``(A, 3)``.
+        routing_slopes: Linear-routing slope vectors ``(A, 3)``.
+        path_start_segments: Inclusive first segment for every path.
+        path_end_segments: Inclusive last segment for every path.
+        coordinate_scales: Signed or physical scale for every path.
+        epsilons: One-entry array containing the normalization threshold.
+        output: Caller-owned actuation matrix ``(E, D, A)``.
+
+    Returns:
+        None. Every matrix entry, including zeros, is written to ``output``.
+    """
+    num_paths = routing_intercepts.shape[0]
+    num_dofs = link_global_to_local.shape[1]
+    path = item % num_paths
+    item = item // num_paths
+    global_dof = item % num_dofs
+    environment = item // num_dofs
+    coordinate = _find_link_coordinate(global_dof, link_global_to_local)
+    segment = coordinate[0]
+    local = coordinate[1]
+    value = wp.float64(0.0)
+    if (
+        local >= 0
+        and segment >= path_start_segments[path]
+        and (segment <= path_end_segments[path])
+    ):
+        point = int(0)
+        while point < physical_points.shape[1]:
+            local_moment = _gvs_local_moment(
+                strain_workspace,
+                environment,
+                segment,
+                point,
+                path,
+                physical_points,
+                routing_intercepts,
+                routing_slopes,
+                epsilons,
+            )
+            projected = wp.float64(0.0)
+            row = int(0)
+            while row < 6:
+                projected += link_basis[segment, point, row, local] * local_moment[row]
+                row += 1
+            value += integration_weights[segment, point] * projected
+            point += 1
+        value *= coordinate_scales[path]
+    output[environment, global_dof, path] = value
+
+
 @wp.kernel(enable_backward=False)
 def gvs_threadlike_matrix_kernel(
     strain_workspace: wp.array4d[wp.float64],
@@ -189,44 +315,139 @@ def gvs_threadlike_matrix_kernel(
         None. Every matrix entry, including zeros, is written to ``output``.
     """
     item = wp.tid()
-    num_paths = routing_intercepts.shape[0]
+    gvs_threadlike_matrix_at(
+        item,
+        strain_workspace,
+        link_global_to_local,
+        link_basis,
+        physical_points,
+        integration_weights,
+        routing_intercepts,
+        routing_slopes,
+        path_start_segments,
+        path_end_segments,
+        coordinate_scales,
+        epsilons,
+        output,
+    )
+
+
+@wp.struct
+class GvsThreadlikeMatrixArrays:
+    strain_workspace: wp.array4d[wp.float64]
+    link_global_to_local: wp.array2d[wp.int32]
+    link_basis: wp.array4d[wp.float64]
+    physical_points: wp.array2d[wp.float64]
+    integration_weights: wp.array2d[wp.float64]
+    routing_intercepts: wp.array2d[wp.float64]
+    routing_slopes: wp.array2d[wp.float64]
+    path_start_segments: wp.array[wp.int32]
+    path_end_segments: wp.array[wp.int32]
+    coordinate_scales: wp.array[wp.float64]
+    epsilons: wp.array[wp.float64]
+    output: wp.array3d[wp.float64]
+
+
+@wp.kernel(enable_backward=False)
+def packed_gvs_threadlike_matrix_kernel(
+    worlds: wp.array(dtype=GvsThreadlikeMatrixArrays), work: wp.array(dtype=wp.vec3i)
+):
+    item = wp.tid()
+    entry = work[item]
+    d = worlds[entry[0]]
+    gvs_threadlike_matrix_at(
+        entry[1],
+        d.strain_workspace,
+        d.link_global_to_local,
+        d.link_basis,
+        d.physical_points,
+        d.integration_weights,
+        d.routing_intercepts,
+        d.routing_slopes,
+        d.path_start_segments,
+        d.path_end_segments,
+        d.coordinate_scales,
+        d.epsilons,
+        d.output,
+    )
+
+
+@wp.func
+def gvs_threadlike_force_at(
+    item: int,
+    strain_workspace: wp.array4d[wp.float64],
+    controls: wp.array2d[wp.float64],
+    link_global_to_local: wp.array2d[wp.int32],
+    link_basis: wp.array4d[wp.float64],
+    physical_points: wp.array2d[wp.float64],
+    integration_weights: wp.array2d[wp.float64],
+    routing_intercepts: wp.array2d[wp.float64],
+    routing_slopes: wp.array2d[wp.float64],
+    path_start_segments: wp.array[wp.int32],
+    path_end_segments: wp.array[wp.int32],
+    coordinate_scales: wp.array[wp.float64],
+    epsilons: wp.array[wp.float64],
+    output: wp.array2d[wp.float64],
+):
+    """Reduce all paths for one active coordinate on Warp CPU.
+
+    Args:
+        strain_workspace: Prepared quadrature strains ``(E, S, Q, 6)``.
+        controls: Batched direct-effort controls ``(E, A)``.
+        link_global_to_local: Active-coordinate to link-local map.
+        link_basis: Length-scaled link basis ``(S, Q, 6, L)``.
+        physical_points: Global backbone coordinates ``(S, Q)``.
+        integration_weights: Physical quadrature weights ``(S, Q)``.
+        routing_intercepts: Linear-routing intercept vectors ``(A, 3)``.
+        routing_slopes: Linear-routing slope vectors ``(A, 3)``.
+        path_start_segments: Inclusive first segment for every path.
+        path_end_segments: Inclusive last segment for every path.
+        coordinate_scales: Signed or physical scale for every path.
+        epsilons: One-entry array containing the normalization threshold.
+        output: Caller-owned generalized force ``(E, D)``.
+
+    Returns:
+        None. Every generalized-force entry is written to ``output``.
+    """
     num_dofs = link_global_to_local.shape[1]
-    path = item % num_paths
-    item = item // num_paths
     global_dof = item % num_dofs
     environment = item // num_dofs
     coordinate = _find_link_coordinate(global_dof, link_global_to_local)
     segment = coordinate[0]
     local = coordinate[1]
-
     value = wp.float64(0.0)
-    if (
-        local >= 0
-        and segment >= path_start_segments[path]
-        and segment <= path_end_segments[path]
-    ):
-        point = int(0)
-        while point < physical_points.shape[1]:
-            local_moment = _gvs_local_moment(
-                strain_workspace,
-                environment,
-                segment,
-                point,
-                path,
-                physical_points,
-                routing_intercepts,
-                routing_slopes,
-                epsilons,
-            )
-            projected = wp.float64(0.0)
-            row = int(0)
-            while row < 6:
-                projected += link_basis[segment, point, row, local] * local_moment[row]
-                row += 1
-            value += integration_weights[segment, point] * projected
-            point += 1
-        value *= coordinate_scales[path]
-    output[environment, global_dof, path] = value
+    if local >= 0:
+        path = int(0)
+        while path < routing_intercepts.shape[0]:
+            if (
+                segment >= path_start_segments[path]
+                and segment <= path_end_segments[path]
+            ):
+                effort = coordinate_scales[path] * controls[environment, path]
+                point = int(0)
+                while point < physical_points.shape[1]:
+                    local_moment = _gvs_local_moment(
+                        strain_workspace,
+                        environment,
+                        segment,
+                        point,
+                        path,
+                        physical_points,
+                        routing_intercepts,
+                        routing_slopes,
+                        epsilons,
+                    )
+                    projected = wp.float64(0.0)
+                    row = int(0)
+                    while row < 6:
+                        projected += (
+                            link_basis[segment, point, row, local] * local_moment[row]
+                        )
+                        row += 1
+                    value += integration_weights[segment, point] * projected * effort
+                    point += 1
+            path += 1
+    output[environment, global_dof] = value
 
 
 @wp.kernel(enable_backward=False)
@@ -266,35 +487,151 @@ def gvs_threadlike_force_kernel(
         None. Every generalized-force entry is written to ``output``.
     """
     item = wp.tid()
-    num_dofs = link_global_to_local.shape[1]
-    global_dof = item % num_dofs
-    environment = item // num_dofs
-    coordinate = _find_link_coordinate(global_dof, link_global_to_local)
-    segment = coordinate[0]
-    local = coordinate[1]
+    gvs_threadlike_force_at(
+        item,
+        strain_workspace,
+        controls,
+        link_global_to_local,
+        link_basis,
+        physical_points,
+        integration_weights,
+        routing_intercepts,
+        routing_slopes,
+        path_start_segments,
+        path_end_segments,
+        coordinate_scales,
+        epsilons,
+        output,
+    )
 
-    value = wp.float64(0.0)
-    if local >= 0:
-        path = int(0)
-        while path < routing_intercepts.shape[0]:
-            if (
-                segment >= path_start_segments[path]
-                and segment <= path_end_segments[path]
-            ):
-                effort = coordinate_scales[path] * controls[environment, path]
-                point = int(0)
-                while point < physical_points.shape[1]:
-                    local_moment = _gvs_local_moment(
-                        strain_workspace,
-                        environment,
-                        segment,
-                        point,
-                        path,
-                        physical_points,
-                        routing_intercepts,
-                        routing_slopes,
-                        epsilons,
-                    )
+
+@wp.struct
+class GvsThreadlikeForceArrays:
+    strain_workspace: wp.array4d[wp.float64]
+    controls: wp.array2d[wp.float64]
+    link_global_to_local: wp.array2d[wp.int32]
+    link_basis: wp.array4d[wp.float64]
+    physical_points: wp.array2d[wp.float64]
+    integration_weights: wp.array2d[wp.float64]
+    routing_intercepts: wp.array2d[wp.float64]
+    routing_slopes: wp.array2d[wp.float64]
+    path_start_segments: wp.array[wp.int32]
+    path_end_segments: wp.array[wp.int32]
+    coordinate_scales: wp.array[wp.float64]
+    epsilons: wp.array[wp.float64]
+    output: wp.array2d[wp.float64]
+
+
+@wp.kernel(enable_backward=False)
+def packed_gvs_threadlike_force_kernel(
+    worlds: wp.array(dtype=GvsThreadlikeForceArrays), work: wp.array(dtype=wp.vec3i)
+):
+    item = wp.tid()
+    entry = work[item]
+    d = worlds[entry[0]]
+    gvs_threadlike_force_at(
+        entry[1],
+        d.strain_workspace,
+        d.controls,
+        d.link_global_to_local,
+        d.link_basis,
+        d.physical_points,
+        d.integration_weights,
+        d.routing_intercepts,
+        d.routing_slopes,
+        d.path_start_segments,
+        d.path_end_segments,
+        d.coordinate_scales,
+        d.epsilons,
+        d.output,
+    )
+
+
+@wp.func
+def gvs_threadlike_force_block_at(
+    work_item: int,
+    lane: int,
+    strain_workspace: wp.array4d[wp.float64],
+    controls: wp.array2d[wp.float64],
+    link_local_to_global: wp.array2d[wp.int32],
+    link_global_to_local: wp.array2d[wp.int32],
+    link_basis: wp.array4d[wp.float64],
+    physical_points: wp.array2d[wp.float64],
+    integration_weights: wp.array2d[wp.float64],
+    routing_intercepts: wp.array2d[wp.float64],
+    routing_slopes: wp.array2d[wp.float64],
+    path_start_segments: wp.array[wp.int32],
+    path_end_segments: wp.array[wp.int32],
+    coordinate_scales: wp.array[wp.float64],
+    epsilons: wp.array[wp.float64],
+    output: wp.array2d[wp.float64],
+):
+    """Reduce paths with one CUDA block per environment and segment.
+
+    Args:
+        strain_workspace: Prepared quadrature strains ``(E, S, Q, 6)``.
+        controls: Batched direct-effort controls ``(E, A)``.
+        link_local_to_global: Padded link-local to active-coordinate map.
+        link_global_to_local: Active-coordinate to link-local map.
+        link_basis: Length-scaled link basis ``(S, Q, 6, L)``.
+        physical_points: Global backbone coordinates ``(S, Q)``.
+        integration_weights: Physical quadrature weights ``(S, Q)``.
+        routing_intercepts: Linear-routing intercept vectors ``(A, 3)``.
+        routing_slopes: Linear-routing slope vectors ``(A, 3)``.
+        path_start_segments: Inclusive first segment for every path.
+        path_end_segments: Inclusive last segment for every path.
+        coordinate_scales: Signed or physical scale for every path.
+        epsilons: One-entry array containing the normalization threshold.
+        output: Caller-owned generalized force ``(E, D)``.
+
+    Returns:
+        None. Link-coordinate contributions are accumulated into ``output``;
+        joint-only coordinates are written as exact zeros.
+    """
+    num_segments = link_local_to_global.shape[0]
+    segment = work_item % num_segments
+    environment = work_item // num_segments
+    barrier = wp.tile_zeros(shape=(1,), dtype=wp.int32, storage="shared")
+    local = lane
+    while local < link_local_to_global.shape[1]:
+        global_dof = link_local_to_global[segment, local]
+        if global_dof >= 0:
+            output[environment, global_dof] = wp.float64(0.0)
+        local += wp.block_dim()
+    if segment == 0:
+        global_dof = lane
+        while global_dof < output.shape[1]:
+            coordinate = _find_link_coordinate(global_dof, link_global_to_local)
+            if coordinate[1] < 0:
+                output[environment, global_dof] = wp.float64(0.0)
+            global_dof += wp.block_dim()
+    wp.tile_scatter_masked(barrier, 0, int(0), lane == 0)
+    num_points = physical_points.shape[1]
+    path_point = lane
+    while path_point < routing_intercepts.shape[0] * num_points:
+        path = path_point // num_points
+        point = path_point - path * num_points
+        if segment >= path_start_segments[path] and segment <= path_end_segments[path]:
+            local_moment = _gvs_local_moment(
+                strain_workspace,
+                environment,
+                segment,
+                point,
+                path,
+                physical_points,
+                routing_intercepts,
+                routing_slopes,
+                epsilons,
+            )
+            effort_weight = (
+                coordinate_scales[path]
+                * controls[environment, path]
+                * integration_weights[segment, point]
+            )
+            local = int(0)
+            while local < link_local_to_global.shape[1]:
+                global_dof = link_local_to_global[segment, local]
+                if global_dof >= 0:
                     projected = wp.float64(0.0)
                     row = int(0)
                     while row < 6:
@@ -302,10 +639,11 @@ def gvs_threadlike_force_kernel(
                             link_basis[segment, point, row, local] * local_moment[row]
                         )
                         row += 1
-                    value += integration_weights[segment, point] * projected * effort
-                    point += 1
-            path += 1
-    output[environment, global_dof] = value
+                    wp.atomic_add(
+                        output, environment, global_dof, effort_weight * projected
+                    )
+                local += 1
+        path_point += wp.block_dim()
 
 
 @wp.kernel(enable_backward=False)
@@ -348,68 +686,70 @@ def gvs_threadlike_force_block_kernel(
         joint-only coordinates are written as exact zeros.
     """
     work_item, lane = wp.tid()
-    num_segments = link_local_to_global.shape[0]
-    segment = work_item % num_segments
-    environment = work_item // num_segments
-    barrier = wp.tile_zeros(shape=(1,), dtype=wp.int32, storage="shared")
+    gvs_threadlike_force_block_at(
+        work_item,
+        lane,
+        strain_workspace,
+        controls,
+        link_local_to_global,
+        link_global_to_local,
+        link_basis,
+        physical_points,
+        integration_weights,
+        routing_intercepts,
+        routing_slopes,
+        path_start_segments,
+        path_end_segments,
+        coordinate_scales,
+        epsilons,
+        output,
+    )
 
-    local = lane
-    while local < link_local_to_global.shape[1]:
-        global_dof = link_local_to_global[segment, local]
-        if global_dof >= 0:
-            output[environment, global_dof] = wp.float64(0.0)
-        local += wp.block_dim()
 
-    if segment == 0:
-        global_dof = lane
-        while global_dof < output.shape[1]:
-            coordinate = _find_link_coordinate(global_dof, link_global_to_local)
-            if coordinate[1] < 0:
-                output[environment, global_dof] = wp.float64(0.0)
-            global_dof += wp.block_dim()
-    wp.tile_scatter_masked(barrier, 0, int(0), lane == 0)
+@wp.struct
+class GvsThreadlikeForceBlockArrays:
+    strain_workspace: wp.array4d[wp.float64]
+    controls: wp.array2d[wp.float64]
+    link_local_to_global: wp.array2d[wp.int32]
+    link_global_to_local: wp.array2d[wp.int32]
+    link_basis: wp.array4d[wp.float64]
+    physical_points: wp.array2d[wp.float64]
+    integration_weights: wp.array2d[wp.float64]
+    routing_intercepts: wp.array2d[wp.float64]
+    routing_slopes: wp.array2d[wp.float64]
+    path_start_segments: wp.array[wp.int32]
+    path_end_segments: wp.array[wp.int32]
+    coordinate_scales: wp.array[wp.float64]
+    epsilons: wp.array[wp.float64]
+    output: wp.array2d[wp.float64]
 
-    num_points = physical_points.shape[1]
-    path_point = lane
-    while path_point < routing_intercepts.shape[0] * num_points:
-        path = path_point // num_points
-        point = path_point - path * num_points
-        if segment >= path_start_segments[path] and segment <= path_end_segments[path]:
-            local_moment = _gvs_local_moment(
-                strain_workspace,
-                environment,
-                segment,
-                point,
-                path,
-                physical_points,
-                routing_intercepts,
-                routing_slopes,
-                epsilons,
-            )
-            effort_weight = (
-                coordinate_scales[path]
-                * controls[environment, path]
-                * integration_weights[segment, point]
-            )
-            local = int(0)
-            while local < link_local_to_global.shape[1]:
-                global_dof = link_local_to_global[segment, local]
-                if global_dof >= 0:
-                    projected = wp.float64(0.0)
-                    row = int(0)
-                    while row < 6:
-                        projected += (
-                            link_basis[segment, point, row, local] * local_moment[row]
-                        )
-                        row += 1
-                    wp.atomic_add(
-                        output,
-                        environment,
-                        global_dof,
-                        effort_weight * projected,
-                    )
-                local += 1
-        path_point += wp.block_dim()
+
+@wp.kernel(enable_backward=False)
+def packed_gvs_threadlike_force_block_kernel(
+    worlds: wp.array(dtype=GvsThreadlikeForceBlockArrays),
+    work: wp.array(dtype=wp.vec3i),
+):
+    item, lane = wp.tid()
+    entry = work[item]
+    d = worlds[entry[0]]
+    gvs_threadlike_force_block_at(
+        entry[1],
+        lane,
+        d.strain_workspace,
+        d.controls,
+        d.link_local_to_global,
+        d.link_global_to_local,
+        d.link_basis,
+        d.physical_points,
+        d.integration_weights,
+        d.routing_intercepts,
+        d.routing_slopes,
+        d.path_start_segments,
+        d.path_end_segments,
+        d.coordinate_scales,
+        d.epsilons,
+        d.output,
+    )
 
 
 def _launch_strain_preparation(
@@ -626,4 +966,16 @@ __all__ = [
     "launch_gvs_threadlike_actuation_force",
     "launch_gvs_threadlike_actuation_matrix",
     "prepare_gvs_threadlike_strain_kernel",
+]
+
+
+__all__ += [
+    "PrepareGvsThreadlikeStrainArrays",
+    "packed_prepare_gvs_threadlike_strain_kernel",
+    "GvsThreadlikeMatrixArrays",
+    "packed_gvs_threadlike_matrix_kernel",
+    "GvsThreadlikeForceArrays",
+    "packed_gvs_threadlike_force_kernel",
+    "GvsThreadlikeForceBlockArrays",
+    "packed_gvs_threadlike_force_block_kernel",
 ]

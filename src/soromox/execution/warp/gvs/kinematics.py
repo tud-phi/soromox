@@ -267,8 +267,9 @@ def _basis_column_value(
     return value
 
 
-@wp.kernel(enable_backward=False)
-def gvs_node_poses_kernel(
+@wp.func
+def gvs_node_poses_at(
+    environment: int,
     joint_adjoint: wp.array2d[wp.float64],
     cell_adjoint: wp.array2d[wp.float64],
     base_transform: wp.array2d[wp.float64],
@@ -289,8 +290,6 @@ def gvs_node_poses_kernel(
     Returns:
         None. Cell-boundary poses are written in place.
     """
-
-    environment = wp.tid()
     num_segments = segment_lengths.shape[0]
     num_cells = num_cells_array[0]
     current_pose = wp.mat44d()
@@ -323,7 +322,70 @@ def gvs_node_poses_kernel(
 
 
 @wp.kernel(enable_backward=False)
-def gvs_node_states_kernel(
+def gvs_node_poses_kernel(
+    joint_adjoint: wp.array2d[wp.float64],
+    cell_adjoint: wp.array2d[wp.float64],
+    base_transform: wp.array2d[wp.float64],
+    segment_lengths: wp.array[wp.float64],
+    num_cells_array: wp.array[wp.int32],
+    node_pose: wp.array2d[wp.float64],
+):
+    """Build GVS cell-boundary poses without Jacobian propagation.
+
+    Args:
+        joint_adjoint: Flattened inverse adjoints for every joint.
+        cell_adjoint: Flattened inverse adjoints for every full link cell.
+        base_transform: Absolute robot base transform.
+        segment_lengths: Physical link lengths used for the segment count.
+        num_cells_array: One-entry array containing the padded cell count.
+        node_pose: Caller-owned flattened node-pose workspace.
+
+    Returns:
+        None. Cell-boundary poses are written in place.
+    """
+    environment = wp.tid()
+    gvs_node_poses_at(
+        environment,
+        joint_adjoint,
+        cell_adjoint,
+        base_transform,
+        segment_lengths,
+        num_cells_array,
+        node_pose,
+    )
+
+
+@wp.struct
+class GvsNodePosesArrays:
+    joint_adjoint: wp.array2d[wp.float64]
+    cell_adjoint: wp.array2d[wp.float64]
+    base_transform: wp.array2d[wp.float64]
+    segment_lengths: wp.array[wp.float64]
+    num_cells_array: wp.array[wp.int32]
+    node_pose: wp.array2d[wp.float64]
+
+
+@wp.kernel(enable_backward=False)
+def packed_gvs_node_poses_kernel(
+    worlds: wp.array(dtype=GvsNodePosesArrays), work: wp.array(dtype=wp.vec3i)
+):
+    item = wp.tid()
+    entry = work[item]
+    d = worlds[entry[0]]
+    gvs_node_poses_at(
+        0,
+        d.joint_adjoint,
+        d.cell_adjoint,
+        d.base_transform,
+        d.segment_lengths,
+        d.num_cells_array,
+        d.node_pose,
+    )
+
+
+@wp.func
+def gvs_node_states_at(
+    environment: int,
     joint_adjoint: wp.array2d[wp.float64],
     joint_tangent: wp.array2d[wp.float64],
     cell_adjoint: wp.array2d[wp.float64],
@@ -350,8 +412,6 @@ def gvs_node_states_kernel(
     Returns:
         None. Boundary states are written in place.
     """
-
-    environment = wp.tid()
     num_dofs = link_global_to_local.shape[1]
     num_segments = link_global_to_local.shape[0]
     num_cells = num_cells_array[0]
@@ -363,7 +423,6 @@ def gvs_node_states_kernel(
             current_pose[row, column] = base_transform[row, column]
             column += 1
         row += 1
-
     segment = int(0)
     while segment < num_segments:
         joint_base = (environment * num_segments + segment) * SPATIAL_DIM
@@ -397,7 +456,6 @@ def gvs_node_states_kernel(
                 node_jacobian[node_item * SPATIAL_DIM + row, column] = value
                 column += 1
             row += 1
-
         cell = int(0)
         while cell < num_cells:
             cell_base = (
@@ -427,6 +485,200 @@ def gvs_node_states_kernel(
                     node_jacobian[next_item * SPATIAL_DIM + row, column] = value
                     column += 1
                 row += 1
+            cell += 1
+        segment += 1
+
+
+@wp.kernel(enable_backward=False)
+def gvs_node_states_kernel(
+    joint_adjoint: wp.array2d[wp.float64],
+    joint_tangent: wp.array2d[wp.float64],
+    cell_adjoint: wp.array2d[wp.float64],
+    cell_tangent_local: wp.array2d[wp.float64],
+    link_global_to_local: wp.array2d[wp.int32],
+    base_transform: wp.array2d[wp.float64],
+    num_cells_array: wp.array[wp.int32],
+    node_pose: wp.array2d[wp.float64],
+    node_jacobian: wp.array2d[wp.float64],
+):
+    """Build reusable GVS cell-boundary pose and body-Jacobian states.
+
+    Args:
+        joint_adjoint: Flattened inverse adjoints for every joint.
+        joint_tangent: Joint tangents in active coordinates.
+        cell_adjoint: Flattened inverse adjoints for every full link cell.
+        cell_tangent_local: Full-cell tangents in padded local coordinates.
+        link_global_to_local: Active-to-local link-coordinate map.
+        base_transform: Absolute robot base transform.
+        num_cells_array: One-entry array containing the padded cell count.
+        node_pose: Caller-owned flattened node-pose workspace.
+        node_jacobian: Caller-owned flattened body-Jacobian workspace.
+
+    Returns:
+        None. Boundary states are written in place.
+    """
+    environment = wp.tid()
+    gvs_node_states_at(
+        environment,
+        joint_adjoint,
+        joint_tangent,
+        cell_adjoint,
+        cell_tangent_local,
+        link_global_to_local,
+        base_transform,
+        num_cells_array,
+        node_pose,
+        node_jacobian,
+    )
+
+
+@wp.struct
+class GvsNodeStatesArrays:
+    joint_adjoint: wp.array2d[wp.float64]
+    joint_tangent: wp.array2d[wp.float64]
+    cell_adjoint: wp.array2d[wp.float64]
+    cell_tangent_local: wp.array2d[wp.float64]
+    link_global_to_local: wp.array2d[wp.int32]
+    base_transform: wp.array2d[wp.float64]
+    num_cells_array: wp.array[wp.int32]
+    node_pose: wp.array2d[wp.float64]
+    node_jacobian: wp.array2d[wp.float64]
+
+
+@wp.kernel(enable_backward=False)
+def packed_gvs_node_states_kernel(
+    worlds: wp.array(dtype=GvsNodeStatesArrays), work: wp.array(dtype=wp.vec3i)
+):
+    item = wp.tid()
+    entry = work[item]
+    d = worlds[entry[0]]
+    gvs_node_states_at(
+        0,
+        d.joint_adjoint,
+        d.joint_tangent,
+        d.cell_adjoint,
+        d.cell_tangent_local,
+        d.link_global_to_local,
+        d.base_transform,
+        d.num_cells_array,
+        d.node_pose,
+        d.node_jacobian,
+    )
+
+
+@wp.func
+def gvs_cooperative_node_states_at(
+    environment: int,
+    lane: int,
+    joint_adjoint: wp.array2d[wp.float64],
+    joint_tangent: wp.array2d[wp.float64],
+    cell_adjoint: wp.array2d[wp.float64],
+    cell_tangent_local: wp.array2d[wp.float64],
+    link_global_to_local: wp.array2d[wp.int32],
+    base_transform: wp.array2d[wp.float64],
+    num_cells_array: wp.array[wp.int32],
+    node_pose: wp.array2d[wp.float64],
+    node_jacobian: wp.array2d[wp.float64],
+):
+    """Build GVS boundary states cooperatively on CUDA.
+
+    One persistent block owns an environment. Joint and cell traversal remains
+    serial, while the six-by-DOF Jacobian propagation is distributed across
+    lanes. This is the CUDA schedule for the same recurrence implemented by
+    :func:`gvs_node_states_kernel`.
+
+    Args:
+        joint_adjoint: Flattened inverse adjoints for every joint.
+        joint_tangent: Joint tangents in active coordinates.
+        cell_adjoint: Flattened inverse adjoints for every full link cell.
+        cell_tangent_local: Full-cell tangents in padded local coordinates.
+        link_global_to_local: Active-to-local link-coordinate map.
+        base_transform: Absolute robot base transform.
+        num_cells_array: One-entry array containing the padded cell count.
+        node_pose: Caller-owned flattened node-pose workspace.
+        node_jacobian: Caller-owned flattened body-Jacobian workspace.
+
+    Returns:
+        None. Boundary states are written in place.
+    """
+    num_dofs = link_global_to_local.shape[1]
+    num_segments = link_global_to_local.shape[0]
+    num_cells = num_cells_array[0]
+    barrier = wp.tile_zeros(shape=(1,), dtype=wp.int32, storage="shared")
+    current_pose = wp.mat44d()
+    if lane == 0:
+        row = int(0)
+        while row < 4:
+            column = int(0)
+            while column < 4:
+                current_pose[row, column] = base_transform[row, column]
+                column += 1
+            row += 1
+    wp.tile_scatter_masked(barrier, 0, int(0), lane == 0)
+    segment = int(0)
+    while segment < num_segments:
+        joint_base = (environment * num_segments + segment) * SPATIAL_DIM
+        node_item = (environment * num_segments + segment) * (num_cells + 1)
+        if lane == 0:
+            current_pose = current_pose * _relative_pose_from_inverse_adjoint(
+                joint_adjoint, joint_base
+            )
+            _store_node_pose(node_pose, node_item, current_pose)
+        entry = lane
+        while entry < SPATIAL_DIM * num_dofs:
+            row = entry // num_dofs
+            column = entry - row * num_dofs
+            value = wp.float64(0.0)
+            k = int(0)
+            while k < SPATIAL_DIM:
+                previous = wp.float64(0.0)
+                if segment > 0:
+                    previous = node_jacobian[
+                        (
+                            (environment * num_segments + segment - 1) * (num_cells + 1)
+                            + num_cells
+                        )
+                        * SPATIAL_DIM
+                        + k,
+                        column,
+                    ]
+                value += joint_adjoint[joint_base + row, k] * (
+                    previous + joint_tangent[joint_base + k, column]
+                )
+                k += 1
+            node_jacobian[node_item * SPATIAL_DIM + row, column] = value
+            entry += wp.block_dim()
+        wp.tile_scatter_masked(barrier, 0, int(0), lane == 0)
+        cell = int(0)
+        while cell < num_cells:
+            cell_base = (
+                (environment * num_segments + segment) * num_cells + cell
+            ) * SPATIAL_DIM
+            previous_item = node_item + cell
+            next_item = previous_item + 1
+            if lane == 0:
+                current_pose = current_pose * _relative_pose_from_inverse_adjoint(
+                    cell_adjoint, cell_base
+                )
+                _store_node_pose(node_pose, next_item, current_pose)
+            entry = lane
+            while entry < SPATIAL_DIM * num_dofs:
+                row = entry // num_dofs
+                column = entry - row * num_dofs
+                local = link_global_to_local[segment, column]
+                value = wp.float64(0.0)
+                k = int(0)
+                while k < SPATIAL_DIM:
+                    tangent = wp.float64(0.0)
+                    if local >= 0:
+                        tangent = cell_tangent_local[cell_base + k, local]
+                    value += cell_adjoint[cell_base + row, k] * (
+                        node_jacobian[previous_item * SPATIAL_DIM + k, column] + tangent
+                    )
+                    k += 1
+                node_jacobian[next_item * SPATIAL_DIM + row, column] = value
+                entry += wp.block_dim()
+            wp.tile_scatter_masked(barrier, 0, int(0), lane == 0)
             cell += 1
         segment += 1
 
@@ -464,96 +716,62 @@ def gvs_cooperative_node_states_kernel(
     Returns:
         None. Boundary states are written in place.
     """
-
     environment, lane = wp.tid()
-    num_dofs = link_global_to_local.shape[1]
-    num_segments = link_global_to_local.shape[0]
-    num_cells = num_cells_array[0]
-    barrier = wp.tile_zeros(shape=(1,), dtype=wp.int32, storage="shared")
-    current_pose = wp.mat44d()
-    if lane == 0:
-        row = int(0)
-        while row < 4:
-            column = int(0)
-            while column < 4:
-                current_pose[row, column] = base_transform[row, column]
-                column += 1
-            row += 1
-    wp.tile_scatter_masked(barrier, 0, int(0), lane == 0)
+    gvs_cooperative_node_states_at(
+        environment,
+        lane,
+        joint_adjoint,
+        joint_tangent,
+        cell_adjoint,
+        cell_tangent_local,
+        link_global_to_local,
+        base_transform,
+        num_cells_array,
+        node_pose,
+        node_jacobian,
+    )
 
-    segment = int(0)
-    while segment < num_segments:
-        joint_base = (environment * num_segments + segment) * SPATIAL_DIM
-        node_item = (environment * num_segments + segment) * (num_cells + 1)
-        if lane == 0:
-            current_pose = current_pose * _relative_pose_from_inverse_adjoint(
-                joint_adjoint, joint_base
-            )
-            _store_node_pose(node_pose, node_item, current_pose)
 
-        entry = lane
-        while entry < SPATIAL_DIM * num_dofs:
-            row = entry // num_dofs
-            column = entry - row * num_dofs
-            value = wp.float64(0.0)
-            k = int(0)
-            while k < SPATIAL_DIM:
-                previous = wp.float64(0.0)
-                if segment > 0:
-                    previous = node_jacobian[
-                        (
-                            (environment * num_segments + segment - 1) * (num_cells + 1)
-                            + num_cells
-                        )
-                        * SPATIAL_DIM
-                        + k,
-                        column,
-                    ]
-                value += joint_adjoint[joint_base + row, k] * (
-                    previous + joint_tangent[joint_base + k, column]
-                )
-                k += 1
-            node_jacobian[node_item * SPATIAL_DIM + row, column] = value
-            entry += wp.block_dim()
-        wp.tile_scatter_masked(barrier, 0, int(0), lane == 0)
-
-        cell = int(0)
-        while cell < num_cells:
-            cell_base = (
-                (environment * num_segments + segment) * num_cells + cell
-            ) * SPATIAL_DIM
-            previous_item = node_item + cell
-            next_item = previous_item + 1
-            if lane == 0:
-                current_pose = current_pose * _relative_pose_from_inverse_adjoint(
-                    cell_adjoint, cell_base
-                )
-                _store_node_pose(node_pose, next_item, current_pose)
-
-            entry = lane
-            while entry < SPATIAL_DIM * num_dofs:
-                row = entry // num_dofs
-                column = entry - row * num_dofs
-                local = link_global_to_local[segment, column]
-                value = wp.float64(0.0)
-                k = int(0)
-                while k < SPATIAL_DIM:
-                    tangent = wp.float64(0.0)
-                    if local >= 0:
-                        tangent = cell_tangent_local[cell_base + k, local]
-                    value += cell_adjoint[cell_base + row, k] * (
-                        node_jacobian[previous_item * SPATIAL_DIM + k, column] + tangent
-                    )
-                    k += 1
-                node_jacobian[next_item * SPATIAL_DIM + row, column] = value
-                entry += wp.block_dim()
-            wp.tile_scatter_masked(barrier, 0, int(0), lane == 0)
-            cell += 1
-        segment += 1
+@wp.struct
+class GvsCooperativeNodeStatesArrays:
+    joint_adjoint: wp.array2d[wp.float64]
+    joint_tangent: wp.array2d[wp.float64]
+    cell_adjoint: wp.array2d[wp.float64]
+    cell_tangent_local: wp.array2d[wp.float64]
+    link_global_to_local: wp.array2d[wp.int32]
+    base_transform: wp.array2d[wp.float64]
+    num_cells_array: wp.array[wp.int32]
+    node_pose: wp.array2d[wp.float64]
+    node_jacobian: wp.array2d[wp.float64]
 
 
 @wp.kernel(enable_backward=False)
-def gvs_pose_samples_kernel(
+def packed_gvs_cooperative_node_states_kernel(
+    worlds: wp.array(dtype=GvsCooperativeNodeStatesArrays),
+    work: wp.array(dtype=wp.vec3i),
+):
+    item, lane = wp.tid()
+    entry = work[item]
+    d = worlds[entry[0]]
+    gvs_cooperative_node_states_at(
+        0,
+        lane,
+        d.joint_adjoint,
+        d.joint_tangent,
+        d.cell_adjoint,
+        d.cell_tangent_local,
+        d.link_global_to_local,
+        d.base_transform,
+        d.num_cells_array,
+        d.node_pose,
+        d.node_jacobian,
+    )
+
+
+@wp.func
+def gvs_pose_samples_at(
+    environment: int,
+    sample: int,
     q: wp.array2d[wp.float64],
     s: wp.array2d[wp.float64],
     link_local_to_global: wp.array2d[wp.int32],
@@ -598,8 +816,6 @@ def gvs_pose_samples_kernel(
     Returns:
         None. Pose outputs are written in place.
     """
-
-    environment, sample = wp.tid()
     num_segments = segment_lengths.shape[0]
     num_cells = num_cells_array[0]
     abscissa = s[environment, sample]
@@ -687,6 +903,130 @@ def gvs_pose_samples_kernel(
             poses[environment, sample, row, column] = pose[row, column]
             column += 1
         row += 1
+
+
+@wp.kernel(enable_backward=False)
+def gvs_pose_samples_kernel(
+    q: wp.array2d[wp.float64],
+    s: wp.array2d[wp.float64],
+    link_local_to_global: wp.array2d[wp.int32],
+    link_basis_rows: wp.array2d[wp.int32],
+    link_reference_z1: wp.array2d[wp.float64],
+    link_reference_z2: wp.array2d[wp.float64],
+    segment_lengths: wp.array[wp.float64],
+    segment_starts: wp.array[wp.float64],
+    integration_points: wp.array2d[wp.float64],
+    basis_type_index: wp.array[wp.int32],
+    basis_active_params: wp.array2d[wp.float64],
+    basis_order_params: wp.array2d[wp.float64],
+    magnus_points: wp.array[wp.float64],
+    scale_rotations_array: wp.array[wp.int32],
+    epsilons: wp.array[wp.float64],
+    num_cells_array: wp.array[wp.int32],
+    node_pose: wp.array2d[wp.float64],
+    poses: wp.array4d[wp.float64],
+):
+    """Evaluate GVS poses without Jacobian recurrence or output work.
+
+    Args:
+        q: Batched active configurations ``(E, D)``.
+        s: Per-environment abscissae with shape ``(E, N)``.
+        link_local_to_global: Padded local-to-active link-coordinate map.
+        link_basis_rows: Spatial row occupied by every local basis column.
+        link_reference_z1: Reference strain at first Magnus nodes.
+        link_reference_z2: Reference strain at second Magnus nodes.
+        segment_lengths: Physical link lengths.
+        segment_starts: Cumulative link-start positions.
+        integration_points: Normalized cell-boundary coordinates.
+        basis_type_index: Basis-family index for every segment.
+        basis_active_params: Per-row basis activation parameters.
+        basis_order_params: Per-row basis-order parameters.
+        magnus_points: Two normalized Gauss points within a partial cell.
+        scale_rotations_array: One-entry rotational-basis scaling flag.
+        epsilons: Exponential and tangent thresholds.
+        num_cells_array: One-entry array containing the padded cell count.
+        node_pose: Precomputed flattened node poses.
+        poses: Caller-owned SE(3) pose output.
+
+    Returns:
+        None. Pose outputs are written in place.
+    """
+    environment, sample = wp.tid()
+    gvs_pose_samples_at(
+        environment,
+        sample,
+        q,
+        s,
+        link_local_to_global,
+        link_basis_rows,
+        link_reference_z1,
+        link_reference_z2,
+        segment_lengths,
+        segment_starts,
+        integration_points,
+        basis_type_index,
+        basis_active_params,
+        basis_order_params,
+        magnus_points,
+        scale_rotations_array,
+        epsilons,
+        num_cells_array,
+        node_pose,
+        poses,
+    )
+
+
+@wp.struct
+class GvsPoseSamplesArrays:
+    q: wp.array2d[wp.float64]
+    s: wp.array2d[wp.float64]
+    link_local_to_global: wp.array2d[wp.int32]
+    link_basis_rows: wp.array2d[wp.int32]
+    link_reference_z1: wp.array2d[wp.float64]
+    link_reference_z2: wp.array2d[wp.float64]
+    segment_lengths: wp.array[wp.float64]
+    segment_starts: wp.array[wp.float64]
+    integration_points: wp.array2d[wp.float64]
+    basis_type_index: wp.array[wp.int32]
+    basis_active_params: wp.array2d[wp.float64]
+    basis_order_params: wp.array2d[wp.float64]
+    magnus_points: wp.array[wp.float64]
+    scale_rotations_array: wp.array[wp.int32]
+    epsilons: wp.array[wp.float64]
+    num_cells_array: wp.array[wp.int32]
+    node_pose: wp.array2d[wp.float64]
+    poses: wp.array4d[wp.float64]
+
+
+@wp.kernel(enable_backward=False)
+def packed_gvs_pose_samples_kernel(
+    worlds: wp.array(dtype=GvsPoseSamplesArrays), work: wp.array(dtype=wp.vec3i)
+):
+    item = wp.tid()
+    entry = work[item]
+    d = worlds[entry[0]]
+    gvs_pose_samples_at(
+        0,
+        entry[1],
+        d.q,
+        d.s,
+        d.link_local_to_global,
+        d.link_basis_rows,
+        d.link_reference_z1,
+        d.link_reference_z2,
+        d.segment_lengths,
+        d.segment_starts,
+        d.integration_points,
+        d.basis_type_index,
+        d.basis_active_params,
+        d.basis_order_params,
+        d.magnus_points,
+        d.scale_rotations_array,
+        d.epsilons,
+        d.num_cells_array,
+        d.node_pose,
+        d.poses,
+    )
 
 
 @wp.func
@@ -816,8 +1156,10 @@ def write_gvs_sample_jacobian(
         column += 1
 
 
-@wp.kernel(enable_backward=False)
-def gvs_jacobian_samples_kernel(
+@wp.func
+def gvs_jacobian_samples_at(
+    environment: int,
+    sample: int,
     q: wp.array2d[wp.float64],
     s: wp.array2d[wp.float64],
     link_local_to_global: wp.array2d[wp.int32],
@@ -866,8 +1208,6 @@ def gvs_jacobian_samples_kernel(
     Returns:
         None. Jacobian outputs are written in place.
     """
-
-    environment, sample = wp.tid()
     num_segments = segment_lengths.shape[0]
     num_cells = num_cells_array[0]
     abscissa = s[environment, sample]
@@ -974,7 +1314,143 @@ def gvs_jacobian_samples_kernel(
 
 
 @wp.kernel(enable_backward=False)
-def gvs_samples_kernel(
+def gvs_jacobian_samples_kernel(
+    q: wp.array2d[wp.float64],
+    s: wp.array2d[wp.float64],
+    link_local_to_global: wp.array2d[wp.int32],
+    link_global_to_local: wp.array2d[wp.int32],
+    link_basis_rows: wp.array2d[wp.int32],
+    link_reference_z1: wp.array2d[wp.float64],
+    link_reference_z2: wp.array2d[wp.float64],
+    segment_lengths: wp.array[wp.float64],
+    segment_starts: wp.array[wp.float64],
+    integration_points: wp.array2d[wp.float64],
+    basis_type_index: wp.array[wp.int32],
+    basis_active_params: wp.array2d[wp.float64],
+    basis_order_params: wp.array2d[wp.float64],
+    magnus_points: wp.array[wp.float64],
+    scale_rotations_array: wp.array[wp.int32],
+    epsilons: wp.array[wp.float64],
+    num_cells_array: wp.array[wp.int32],
+    node_pose: wp.array2d[wp.float64],
+    node_jacobian: wp.array2d[wp.float64],
+    jacobians: wp.array4d[wp.float64],
+):
+    """Evaluate GVS inertial Jacobians without pose output writes.
+
+    Args:
+        q: Batched active configurations ``(E, D)``.
+        s: Per-environment abscissae with shape ``(E, N)``.
+        link_local_to_global: Padded local-to-active link-coordinate map.
+        link_global_to_local: Active-to-local link-coordinate map.
+        link_basis_rows: Spatial row occupied by every local basis column.
+        link_reference_z1: Reference strain at first Magnus nodes.
+        link_reference_z2: Reference strain at second Magnus nodes.
+        segment_lengths: Physical link lengths.
+        segment_starts: Cumulative link-start positions.
+        integration_points: Normalized cell-boundary coordinates.
+        basis_type_index: Basis-family index for every segment.
+        basis_active_params: Per-row basis activation parameters.
+        basis_order_params: Per-row basis-order parameters.
+        magnus_points: Two normalized Gauss points within a partial cell.
+        scale_rotations_array: One-entry rotational-basis scaling flag.
+        epsilons: Exponential and tangent thresholds.
+        num_cells_array: One-entry array containing the padded cell count.
+        node_pose: Precomputed flattened node poses.
+        node_jacobian: Precomputed flattened boundary body Jacobians.
+        jacobians: Caller-owned inertial-Jacobian output.
+
+    Returns:
+        None. Jacobian outputs are written in place.
+    """
+    environment, sample = wp.tid()
+    gvs_jacobian_samples_at(
+        environment,
+        sample,
+        q,
+        s,
+        link_local_to_global,
+        link_global_to_local,
+        link_basis_rows,
+        link_reference_z1,
+        link_reference_z2,
+        segment_lengths,
+        segment_starts,
+        integration_points,
+        basis_type_index,
+        basis_active_params,
+        basis_order_params,
+        magnus_points,
+        scale_rotations_array,
+        epsilons,
+        num_cells_array,
+        node_pose,
+        node_jacobian,
+        jacobians,
+    )
+
+
+@wp.struct
+class GvsJacobianSamplesArrays:
+    q: wp.array2d[wp.float64]
+    s: wp.array2d[wp.float64]
+    link_local_to_global: wp.array2d[wp.int32]
+    link_global_to_local: wp.array2d[wp.int32]
+    link_basis_rows: wp.array2d[wp.int32]
+    link_reference_z1: wp.array2d[wp.float64]
+    link_reference_z2: wp.array2d[wp.float64]
+    segment_lengths: wp.array[wp.float64]
+    segment_starts: wp.array[wp.float64]
+    integration_points: wp.array2d[wp.float64]
+    basis_type_index: wp.array[wp.int32]
+    basis_active_params: wp.array2d[wp.float64]
+    basis_order_params: wp.array2d[wp.float64]
+    magnus_points: wp.array[wp.float64]
+    scale_rotations_array: wp.array[wp.int32]
+    epsilons: wp.array[wp.float64]
+    num_cells_array: wp.array[wp.int32]
+    node_pose: wp.array2d[wp.float64]
+    node_jacobian: wp.array2d[wp.float64]
+    jacobians: wp.array4d[wp.float64]
+
+
+@wp.kernel(enable_backward=False)
+def packed_gvs_jacobian_samples_kernel(
+    worlds: wp.array(dtype=GvsJacobianSamplesArrays), work: wp.array(dtype=wp.vec3i)
+):
+    item = wp.tid()
+    entry = work[item]
+    d = worlds[entry[0]]
+    gvs_jacobian_samples_at(
+        0,
+        entry[1],
+        d.q,
+        d.s,
+        d.link_local_to_global,
+        d.link_global_to_local,
+        d.link_basis_rows,
+        d.link_reference_z1,
+        d.link_reference_z2,
+        d.segment_lengths,
+        d.segment_starts,
+        d.integration_points,
+        d.basis_type_index,
+        d.basis_active_params,
+        d.basis_order_params,
+        d.magnus_points,
+        d.scale_rotations_array,
+        d.epsilons,
+        d.num_cells_array,
+        d.node_pose,
+        d.node_jacobian,
+        d.jacobians,
+    )
+
+
+@wp.func
+def gvs_samples_at(
+    environment: int,
+    sample: int,
     q: wp.array2d[wp.float64],
     s: wp.array2d[wp.float64],
     link_local_to_global: wp.array2d[wp.int32],
@@ -1025,8 +1501,6 @@ def gvs_samples_kernel(
     Returns:
         None. Fused outputs are written in place.
     """
-
-    environment, sample = wp.tid()
     num_segments = segment_lengths.shape[0]
     num_cells = num_cells_array[0]
     abscissa = s[environment, sample]
@@ -1114,7 +1588,6 @@ def gvs_samples_kernel(
             poses[environment, sample, row, column] = pose[row, column]
             column += 1
         row += 1
-
     write_gvs_sample_jacobian(
         environment,
         sample,
@@ -1137,6 +1610,145 @@ def gvs_samples_kernel(
         scale_rotations_array,
         node_jacobian,
         jacobians,
+    )
+
+
+@wp.kernel(enable_backward=False)
+def gvs_samples_kernel(
+    q: wp.array2d[wp.float64],
+    s: wp.array2d[wp.float64],
+    link_local_to_global: wp.array2d[wp.int32],
+    link_global_to_local: wp.array2d[wp.int32],
+    link_basis_rows: wp.array2d[wp.int32],
+    link_reference_z1: wp.array2d[wp.float64],
+    link_reference_z2: wp.array2d[wp.float64],
+    segment_lengths: wp.array[wp.float64],
+    segment_starts: wp.array[wp.float64],
+    integration_points: wp.array2d[wp.float64],
+    basis_type_index: wp.array[wp.int32],
+    basis_active_params: wp.array2d[wp.float64],
+    basis_order_params: wp.array2d[wp.float64],
+    magnus_points: wp.array[wp.float64],
+    scale_rotations_array: wp.array[wp.int32],
+    epsilons: wp.array[wp.float64],
+    num_cells_array: wp.array[wp.int32],
+    node_pose: wp.array2d[wp.float64],
+    node_jacobian: wp.array2d[wp.float64],
+    poses: wp.array4d[wp.float64],
+    jacobians: wp.array4d[wp.float64],
+):
+    """Evaluate fused GVS poses and inertial Jacobians at runtime samples.
+
+    Args:
+        q: Batched active configurations ``(E, D)``.
+        s: Per-environment abscissae with shape ``(E, N)``.
+        link_local_to_global: Padded local-to-active link-coordinate map.
+        link_global_to_local: Active-to-local link-coordinate map.
+        link_basis_rows: Spatial row occupied by every local basis column.
+        link_reference_z1: Reference strain at first Magnus nodes.
+        link_reference_z2: Reference strain at second Magnus nodes.
+        segment_lengths: Physical link lengths.
+        segment_starts: Cumulative link-start positions.
+        integration_points: Normalized cell-boundary coordinates.
+        basis_type_index: Basis-family index for every segment.
+        basis_active_params: Per-row basis activation parameters.
+        basis_order_params: Per-row basis-order parameters.
+        magnus_points: Two normalized Gauss points within a partial cell.
+        scale_rotations_array: One-entry rotational-basis scaling flag.
+        epsilons: Exponential and tangent thresholds.
+        num_cells_array: One-entry array containing the padded cell count.
+        node_pose: Precomputed flattened node poses.
+        node_jacobian: Precomputed flattened boundary body Jacobians.
+        poses: Caller-owned SE(3) pose output.
+        jacobians: Caller-owned inertial-Jacobian output.
+
+    Returns:
+        None. Fused outputs are written in place.
+    """
+    environment, sample = wp.tid()
+    gvs_samples_at(
+        environment,
+        sample,
+        q,
+        s,
+        link_local_to_global,
+        link_global_to_local,
+        link_basis_rows,
+        link_reference_z1,
+        link_reference_z2,
+        segment_lengths,
+        segment_starts,
+        integration_points,
+        basis_type_index,
+        basis_active_params,
+        basis_order_params,
+        magnus_points,
+        scale_rotations_array,
+        epsilons,
+        num_cells_array,
+        node_pose,
+        node_jacobian,
+        poses,
+        jacobians,
+    )
+
+
+@wp.struct
+class GvsSamplesArrays:
+    q: wp.array2d[wp.float64]
+    s: wp.array2d[wp.float64]
+    link_local_to_global: wp.array2d[wp.int32]
+    link_global_to_local: wp.array2d[wp.int32]
+    link_basis_rows: wp.array2d[wp.int32]
+    link_reference_z1: wp.array2d[wp.float64]
+    link_reference_z2: wp.array2d[wp.float64]
+    segment_lengths: wp.array[wp.float64]
+    segment_starts: wp.array[wp.float64]
+    integration_points: wp.array2d[wp.float64]
+    basis_type_index: wp.array[wp.int32]
+    basis_active_params: wp.array2d[wp.float64]
+    basis_order_params: wp.array2d[wp.float64]
+    magnus_points: wp.array[wp.float64]
+    scale_rotations_array: wp.array[wp.int32]
+    epsilons: wp.array[wp.float64]
+    num_cells_array: wp.array[wp.int32]
+    node_pose: wp.array2d[wp.float64]
+    node_jacobian: wp.array2d[wp.float64]
+    poses: wp.array4d[wp.float64]
+    jacobians: wp.array4d[wp.float64]
+
+
+@wp.kernel(enable_backward=False)
+def packed_gvs_samples_kernel(
+    worlds: wp.array(dtype=GvsSamplesArrays), work: wp.array(dtype=wp.vec3i)
+):
+    item = wp.tid()
+    entry = work[item]
+    d = worlds[entry[0]]
+    gvs_samples_at(
+        0,
+        entry[1],
+        d.q,
+        d.s,
+        d.link_local_to_global,
+        d.link_global_to_local,
+        d.link_basis_rows,
+        d.link_reference_z1,
+        d.link_reference_z2,
+        d.segment_lengths,
+        d.segment_starts,
+        d.integration_points,
+        d.basis_type_index,
+        d.basis_active_params,
+        d.basis_order_params,
+        d.magnus_points,
+        d.scale_rotations_array,
+        d.epsilons,
+        d.num_cells_array,
+        d.node_pose,
+        d.node_jacobian,
+        d.poses,
+        d.jacobians,
     )
 
 
@@ -1522,3 +2134,91 @@ __all__ = [
     "launch_gvs_inertial_jacobians",
     "launch_inertial_jacobians",
 ]
+
+
+__all__ += [
+    "GvsNodePosesArrays",
+    "packed_gvs_node_poses_kernel",
+    "GvsNodeStatesArrays",
+    "packed_gvs_node_states_kernel",
+    "GvsCooperativeNodeStatesArrays",
+    "packed_gvs_cooperative_node_states_kernel",
+    "GvsPoseSamplesArrays",
+    "packed_gvs_pose_samples_kernel",
+    "GvsJacobianSamplesArrays",
+    "packed_gvs_jacobian_samples_kernel",
+    "GvsSamplesArrays",
+    "packed_gvs_samples_kernel",
+]
+
+
+@wp.kernel(enable_backward=False)
+def packed_gvs_pose_samples_warp_kernel(
+    worlds: wp.array(dtype=GvsPoseSamplesArrays), work: wp.array(dtype=wp.vec3i)
+):
+    item, lane = wp.tid()
+    entry = work[item]
+    d = worlds[entry[0]]
+    sample = entry[1] + lane
+    if sample < d.s.shape[1]:
+        gvs_pose_samples_at(
+            0,
+            sample,
+            d.q,
+            d.s,
+            d.link_local_to_global,
+            d.link_basis_rows,
+            d.link_reference_z1,
+            d.link_reference_z2,
+            d.segment_lengths,
+            d.segment_starts,
+            d.integration_points,
+            d.basis_type_index,
+            d.basis_active_params,
+            d.basis_order_params,
+            d.magnus_points,
+            d.scale_rotations_array,
+            d.epsilons,
+            d.num_cells_array,
+            d.node_pose,
+            d.poses,
+        )
+
+
+@wp.kernel(enable_backward=False)
+def packed_gvs_samples_warp_kernel(
+    worlds: wp.array(dtype=GvsSamplesArrays), work: wp.array(dtype=wp.vec3i)
+):
+    item, lane = wp.tid()
+    entry = work[item]
+    d = worlds[entry[0]]
+    sample = entry[1] + lane
+    if sample < d.s.shape[1]:
+        gvs_samples_at(
+            0,
+            sample,
+            d.q,
+            d.s,
+            d.link_local_to_global,
+            d.link_global_to_local,
+            d.link_basis_rows,
+            d.link_reference_z1,
+            d.link_reference_z2,
+            d.segment_lengths,
+            d.segment_starts,
+            d.integration_points,
+            d.basis_type_index,
+            d.basis_active_params,
+            d.basis_order_params,
+            d.magnus_points,
+            d.scale_rotations_array,
+            d.epsilons,
+            d.num_cells_array,
+            d.node_pose,
+            d.node_jacobian,
+            d.poses,
+            d.jacobians,
+        )
+
+
+__all__ += ["packed_gvs_pose_samples_warp_kernel", "packed_gvs_samples_warp_kernel"]

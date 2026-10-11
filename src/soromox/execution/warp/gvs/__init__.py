@@ -19,6 +19,13 @@ from importlib import import_module
 from typing import Any
 
 __all__ = [
+    "prepare_dynamics_terms",
+    "MixedChainArrays",
+    "packed_mixed_chain_kernel",
+    "CellTermsArrays",
+    "packed_cell_terms_kernel",
+    "packed_cooperative_cell_terms_kernel",
+    "cooperative_cell_terms_kernel",
     "GVSOperandSource",
     "GVSKinematicsOperands",
     "GVSKinematicsShapes",
@@ -70,6 +77,13 @@ __all__ = [
 ]
 
 _PUBLIC_MODULES = {
+    "prepare_dynamics_terms": "prepared",
+    "MixedChainArrays": "packed",
+    "packed_mixed_chain_kernel": "packed",
+    "CellTermsArrays": "cell",
+    "packed_cell_terms_kernel": "cell",
+    "packed_cooperative_cell_terms_kernel": "cell",
+    "cooperative_cell_terms_kernel": "cell",
     "GVSOperandSource": "operands",
     "GVSKinematicsOperands": "operands",
     "GVSKinematicsShapes": "operands",

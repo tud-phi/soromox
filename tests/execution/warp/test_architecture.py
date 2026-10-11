@@ -16,6 +16,13 @@ def test_gvs_public_names_are_discoverable_without_loading_warp() -> None:
     from soromox.execution.warp import gvs
 
     expected = {
+        "prepare_dynamics_terms",
+        "MixedChainArrays",
+        "packed_mixed_chain_kernel",
+        "CellTermsArrays",
+        "packed_cell_terms_kernel",
+        "packed_cooperative_cell_terms_kernel",
+        "cooperative_cell_terms_kernel",
         "GVSOperandSource",
         "GVSKinematicsOperands",
         "GVSKinematicsShapes",

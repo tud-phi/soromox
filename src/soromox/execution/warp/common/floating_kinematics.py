@@ -17,8 +17,10 @@ from soromox.execution.warp.common.so2 import (
 wp.set_module_options({"enable_backward": False})
 
 
-@wp.kernel(enable_backward=False)
-def _compose_spatial_poses_kernel(
+@wp.func
+def _compose_spatial_poses_at(
+    environment: int,
+    sample: int,
     base_pose: wp.array2d[wp.float64],
     relative_pose: wp.array4d[wp.float64],
     poses: wp.array4d[wp.float64],
@@ -33,7 +35,6 @@ def _compose_spatial_poses_kernel(
     Returns:
         None. One transform in ``poses`` is written per thread.
     """
-    environment, sample = wp.tid()
     base_rotation = _quaternion_rotation_matrix(base_pose, environment)
     row = int(0)
     while row < 3:
@@ -66,7 +67,46 @@ def _compose_spatial_poses_kernel(
 
 
 @wp.kernel(enable_backward=False)
-def _compose_spatial_jacobians_kernel(
+def _compose_spatial_poses_kernel(
+    base_pose: wp.array2d[wp.float64],
+    relative_pose: wp.array4d[wp.float64],
+    poses: wp.array4d[wp.float64],
+):
+    """Compose batched spatial base poses and base-relative transforms.
+
+    Args:
+        base_pose: Scalar-last base poses with shape ``(E, 7)``.
+        relative_pose: Base-relative transforms with shape ``(E, N, 4, 4)``.
+        poses: Inertial-frame transform output with shape ``(E, N, 4, 4)``.
+
+    Returns:
+        None. One transform in ``poses`` is written per thread.
+    """
+    environment, sample = wp.tid()
+    _compose_spatial_poses_at(environment, sample, base_pose, relative_pose, poses)
+
+
+@wp.struct
+class ComposeSpatialPosesArrays:
+    base_pose: wp.array2d[wp.float64]
+    relative_pose: wp.array4d[wp.float64]
+    poses: wp.array4d[wp.float64]
+
+
+@wp.kernel(enable_backward=False)
+def packed_compose_spatial_poses_kernel(
+    worlds: wp.array(dtype=ComposeSpatialPosesArrays), work: wp.array(dtype=wp.vec3i)
+):
+    item = wp.tid()
+    entry = work[item]
+    d = worlds[entry[0]]
+    _compose_spatial_poses_at(0, entry[1], d.base_pose, d.relative_pose, d.poses)
+
+
+@wp.func
+def _compose_spatial_jacobians_at(
+    environment: int,
+    sample: int,
     base_pose: wp.array2d[wp.float64],
     relative_pose: wp.array4d[wp.float64],
     jacobians_internal: wp.array4d[wp.float64],
@@ -85,7 +125,6 @@ def _compose_spatial_jacobians_kernel(
     Returns:
         None. One augmented Jacobian in ``jacobians`` is written per thread.
     """
-    environment, sample = wp.tid()
     base_rotation = _quaternion_rotation_matrix(base_pose, environment)
     offset_x = wp.float64(0.0)
     offset_y = wp.float64(0.0)
@@ -102,13 +141,12 @@ def _compose_spatial_jacobians_kernel(
             base_rotation[2, inner] * relative_pose[environment, sample, inner, 3]
         )
         inner += 1
-
     row = int(0)
     while row < 6:
         column = int(0)
         while column < 6:
             value = wp.float64(0.0)
-            if (row < 3 and column < 3 or row >= 3 and column >= 3) and row == column:
+            if (row < 3 and column < 3 or (row >= 3 and column >= 3)) and row == column:
                 value = wp.float64(1.0)
             elif row == 3 and column == 1:
                 value = offset_z
@@ -145,7 +183,56 @@ def _compose_spatial_jacobians_kernel(
 
 
 @wp.kernel(enable_backward=False)
-def _compose_spatial_jacobians_tiled_kernel(
+def _compose_spatial_jacobians_kernel(
+    base_pose: wp.array2d[wp.float64],
+    relative_pose: wp.array4d[wp.float64],
+    jacobians_internal: wp.array4d[wp.float64],
+    jacobians: wp.array4d[wp.float64],
+):
+    """Compose spatial floating-base Jacobians on one thread per sample.
+
+    Args:
+        base_pose: Scalar-last base poses with shape ``(E, 7)``.
+        relative_pose: Base-relative transforms with shape ``(E, N, 4, 4)``.
+        jacobians_internal: Base-frame internal Jacobians with shape
+            ``(E, N, 6, D)``.
+        jacobians: Inertial-frame augmented output with shape
+            ``(E, N, 6, D + 6)``.
+
+    Returns:
+        None. One augmented Jacobian in ``jacobians`` is written per thread.
+    """
+    environment, sample = wp.tid()
+    _compose_spatial_jacobians_at(
+        environment, sample, base_pose, relative_pose, jacobians_internal, jacobians
+    )
+
+
+@wp.struct
+class ComposeSpatialJacobiansArrays:
+    base_pose: wp.array2d[wp.float64]
+    relative_pose: wp.array4d[wp.float64]
+    jacobians_internal: wp.array4d[wp.float64]
+    jacobians: wp.array4d[wp.float64]
+
+
+@wp.kernel(enable_backward=False)
+def packed_compose_spatial_jacobians_kernel(
+    worlds: wp.array(dtype=ComposeSpatialJacobiansArrays),
+    work: wp.array(dtype=wp.vec3i),
+):
+    item = wp.tid()
+    entry = work[item]
+    d = worlds[entry[0]]
+    _compose_spatial_jacobians_at(
+        0, entry[1], d.base_pose, d.relative_pose, d.jacobians_internal, d.jacobians
+    )
+
+
+@wp.func
+def _compose_spatial_jacobians_tiled_at(
+    work_item: int,
+    lane: int,
     base_pose: wp.array2d[wp.float64],
     relative_pose: wp.array4d[wp.float64],
     jacobians_internal: wp.array4d[wp.float64],
@@ -165,13 +252,11 @@ def _compose_spatial_jacobians_tiled_kernel(
         None. ``jacobians`` is updated in place by one cooperative block for
         each environment-sample pair.
     """
-    work_item, lane = wp.tid()
     sample_count = relative_pose.shape[1]
     environment = work_item // sample_count
     sample = work_item - environment * sample_count
     base_rotation = wp.tile_zeros(shape=(9,), dtype=wp.float64, storage="shared")
     world_offset = wp.tile_zeros(shape=(3,), dtype=wp.float64, storage="shared")
-
     rotation_entry = wp.float64(0.0)
     if lane < 9:
         rotation_row = lane // 3
@@ -180,7 +265,6 @@ def _compose_spatial_jacobians_tiled_kernel(
             base_pose, environment, rotation_column, rotation_row
         )
     wp.tile_scatter_masked(base_rotation, lane, rotation_entry, lane < 9)
-
     world_offset_entry = wp.float64(0.0)
     if lane < 3:
         inner = int(0)
@@ -191,7 +275,6 @@ def _compose_spatial_jacobians_tiled_kernel(
             )
             inner += 1
     wp.tile_scatter_masked(world_offset, lane, world_offset_entry, lane < 3)
-
     entry = lane
     column_count = jacobians.shape[3]
     while entry < 6 * column_count:
@@ -199,7 +282,7 @@ def _compose_spatial_jacobians_tiled_kernel(
         column = entry - row * column_count
         value = wp.float64(0.0)
         if column < 6:
-            if row == column and (row < 3 and column < 3 or row >= 3 and column >= 3):
+            if row == column and (row < 3 and column < 3 or (row >= 3 and column >= 3)):
                 value = wp.float64(1.0)
             elif row == 3 and column == 1:
                 value = world_offset[2]
@@ -232,7 +315,57 @@ def _compose_spatial_jacobians_tiled_kernel(
 
 
 @wp.kernel(enable_backward=False)
-def _compose_spatial_poses_and_twists_kernel(
+def _compose_spatial_jacobians_tiled_kernel(
+    base_pose: wp.array2d[wp.float64],
+    relative_pose: wp.array4d[wp.float64],
+    jacobians_internal: wp.array4d[wp.float64],
+    jacobians: wp.array4d[wp.float64],
+):
+    """Compose one floating spatial Jacobian cooperatively per sample.
+
+    Args:
+        base_pose: Batched scalar-last quaternion poses with shape ``(E, 7)``.
+        relative_pose: Base-relative transforms with shape ``(E, N, 4, 4)``.
+        jacobians_internal: Base-frame internal Jacobians with shape
+            ``(E, N, 6, D)``.
+        jacobians: Inertial-frame augmented Jacobians with shape
+            ``(E, N, 6, D + 6)``.
+
+    Returns:
+        None. ``jacobians`` is updated in place by one cooperative block for
+        each environment-sample pair.
+    """
+    work_item, lane = wp.tid()
+    _compose_spatial_jacobians_tiled_at(
+        work_item, lane, base_pose, relative_pose, jacobians_internal, jacobians
+    )
+
+
+@wp.struct
+class ComposeSpatialJacobiansTiledArrays:
+    base_pose: wp.array2d[wp.float64]
+    relative_pose: wp.array4d[wp.float64]
+    jacobians_internal: wp.array4d[wp.float64]
+    jacobians: wp.array4d[wp.float64]
+
+
+@wp.kernel(enable_backward=False)
+def packed_compose_spatial_jacobians_tiled_kernel(
+    worlds: wp.array(dtype=ComposeSpatialJacobiansTiledArrays),
+    work: wp.array(dtype=wp.vec3i),
+):
+    item, lane = wp.tid()
+    entry = work[item]
+    d = worlds[entry[0]]
+    _compose_spatial_jacobians_tiled_at(
+        entry[1], lane, d.base_pose, d.relative_pose, d.jacobians_internal, d.jacobians
+    )
+
+
+@wp.func
+def _compose_spatial_poses_and_twists_at(
+    environment: int,
+    sample: int,
     base_pose: wp.array2d[wp.float64],
     qd: wp.array2d[wp.float64],
     relative_pose: wp.array4d[wp.float64],
@@ -254,8 +387,6 @@ def _compose_spatial_poses_and_twists_kernel(
     Returns:
         None. ``poses`` and ``twists`` are written in place.
     """
-
-    environment, sample = wp.tid()
     base_rotation = _quaternion_rotation_matrix(base_pose, environment)
     offset_x = wp.float64(0.0)
     offset_y = wp.float64(0.0)
@@ -274,16 +405,11 @@ def _compose_spatial_poses_and_twists_kernel(
         inner += 1
     world_offset = wp.vec3d(offset_x, offset_y, offset_z)
     base_angular_velocity = wp.vec3d(
-        qd[environment, 0],
-        qd[environment, 1],
-        qd[environment, 2],
+        qd[environment, 0], qd[environment, 1], qd[environment, 2]
     )
     base_linear_velocity = wp.vec3d(
-        qd[environment, 3],
-        qd[environment, 4],
-        qd[environment, 5],
+        qd[environment, 3], qd[environment, 4], qd[environment, 5]
     )
-
     row = int(0)
     while row < 3:
         column = int(0)
@@ -307,7 +433,6 @@ def _compose_spatial_poses_and_twists_kernel(
         poses[environment, sample, 3, column] = wp.float64(0.0)
         column += 1
     poses[environment, sample, 3, 3] = wp.float64(1.0)
-
     base_point_velocity = base_linear_velocity + wp.cross(
         base_angular_velocity, world_offset
     )
@@ -331,7 +456,75 @@ def _compose_spatial_poses_and_twists_kernel(
 
 
 @wp.kernel(enable_backward=False)
-def _compose_spatial_wrench_vjp_kernel(
+def _compose_spatial_poses_and_twists_kernel(
+    base_pose: wp.array2d[wp.float64],
+    qd: wp.array2d[wp.float64],
+    relative_pose: wp.array4d[wp.float64],
+    twists_internal: wp.array3d[wp.float64],
+    poses: wp.array4d[wp.float64],
+    twists: wp.array3d[wp.float64],
+):
+    """Compose floating poses and one augmented Jacobian direction.
+
+    Args:
+        base_pose: Runtime scalar-last base poses ``(E, 7)``.
+        qd: Batched generalized-velocity directions. The first six entries are
+            the angular-linear world-frame base direction.
+        relative_pose: Fixed-base relative sample poses ``(E, N, 4, 4)``.
+        twists_internal: Base-frame internal-Jacobian products ``(E, N, 6)``.
+        poses: Absolute pose output ``(E, N, 4, 4)``.
+        twists: Absolute inertial JVP output ``(E, N, 6)``.
+
+    Returns:
+        None. ``poses`` and ``twists`` are written in place.
+    """
+    environment, sample = wp.tid()
+    _compose_spatial_poses_and_twists_at(
+        environment,
+        sample,
+        base_pose,
+        qd,
+        relative_pose,
+        twists_internal,
+        poses,
+        twists,
+    )
+
+
+@wp.struct
+class ComposeSpatialPosesAndTwistsArrays:
+    base_pose: wp.array2d[wp.float64]
+    qd: wp.array2d[wp.float64]
+    relative_pose: wp.array4d[wp.float64]
+    twists_internal: wp.array3d[wp.float64]
+    poses: wp.array4d[wp.float64]
+    twists: wp.array3d[wp.float64]
+
+
+@wp.kernel(enable_backward=False)
+def packed_compose_spatial_poses_and_twists_kernel(
+    worlds: wp.array(dtype=ComposeSpatialPosesAndTwistsArrays),
+    work: wp.array(dtype=wp.vec3i),
+):
+    item = wp.tid()
+    entry = work[item]
+    d = worlds[entry[0]]
+    _compose_spatial_poses_and_twists_at(
+        0,
+        entry[1],
+        d.base_pose,
+        d.qd,
+        d.relative_pose,
+        d.twists_internal,
+        d.poses,
+        d.twists,
+    )
+
+
+@wp.func
+def _compose_spatial_wrench_vjp_at(
+    environment: int,
+    sample: int,
     base_pose: wp.array2d[wp.float64],
     relative_pose: wp.array4d[wp.float64],
     inertial_wrenches: wp.array3d[wp.float64],
@@ -352,8 +545,6 @@ def _compose_spatial_wrench_vjp_kernel(
         None. ``relative_wrenches`` is written and ``base_generalized_force``
         is accumulated in place.
     """
-
-    environment, sample = wp.tid()
     base_rotation = _quaternion_rotation_matrix(base_pose, environment)
     world_offset = wp.vec3d()
     row = int(0)
@@ -394,6 +585,97 @@ def _compose_spatial_wrench_vjp_kernel(
 
 
 @wp.kernel(enable_backward=False)
+def _compose_spatial_wrench_vjp_kernel(
+    base_pose: wp.array2d[wp.float64],
+    relative_pose: wp.array4d[wp.float64],
+    inertial_wrenches: wp.array3d[wp.float64],
+    relative_wrenches: wp.array3d[wp.float64],
+    base_generalized_force: wp.array2d[wp.float64],
+):
+    """Pull absolute sample wrenches through floating-base composition.
+
+    Args:
+        base_pose: Runtime scalar-last base poses ``(E, 7)``.
+        relative_pose: Fixed-base relative sample poses ``(E, N, 4, 4)``.
+        inertial_wrenches: Absolute inertial sample cotangents ``(E, N, 6)``.
+        relative_wrenches: Rotated cotangent output for the internal VJP with
+            shape ``(E, N, 6)``.
+        base_generalized_force: Base effort accumulator ``(E, 6)``.
+
+    Returns:
+        None. ``relative_wrenches`` is written and ``base_generalized_force``
+        is accumulated in place.
+    """
+    environment, sample = wp.tid()
+    _compose_spatial_wrench_vjp_at(
+        environment,
+        sample,
+        base_pose,
+        relative_pose,
+        inertial_wrenches,
+        relative_wrenches,
+        base_generalized_force,
+    )
+
+
+@wp.struct
+class ComposeSpatialWrenchVjpArrays:
+    base_pose: wp.array2d[wp.float64]
+    relative_pose: wp.array4d[wp.float64]
+    inertial_wrenches: wp.array3d[wp.float64]
+    relative_wrenches: wp.array3d[wp.float64]
+    base_generalized_force: wp.array2d[wp.float64]
+
+
+@wp.kernel(enable_backward=False)
+def packed_compose_spatial_wrench_vjp_kernel(
+    worlds: wp.array(dtype=ComposeSpatialWrenchVjpArrays),
+    work: wp.array(dtype=wp.vec3i),
+):
+    item = wp.tid()
+    entry = work[item]
+    d = worlds[entry[0]]
+    _compose_spatial_wrench_vjp_at(
+        0,
+        entry[1],
+        d.base_pose,
+        d.relative_pose,
+        d.inertial_wrenches,
+        d.relative_wrenches,
+        d.base_generalized_force,
+    )
+
+
+@wp.func
+def _assemble_floating_vjp_at(
+    environment: int,
+    column: int,
+    base_generalized_force: wp.array2d[wp.float64],
+    internal_generalized_force: wp.array2d[wp.float64],
+    generalized_force: wp.array2d[wp.float64],
+):
+    """Assemble base and internal blocks of an augmented floating VJP.
+
+    Args:
+        base_generalized_force: Base effort ``(E, B)``.
+        internal_generalized_force: Internal-coordinate effort ``(E, D)``.
+        generalized_force: Augmented effort output ``(E, B + D)``.
+
+    Returns:
+        None. ``generalized_force`` is written in place.
+    """
+    base_dimension = base_generalized_force.shape[1]
+    if column < base_dimension:
+        generalized_force[environment, column] = base_generalized_force[
+            environment, column
+        ]
+    else:
+        generalized_force[environment, column] = internal_generalized_force[
+            environment, column - base_dimension
+        ]
+
+
+@wp.kernel(enable_backward=False)
 def _assemble_floating_vjp_kernel(
     base_generalized_force: wp.array2d[wp.float64],
     internal_generalized_force: wp.array2d[wp.float64],
@@ -409,17 +691,37 @@ def _assemble_floating_vjp_kernel(
     Returns:
         None. ``generalized_force`` is written in place.
     """
-
     environment, column = wp.tid()
-    base_dimension = base_generalized_force.shape[1]
-    if column < base_dimension:
-        generalized_force[environment, column] = base_generalized_force[
-            environment, column
-        ]
-    else:
-        generalized_force[environment, column] = internal_generalized_force[
-            environment, column - base_dimension
-        ]
+    _assemble_floating_vjp_at(
+        environment,
+        column,
+        base_generalized_force,
+        internal_generalized_force,
+        generalized_force,
+    )
+
+
+@wp.struct
+class AssembleFloatingVjpArrays:
+    base_generalized_force: wp.array2d[wp.float64]
+    internal_generalized_force: wp.array2d[wp.float64]
+    generalized_force: wp.array2d[wp.float64]
+
+
+@wp.kernel(enable_backward=False)
+def packed_assemble_floating_vjp_kernel(
+    worlds: wp.array(dtype=AssembleFloatingVjpArrays), work: wp.array(dtype=wp.vec3i)
+):
+    item = wp.tid()
+    entry = work[item]
+    d = worlds[entry[0]]
+    _assemble_floating_vjp_at(
+        0,
+        entry[1],
+        d.base_generalized_force,
+        d.internal_generalized_force,
+        d.generalized_force,
+    )
 
 
 @wp.kernel(enable_backward=False)
@@ -988,4 +1290,20 @@ __all__ = [
     "spatial_floating_jacobian_composition",
     "spatial_floating_kinematics_composition",
     "spatial_floating_pose_composition",
+]
+
+
+__all__ += [
+    "ComposeSpatialPosesArrays",
+    "packed_compose_spatial_poses_kernel",
+    "ComposeSpatialJacobiansArrays",
+    "packed_compose_spatial_jacobians_kernel",
+    "ComposeSpatialJacobiansTiledArrays",
+    "packed_compose_spatial_jacobians_tiled_kernel",
+    "ComposeSpatialPosesAndTwistsArrays",
+    "packed_compose_spatial_poses_and_twists_kernel",
+    "ComposeSpatialWrenchVjpArrays",
+    "packed_compose_spatial_wrench_vjp_kernel",
+    "AssembleFloatingVjpArrays",
+    "packed_assemble_floating_vjp_kernel",
 ]

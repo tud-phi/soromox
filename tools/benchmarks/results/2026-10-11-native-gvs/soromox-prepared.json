@@ -1,0 +1,501 @@
+{
+  "revision": "79f8bf0f9cc78bc911b47bb98cc8fa1aef737839",
+  "source_sha256": {
+    "loader.py": "6c3a8a999a3b657a5f7cdbd248360d95649e0f13151825d181555aca011d466a",
+    "config.py": "326c000c2cfef41b6230ff63b812f2faa3b009f60233ce3f50b5f5745f289e8c",
+    "__init__.py": "dd5405870947ed122780e06864ff064be4c530621a78e4d79a6c7b99949c873e",
+    "pcs/spatial_kinematics.py": "8eaab75aad1e29d56825e38bc16340068adc63d7e4a551b98a5d1a5f63e3df6e",
+    "pcs/spatial_kernels.py": "4a3c806cafc4717841fd33da115c63839f30caaf4ca179ab3333a4b6c093ba99",
+    "pcs/spatial_floating_kernels.py": "2a6fa234c684e66c9786cb814969d4f541592c4539c184c74f77875249db6889",
+    "pcs/spatial_directional_kinematics.py": "ae42d69a458796e3663a96332df353eb1c729a0853f2402c5dff2a03b2ab44a0",
+    "pcs/planar_kinematics.py": "a5255efed4db55e516d94f1bbbe9b2cc8b001b88bf94d0c432aaf53dea767eaa",
+    "pcs/planar_kernels.py": "5a3206414dd8b273166be88a1d840b4f9bdc985d45bbeaa80477ef29ba73f337",
+    "pcs/planar_floating_kernels.py": "009d0a703bdfdc3dec6e91ea650483afe18e45f90638cfa2c733e66c0d3b9a2e",
+    "pcs/planar_directional_kinematics.py": "be4346839077a9ebf41fcec61a11e4756ec3827a76fd44e789261cae56503f99",
+    "pcs/operands.py": "3b0fbbd23fa5ee8e7c3b8d790cb02d6cd485fda1e36f04dba8ff3e150a60c51f",
+    "pcs/kinematics_executor.py": "6a4c6aa8faf1ccf9a91fa3bb62dcd6f9189cb148da1b285f1014fd93575417c3",
+    "pcs/kinematics.py": "41052d18492670aa5f5368fcac17c20ff030e1a3e44c38ed6e69c568d6903c9a",
+    "pcs/fused_executor.py": "b691381f75ff3a81f94c5e33033ca122bb4561cde86c23d089f1e31191d6007a",
+    "pcs/fused.py": "5d879c371231bdda0389d98e9cc4e0f22ccd598b42cfe65598d2165e9c9550bc",
+    "pcs/floating_fused.py": "14bda81fb28a80aa1d0baef65081ba40a09e7edebcbd78d2522fbf8c2915e0d8",
+    "pcs/executor.py": "7ada20fdb5b7d1e99bcd8e67299cd62d86728d6f11f0cae8379c307e344a0639",
+    "pcs/__init__.py": "f63d59d477e6d210cca508a615d5e6ae6fa21fa5b58f6974a2b6a447f6f04746",
+    "gvs/prepared.py": "6ec2ad9cf9aec2611012ed30bca63bf3fe8453f17dedea72666a668e78f34129",
+    "gvs/packed.py": "a1691a90deecf371d12c28374645ed99c64783e0aa51e0d4fad521ad41beabdc",
+    "gvs/operands.py": "10012fdac1252966b9d1f5c190ce21de5dc4e0646c752b0f3120a2f3e6b8166e",
+    "gvs/kinematics_executor.py": "8b0f20cc03d0391d90e8015c7173dca5880d8730e865997ec7374eebedb486bf",
+    "gvs/kinematics.py": "458af165e8be8fd204eaed8dd1e94050f192d7cd205c8e137804693b5f0a030e",
+    "gvs/fused_executor.py": "994a956b410e4387e28c8de3687149179457912fe6d3dfd5bb2d3662cad7b9a8",
+    "gvs/fused.py": "e17e8d4201b6f027e95717de6db6bc24bf3a22f4880aea1391151e5d9c7e8461",
+    "gvs/floating_fused.py": "c2bf739cd374c77abb324c1f1ccc58f155d51597b199e1c245942c5c21ee0012",
+    "gvs/floating_chain.py": "b262e0740bdd4cc0a7fd92c78a0ec27fa0573860802ad36f86ca2177a9603998",
+    "gvs/executor.py": "27941f0fa6f9c1bacede69dc236de2b3c4c0d1fc5033e0ec8241b65ed63e84b7",
+    "gvs/directional_kinematics.py": "ec7aa5e7bcaf221a4f24b823a37a34225632368e5b046448bc8278082b863bba",
+    "gvs/chain.py": "7524dccb0036a8c809c819ec99cc20c43b1b44e10f7c682fe44e8358122747e1",
+    "gvs/cell.py": "5150b2d1bdd3f70b4b035489de1c51aea223d1412cb744412c66499a963346c5",
+    "gvs/__init__.py": "6af014bf8f48e3168d284c50f863530159f76ea979d507c1957be1a00dff6c48",
+    "common/linear_solve.py": "ec99e6dce82520daf9d2a75fd0eb1f7a426d8ef02abb1323095d0a0c525df141",
+    "common/storage.py": "1dc51c857e8a8a83e6653084a4dc9524d82cb40ec367530f9609d39e1169ab7a",
+    "common/spatial.py": "d80dc1d424e3956a644970f9a7a6a38a5aad7d7ae0a73a84da5acff16b4e8da2",
+    "common/so3.py": "b5f2da26930ded973a8408a83b4e9ae7a8705806521c9ebd9a4a860af746cf92",
+    "common/so2.py": "6abce3246d1dba0476ea6c394ddf222cd98300fa93dbd812ae3632c5decab21d",
+    "common/se3.py": "ad01af8ca43f7708d84b4f4b61d36093908a33ad773b7908a5d94c6fe7cedd86",
+    "common/se2.py": "dd6ba14e5025d1f3b831bf88030584c39a1a2367e4662a3df65906ee71ed26c2",
+    "common/rotations.py": "ee4f7f06b8ea2e6fa0cb56bc751a97cada618ba2774a09d53ee11d974c520043",
+    "common/joints_cooperative.py": "0933ba55220f2c0cb6c334603c3bf27da8c80f541866682c41f926c77ab9e655",
+    "common/joints.py": "55be8aaf9996d8c79fbb50b87fd7b7006a8e98eaf43156a062f9df99365847ae",
+    "common/joint_terms.py": "1d96e9ca04719601509bbdd147b345a7c03b36ea53cf52af5367c5209ce0f117",
+    "common/floating_kinematics.py": "770edc5f9728699310d2b23d382a65a91a7415e0e886489c68b180cb71569a3b",
+    "common/floating_base.py": "5eed9e99ca9ad3f378e50d90458ad73c8a82294fd392f073a5e3e1d10338cffa",
+    "common/__init__.py": "00ddfcdc5b57f7d0af71e1e238cce19f0c3f5a78ed4c3e61fc3500ee0edd2433",
+    "actuation/threadlike.py": "4e991a61a6011e56bd7c2f5f79e649d80ad94147f5a7f0f7058f5cfdc9b7a1e5",
+    "actuation/__init__.py": "98ae4a3ebed99837c3512ba48b9e564ff251acd15181c3526246cc03b57b3921",
+    "gvs/actuation/threadlike.py": "e7fd4ad556e59aeb2f05ae2fdbd5280efb000105221d68b26ba399a96f04b5c3",
+    "gvs/actuation/operands.py": "35ba4b76c9118ce28ec2db4594cffc986f9d11d9e8e18d728cfebdffb39124c5",
+    "gvs/actuation/executor.py": "ecdfbffb2c397db8ad0b0460bfe5f47b84b0be5b3bb8070e2c141f4530fdf2ab",
+    "gvs/actuation/__init__.py": "2d6bfacf1ed8cc5234b5a736739a7974158e5c7b7b8994d7478adf3949aec93d",
+    "pcs/actuation/threadlike.py": "0270c708a74d944dcd1868b2c3a7f7a294ab2a3784e452b7058b556bcc2890f6",
+    "pcs/actuation/operands.py": "71812d8dc569fd9ad9d991e4d5c596382b6f381d3f43d57f51217d1c6627efd0",
+    "pcs/actuation/executor.py": "fecbedc317a1401fab7d1f91130293f5a293e399f221179fa433eb62a078e39d",
+    "pcs/actuation/cooperative.py": "29bff3a8d324f00a0a2e3130613acc000969f3b81b10ab8b166590df2bcd2c3e",
+    "pcs/actuation/__init__.py": "1b5d99d0eab0fcd5f7323b5ad27a986cc0b3173005bf75bec8c48a3347deb675"
+  },
+  "gpu": "NVIDIA GeForce RTX 5090",
+  "jax": "0.11.1",
+  "warp": "1.16.0",
+  "cache_trial": true,
+  "cases": [
+    {
+      "case": "small",
+      "worlds": 32,
+      "dofs": 8,
+      "terms": {
+        "us": 156.88770217821002,
+        "samples_us": [
+          282.87710156291723,
+          150.6461063399911,
+          156.88770217821002,
+          157.21339732408524,
+          141.49039052426815
+        ]
+      },
+      "forward": {
+        "us": 188.88259073719382,
+        "samples_us": [
+          270.95830300822854,
+          186.36150052770972,
+          186.87109695747495,
+          191.50299485772848,
+          188.88259073719382
+        ]
+      },
+      "outputs": "/tmp/soromox-prepared-small-32.npz",
+      "validation": {
+        "terms_bitwise_equal": true,
+        "max_acceleration_abs_error": 0.0,
+        "relative_acceleration_inf_error": 0.0,
+        "inertia_condition_number": 8092.54045129427,
+        "normalized_solve_residuals": [
+          1.182003634458635e-17,
+          1.182003634458635e-17
+        ]
+      }
+    },
+    {
+      "case": "small",
+      "worlds": 128,
+      "dofs": 8,
+      "terms": {
+        "us": 157.73100312799215,
+        "samples_us": [
+          256.3816960901022,
+          157.803890760988,
+          156.19680052623153,
+          154.1509060189128,
+          157.73100312799215
+        ]
+      },
+      "forward": {
+        "us": 187.2702967375517,
+        "samples_us": [
+          246.8711929395795,
+          182.28460103273392,
+          196.35180942714214,
+          187.2702967375517,
+          183.53150226175785
+        ]
+      },
+      "outputs": "/tmp/soromox-prepared-small-128.npz",
+      "validation": {
+        "terms_bitwise_equal": true,
+        "max_acceleration_abs_error": 0.0,
+        "relative_acceleration_inf_error": 0.0,
+        "inertia_condition_number": 8092.54045129427,
+        "normalized_solve_residuals": [
+          1.182003634458635e-17,
+          1.182003634458635e-17
+        ]
+      }
+    },
+    {
+      "case": "small",
+      "worlds": 512,
+      "dofs": 8,
+      "terms": {
+        "us": 235.02809926867485,
+        "samples_us": [
+          304.70199417322874,
+          232.42339957505465,
+          235.02809926867485,
+          232.01060248538852,
+          237.30159737169743
+        ]
+      },
+      "forward": {
+        "us": 274.004100356251,
+        "samples_us": [
+          313.9201086014509,
+          271.10789669677615,
+          265.0161040946841,
+          285.0571065209806,
+          274.004100356251
+        ]
+      },
+      "outputs": "/tmp/soromox-prepared-small-512.npz",
+      "validation": {
+        "terms_bitwise_equal": true,
+        "max_acceleration_abs_error": 0.0,
+        "relative_acceleration_inf_error": 0.0,
+        "inertia_condition_number": 8092.54045129427,
+        "normalized_solve_residuals": [
+          1.182003634458635e-17,
+          1.182003634458635e-17
+        ]
+      }
+    },
+    {
+      "case": "moving",
+      "worlds": 32,
+      "dofs": 10,
+      "terms": {
+        "us": 175.69579649716616,
+        "samples_us": [
+          262.4414046294987,
+          175.91050127521157,
+          174.64030534029007,
+          174.8019945807755,
+          175.69579649716616
+        ]
+      },
+      "forward": {
+        "us": 211.72469714656472,
+        "samples_us": [
+          268.4270963072777,
+          214.41500866785645,
+          211.72469714656472,
+          193.74970579519868,
+          192.94980447739363
+        ]
+      },
+      "outputs": "/tmp/soromox-prepared-moving-32.npz",
+      "validation": {
+        "terms_bitwise_equal": true,
+        "max_acceleration_abs_error": 0.0,
+        "relative_acceleration_inf_error": 0.0,
+        "inertia_condition_number": 44713592.94759282,
+        "normalized_solve_residuals": [
+          4.717196292603251e-18,
+          4.717196292603251e-18
+        ]
+      }
+    },
+    {
+      "case": "moving",
+      "worlds": 128,
+      "dofs": 10,
+      "terms": {
+        "us": 175.81790452823043,
+        "samples_us": [
+          268.85269908234477,
+          171.64599848911166,
+          183.96530067548156,
+          175.81790452823043,
+          173.19479957222939
+        ]
+      },
+      "forward": {
+        "us": 212.08260441198945,
+        "samples_us": [
+          269.424298312515,
+          212.08260441198945,
+          210.1002959534526,
+          210.71219816803932,
+          214.14340008050203
+        ]
+      },
+      "outputs": "/tmp/soromox-prepared-moving-128.npz",
+      "validation": {
+        "terms_bitwise_equal": true,
+        "max_acceleration_abs_error": 0.0,
+        "relative_acceleration_inf_error": 0.0,
+        "inertia_condition_number": 44713592.94759282,
+        "normalized_solve_residuals": [
+          4.717196292603251e-18,
+          4.717196292603251e-18
+        ]
+      }
+    },
+    {
+      "case": "moving",
+      "worlds": 512,
+      "dofs": 10,
+      "terms": {
+        "us": 275.1764957793057,
+        "samples_us": [
+          322.1674938686192,
+          276.0199015028775,
+          275.17140842974186,
+          268.2504942640662,
+          275.1764957793057
+        ]
+      },
+      "forward": {
+        "us": 318.3975932188332,
+        "samples_us": [
+          373.3843914233148,
+          313.2955986075103,
+          314.7642011754215,
+          337.41340739652514,
+          318.3975932188332
+        ]
+      },
+      "outputs": "/tmp/soromox-prepared-moving-512.npz",
+      "validation": {
+        "terms_bitwise_equal": true,
+        "max_acceleration_abs_error": 0.0,
+        "relative_acceleration_inf_error": 0.0,
+        "inertia_condition_number": 44713592.94759282,
+        "normalized_solve_residuals": [
+          4.717196292603251e-18,
+          4.717196292603251e-18
+        ]
+      }
+    },
+    {
+      "case": "large8",
+      "worlds": 32,
+      "dofs": 144,
+      "terms": {
+        "us": 1397.2062966786325,
+        "samples_us": [
+          1450.7520012557507,
+          1397.2062966786325,
+          1398.793503176421,
+          1386.1228013411164,
+          1387.0788039639592
+        ]
+      },
+      "forward": {
+        "us": 2335.00370522961,
+        "samples_us": [
+          2361.9739920832217,
+          2336.2986044958234,
+          2331.740502268076,
+          2326.3257928192616,
+          2335.00370522961
+        ]
+      },
+      "outputs": "/tmp/soromox-prepared-large8-32.npz",
+      "validation": {
+        "terms_bitwise_equal": true,
+        "max_acceleration_abs_error": 2.948281007775222e-06,
+        "relative_acceleration_inf_error": 1.2957282023115819e-11,
+        "inertia_condition_number": 164857328.99708724,
+        "normalized_solve_residuals": [
+          3.735183851527862e-18,
+          2.8363068047912635e-18
+        ]
+      }
+    },
+    {
+      "case": "large8",
+      "worlds": 128,
+      "dofs": 144,
+      "terms": {
+        "us": 1398.0366988107562,
+        "samples_us": [
+          1439.7412072867155,
+          1403.3535029739141,
+          1398.0366988107562,
+          1394.7110972367227,
+          1390.4197025112808
+        ]
+      },
+      "forward": {
+        "us": 2376.7587961629033,
+        "samples_us": [
+          2412.6723990775645,
+          2376.476093195379,
+          2371.732797473669,
+          2387.1922050602734,
+          2376.7587961629033
+        ]
+      },
+      "outputs": "/tmp/soromox-prepared-large8-128.npz",
+      "validation": {
+        "terms_bitwise_equal": true,
+        "max_acceleration_abs_error": 6.776103191441507e-06,
+        "relative_acceleration_inf_error": 2.978002430490729e-11,
+        "inertia_condition_number": 164857328.99708724,
+        "normalized_solve_residuals": [
+          1.9913543422077364e-18,
+          1.6322727182520022e-18
+        ]
+      }
+    },
+    {
+      "case": "large8",
+      "worlds": 512,
+      "dofs": 144,
+      "terms": {
+        "us": 4123.009089380503,
+        "samples_us": [
+          4151.665698736906,
+          4128.763498738408,
+          4123.009089380503,
+          4119.785199873149,
+          4120.570095255971
+        ]
+      },
+      "forward": {
+        "us": 5998.170294333249,
+        "samples_us": [
+          6023.144698701799,
+          6010.205007623881,
+          5998.170294333249,
+          5967.336497269571,
+          5985.6679989025
+        ]
+      },
+      "outputs": "/tmp/soromox-prepared-large8-512.npz",
+      "validation": {
+        "terms_bitwise_equal": true,
+        "max_acceleration_abs_error": 1.193256593978731e-06,
+        "relative_acceleration_inf_error": 5.244195574760419e-12,
+        "inertia_condition_number": 164857328.99708724,
+        "normalized_solve_residuals": [
+          2.5770274953153637e-18,
+          2.375437811691091e-18
+        ]
+      }
+    },
+    {
+      "case": "large16",
+      "worlds": 32,
+      "dofs": 288,
+      "terms": {
+        "us": 7734.416192397475,
+        "samples_us": [
+          7766.049704514444,
+          7734.416192397475,
+          7737.019401974976,
+          7731.292804237455,
+          7712.527399417013
+        ]
+      },
+      "forward": {
+        "us": 12144.829891622066,
+        "samples_us": [
+          12201.53730828315,
+          12118.28589439392,
+          12144.829891622066,
+          12145.102489739656,
+          12111.484503839165
+        ]
+      },
+      "outputs": "/tmp/soromox-prepared-large16-32.npz",
+      "validation": {
+        "terms_bitwise_equal": true,
+        "max_acceleration_abs_error": 3.08672963456047e-05,
+        "relative_acceleration_inf_error": 1.2320650061932822e-10,
+        "inertia_condition_number": 822998428.004495,
+        "normalized_solve_residuals": [
+          3.9790910396081495e-18,
+          3.543874170391032e-18
+        ]
+      }
+    },
+    {
+      "case": "large16",
+      "worlds": 128,
+      "dofs": 288,
+      "terms": {
+        "us": 8535.839209798723,
+        "samples_us": [
+          8559.71520068124,
+          8509.333699475974,
+          8535.839209798723,
+          8542.201004456729,
+          8524.290297646075
+        ]
+      },
+      "forward": {
+        "us": 13456.24519744888,
+        "samples_us": [
+          13480.718596838415,
+          13456.24519744888,
+          13458.934798836708,
+          13444.620603695512,
+          13445.488293655217
+        ]
+      },
+      "outputs": "/tmp/soromox-prepared-large16-128.npz",
+      "validation": {
+        "terms_bitwise_equal": true,
+        "max_acceleration_abs_error": 1.0219343721473706e-05,
+        "relative_acceleration_inf_error": 4.079040692296215e-11,
+        "inertia_condition_number": 822998428.004495,
+        "normalized_solve_residuals": [
+          4.595574807855365e-18,
+          4.343880231915539e-18
+        ]
+      }
+    },
+    {
+      "case": "large16",
+      "worlds": 512,
+      "dofs": 288,
+      "terms": {
+        "us": 33787.32919227332,
+        "samples_us": [
+          33724.22729153186,
+          33751.12919602543,
+          33799.468306824565,
+          33787.32919227332,
+          33807.78499413282
+        ]
+      },
+      "forward": {
+        "us": 44140.15259826556,
+        "samples_us": [
+          44133.215595502406,
+          44168.72540023178,
+          44218.34320528433,
+          44088.17410003394,
+          44140.15259826556
+        ]
+      },
+      "outputs": "/tmp/soromox-prepared-large16-512.npz",
+      "validation": {
+        "terms_bitwise_equal": true,
+        "max_acceleration_abs_error": 5.068495966042974e-06,
+        "relative_acceleration_inf_error": 2.0230850295000253e-11,
+        "inertia_condition_number": 822998428.004495,
+        "normalized_solve_residuals": [
+          4.417693272252097e-18,
+          2.8671226022745096e-18
+        ]
+      }
+    }
+  ]
+}

@@ -133,6 +133,95 @@ def _joint_basis_column(
     )
 
 
+@wp.func
+def joint_terms_at(
+    work_item: int,
+    q: wp.array2d[wp.float64],
+    qd: wp.array2d[wp.float64],
+    basis: wp.array2d[wp.float64],
+    reference: wp.array2d[wp.float64],
+    local_to_global: wp.array2d[wp.int32],
+    adjoint: wp.array2d[wp.float64],
+    adjoint_dot: wp.array2d[wp.float64],
+    tangent_local: wp.array2d[wp.float64],
+    tangent_dot_qd: wp.array2d[wp.float64],
+    joint_velocity: wp.array2d[wp.float64],
+):
+    """Evaluate one joint per ``(environment, segment)`` work item.
+
+    Args:
+        q: Batched active generalized coordinates.
+        qd: Batched active generalized velocities.
+        basis: Flattened padded joint bases.
+        reference: Reference joint strains.
+        local_to_global: Padded local-to-active coordinate map.
+        adjoint: Caller-owned inverse-adjoint output.
+        adjoint_dot: Caller-owned inverse-adjoint derivative output.
+        tangent_local: Caller-owned local-tangent output.
+        tangent_dot_qd: Caller-owned tangent-derivative action output.
+        joint_velocity: Caller-owned joint-velocity output.
+
+    Returns:
+        None. All results are written to the caller-owned output arrays.
+    """
+    num_segments = reference.shape[0]
+    environment = work_item // num_segments
+    segment = work_item - environment * num_segments
+    output_base_row = work_item * SPATIAL_DIM
+    xi = _joint_strain(basis, reference, q, local_to_global, environment, segment)
+    xid = _joint_strain_rate(basis, qd, local_to_global, environment, segment)
+    angle_sq = xi[0] * xi[0] + xi[1] * xi[1] + xi[2] * xi[2]
+    coefficients = _left_coefficients(angle_sq)
+    coefficient_derivatives = _left_coefficient_x_derivatives(angle_sq)
+    angle_sq_dot = wp.float64(2.0) * (xi[0] * xid[0] + xi[1] * xid[1] + xi[2] * xid[2])
+    omega = wp.vec3d(xi[0], xi[1], xi[2])
+    linear = wp.vec3d(xi[3], xi[4], xi[5])
+    exponential_coefficients = _forward_coefficients(angle_sq)
+    translation = _translation(omega, linear, exponential_coefficients)
+    velocity = _left_action(xi, xid, coefficients)
+    eta = _adjoint_inverse_action(
+        omega, translation, angle_sq, exponential_coefficients, velocity
+    )
+    derivative_velocity = _left_total_derivative_action(
+        xi, xid, xid, Vec6d(), coefficients, coefficient_derivatives * angle_sq_dot
+    )
+    row = int(0)
+    while row < SPATIAL_DIM:
+        tangent_dot_qd[output_base_row + row, 0] = derivative_velocity[row]
+        joint_velocity[output_base_row + row, 0] = velocity[row]
+        column = int(0)
+        while column < SPATIAL_DIM:
+            adjoint_value = _adjoint_inverse_entry(
+                omega, translation, angle_sq, exponential_coefficients, row, column
+            )
+            adjoint[output_base_row + row, column] = adjoint_value
+            column += 1
+        row += 1
+    column = int(0)
+    while column < SPATIAL_DIM:
+        adjoint_column = Vec6d()
+        row = int(0)
+        while row < SPATIAL_DIM:
+            adjoint_column[row] = adjoint[output_base_row + row, column]
+            row += 1
+        derivative_column = -_ad_action(eta, adjoint_column)
+        row = int(0)
+        while row < SPATIAL_DIM:
+            adjoint_dot[output_base_row + row, column] = derivative_column[row]
+            row += 1
+        column += 1
+    local_column = int(0)
+    while local_column < local_to_global.shape[1]:
+        tangent = _left_action(
+            xi, _joint_basis_column(basis, segment, local_column), coefficients
+        )
+        row = int(0)
+        while row < SPATIAL_DIM:
+            tangent_local[output_base_row + row, local_column] = tangent[row]
+            row += 1
+        local_column += 1
+
+
 @wp.kernel(enable_backward=False)
 def joint_terms_kernel(
     q: wp.array2d[wp.float64],
@@ -163,83 +252,56 @@ def joint_terms_kernel(
     Returns:
         None. All results are written to the caller-owned output arrays.
     """
-
     work_item = wp.tid()
-    num_segments = reference.shape[0]
-    environment = work_item // num_segments
-    segment = work_item - environment * num_segments
-    output_base_row = work_item * SPATIAL_DIM
-
-    xi = _joint_strain(basis, reference, q, local_to_global, environment, segment)
-    xid = _joint_strain_rate(basis, qd, local_to_global, environment, segment)
-    angle_sq = xi[0] * xi[0] + xi[1] * xi[1] + xi[2] * xi[2]
-    coefficients = _left_coefficients(angle_sq)
-    coefficient_derivatives = _left_coefficient_x_derivatives(angle_sq)
-    angle_sq_dot = wp.float64(2.0) * (xi[0] * xid[0] + xi[1] * xid[1] + xi[2] * xid[2])
-    omega = wp.vec3d(xi[0], xi[1], xi[2])
-    linear = wp.vec3d(xi[3], xi[4], xi[5])
-    exponential_coefficients = _forward_coefficients(angle_sq)
-    translation = _translation(omega, linear, exponential_coefficients)
-
-    velocity = _left_action(xi, xid, coefficients)
-    eta = _adjoint_inverse_action(
-        omega, translation, angle_sq, exponential_coefficients, velocity
-    )
-    derivative_velocity = _left_total_derivative_action(
-        xi,
-        xid,
-        xid,
-        Vec6d(),
-        coefficients,
-        coefficient_derivatives * angle_sq_dot,
+    joint_terms_at(
+        work_item,
+        q,
+        qd,
+        basis,
+        reference,
+        local_to_global,
+        adjoint,
+        adjoint_dot,
+        tangent_local,
+        tangent_dot_qd,
+        joint_velocity,
     )
 
-    row = int(0)
-    while row < SPATIAL_DIM:
-        tangent_dot_qd[output_base_row + row, 0] = derivative_velocity[row]
-        joint_velocity[output_base_row + row, 0] = velocity[row]
-        column = int(0)
-        while column < SPATIAL_DIM:
-            adjoint_value = _adjoint_inverse_entry(
-                omega,
-                translation,
-                angle_sq,
-                exponential_coefficients,
-                row,
-                column,
-            )
-            adjoint[output_base_row + row, column] = adjoint_value
-            column += 1
-        row += 1
 
-    # Ad_inv_dot = -ad(Ad_inv * joint_velocity) * Ad_inv.  Applying ad to
-    # each already-computed adjoint column avoids materializing a dense ad.
-    column = int(0)
-    while column < SPATIAL_DIM:
-        adjoint_column = Vec6d()
-        row = int(0)
-        while row < SPATIAL_DIM:
-            adjoint_column[row] = adjoint[output_base_row + row, column]
-            row += 1
-        derivative_column = -_ad_action(eta, adjoint_column)
-        row = int(0)
-        while row < SPATIAL_DIM:
-            adjoint_dot[output_base_row + row, column] = derivative_column[row]
-            row += 1
-        column += 1
+@wp.struct
+class JointTermsArrays:
+    q: wp.array2d[wp.float64]
+    qd: wp.array2d[wp.float64]
+    basis: wp.array2d[wp.float64]
+    reference: wp.array2d[wp.float64]
+    local_to_global: wp.array2d[wp.int32]
+    adjoint: wp.array2d[wp.float64]
+    adjoint_dot: wp.array2d[wp.float64]
+    tangent_local: wp.array2d[wp.float64]
+    tangent_dot_qd: wp.array2d[wp.float64]
+    joint_velocity: wp.array2d[wp.float64]
 
-    local_column = int(0)
-    while local_column < local_to_global.shape[1]:
-        tangent = _left_action(
-            xi,
-            _joint_basis_column(basis, segment, local_column),
-            coefficients,
-        )
-        row = int(0)
-        while row < SPATIAL_DIM:
-            tangent_local[output_base_row + row, local_column] = tangent[row]
-            row += 1
-        local_column += 1
+
+@wp.kernel(enable_backward=False)
+def packed_joint_terms_kernel(
+    worlds: wp.array(dtype=JointTermsArrays), work: wp.array(dtype=wp.vec3i)
+):
+    item = wp.tid()
+    entry = work[item]
+    d = worlds[entry[0]]
+    joint_terms_at(
+        entry[1],
+        d.q,
+        d.qd,
+        d.basis,
+        d.reference,
+        d.local_to_global,
+        d.adjoint,
+        d.adjoint_dot,
+        d.tangent_local,
+        d.tangent_dot_qd,
+        d.joint_velocity,
+    )
 
 
 def launch_joint_terms(
@@ -302,3 +364,6 @@ scalable_joint_terms = wp.jax_callable(launch_joint_terms, num_outputs=5)
 
 
 __all__ = ["joint_terms_kernel", "launch_joint_terms"]
+
+
+__all__ += ["JointTermsArrays", "packed_joint_terms_kernel"]
