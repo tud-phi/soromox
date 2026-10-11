@@ -145,60 +145,6 @@ def test_cooperative_cholesky(n: int, column_factor: bool) -> None:
     )
 
 
-@pytest.mark.parametrize("floating", [False, True])
-@pytest.mark.parametrize("moving", [False, True])
-def test_prepared_fixed_joint_terms(floating: bool, moving: bool) -> None:
-    """Check cached and uncached joint evaluation across model variants.
-
-    Args:
-        floating: Use a floating base when true.
-        moving: Include a prismatic joint when true.
-
-    Returns:
-        None. Asserts bitwise equality of all dynamics terms.
-    """
-    import jax
-    import jax.numpy as jnp
-
-    from soromox.execution.warp.gvs.executor import execute_dynamics_terms
-    from soromox.execution.warp.gvs.operands import GVSFloatingOperands, GVSOperands
-    from soromox.execution.warp.gvs.prepared import prepare_dynamics_terms
-    from soromox.systems import GVS, GVSSegment, JointSpec, LinkSpec, StrainBasisSpec
-
-    r = GVS.from_segments(
-        (
-            GVSSegment(
-                link=LinkSpec.circular(
-                    length=0.12,
-                    radius=0.015,
-                    density=1000,
-                    reference_strain=[0, 0, 0, 1, 0, 0],
-                    young_modulus=2e5,
-                    shear_modulus=8e4,
-                ),
-                joint=JointSpec.prismatic(axis="x") if moving else JointSpec.fixed(),
-                basis=StrainBasisSpec(
-                    type="legendre", strain_selector=[True] * 6, basis_order=[2] * 6
-                ),
-                num_gauss_points=5,
-            ),
-        ),
-        backend="warp",
-        floating_base=floating,
-    )
-    operand_type = GVSFloatingOperands if floating else GVSOperands
-    op = operand_type.from_model(r, block_dim=1 if device().is_cpu else 64)
-    evaluate = jax.jit(prepare_dynamics_terms(op))
-    reference = jax.jit(lambda q, v: execute_dynamics_terms(op, q, v))
-    for worlds, scale in [(1, 0.001), (3, 0.002)]:
-        q = jnp.full((worlds, r.num_coordinates), scale)
-        if floating:
-            q = q.at[:, :4].set(jnp.array([0.0, 0.0, 0.0, 1.0]))
-        v = jnp.full((worlds, r.num_velocities), scale * 0.3)
-        for x, y in zip(evaluate(q, v), reference(q, v), strict=True):
-            np.testing.assert_array_equal(np.asarray(x), np.asarray(y))
-
-
 @pytest.mark.skipif(
     os.environ.get("SOROMOX_TEST_CUDA") != "1", reason="opt-in packed GPU factorization"
 )

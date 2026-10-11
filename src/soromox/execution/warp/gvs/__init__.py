@@ -19,7 +19,6 @@ from importlib import import_module
 from typing import Any
 
 __all__ = [
-    "prepare_dynamics_terms",
     "GVSMixedChainData",
     "packed_mixed_chain_kernel",
     "GVSCellTermsData",
@@ -77,7 +76,6 @@ __all__ = [
 ]
 
 _PUBLIC_MODULES = {
-    "prepare_dynamics_terms": "prepared",
     "GVSMixedChainData": "packed",
     "packed_mixed_chain_kernel": "packed",
     "GVSCellTermsData": "cell",
