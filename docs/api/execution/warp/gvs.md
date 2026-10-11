@@ -8,18 +8,11 @@
 
 ## Heterogeneous worlds
 
-Packed kernels use an array of typed `*Data` structs and a work map of INT32
-triples `(world_index, local_index, 0)`. Each struct holds non-owning array views
-for one world's inputs, workspaces, and outputs. Keep the referenced allocations
-alive for every launch and captured graph. The kernel docstrings specify the
-local index and launch dimensions. Worlds can have different coordinate counts,
-strain bases, quadrature sizes, and joint types without grouping by morphology.
-
-Direct array kernels serve the JAX/Warp boundary and homogeneous native callers.
-Both entry points call the same explicit-index numerical functions. Packed
-kernels support independent allocation sizes; their performance depends on the
-stage and model sizes. The optional native Cholesky solve and prepared
-fixed-joint executor require explicit selection.
+The `packed_*_kernel` entry points accept per-world `*Data` structs and an
+INT32 work map `(world_index, local_index, 0)`. Worlds may have different joints,
+strain bases, coordinate counts and quadrature sizes. Callers allocate and retain
+the FP64 input, workspace and output arrays referenced by each struct. Each
+kernel's docstring specifies its local-index meaning and required launch shape.
 
 ## Linear-threadlike actuation
 
