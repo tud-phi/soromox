@@ -10,7 +10,12 @@ import numpy as np
 from tools.benchmarks.native_gvs import robot
 
 
-def main():
+def main() -> None:
+    """Run the benchmark command described by the module.
+
+    Returns:
+        None. Writes the requested report and prints validation or timing results.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--baseline", required=True)
     parser.add_argument("--candidate", required=True)

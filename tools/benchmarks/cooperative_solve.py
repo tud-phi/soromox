@@ -21,7 +21,12 @@ import warp as wp
 from soromox.execution.warp.common.linear_solve import cooperative_cholesky_kernel
 
 
-def main():
+def main() -> None:
+    """Run the benchmark command described by the module.
+
+    Returns:
+        None. Writes the requested report and prints validation or timing results.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--inputs", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
@@ -39,18 +44,33 @@ def main():
         status = wp.zeros(worlds, dtype=wp.int32, device="cuda:0")
 
         def solve(
-            matrix=matrix,
-            b=b,
-            factor=factor,
-            workspace=workspace,
-            x=x,
-            status=status,
-            worlds=worlds,
-        ):
+            matrix: wp.array = matrix,
+            b: wp.array = b,
+            factor: wp.array = factor,
+            workspace: wp.array = workspace,
+            x: wp.array = x,
+            status: wp.array = status,
+            worlds: int = worlds,
+        ) -> None:
+            """Launch the optional Cholesky solve for one benchmark batch.
+
+            Args:
+                matrix: Batched inertia matrices.
+                b: Batched right-hand sides.
+                factor: Caller-owned factor workspace.
+                workspace: Caller-owned forward-substitution workspace.
+                x: Caller-owned solution output.
+                status: Caller-owned pivot-floor status output.
+                worlds: Number of systems in the batch.
+
+            Returns:
+                None. Writes the solve outputs and workspaces in place.
+            """
             wp.launch_tiled(
                 cooperative_cholesky_kernel,
                 dim=worlds,
-                inputs=[matrix, b, factor, workspace, x, status, wp.float64(1e-12)],
+                inputs=[matrix, b, wp.float64(1e-12)],
+                outputs=[factor, workspace, x, status],
                 block_dim=32,
                 device="cuda:0",
             )

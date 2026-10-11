@@ -28,6 +28,8 @@ def _compose_spatial_poses_at(
     """Compose batched spatial base poses and base-relative transforms.
 
     Args:
+        environment: Batch row in the supplied arrays; use zero for a single-world view.
+        sample: Sample index within the selected environment.
         base_pose: Scalar-last base poses with shape ``(E, 7)``.
         relative_pose: Base-relative transforms with shape ``(E, N, 4, 4)``.
         poses: Inertial-frame transform output with shape ``(E, N, 4, 4)``.
@@ -87,7 +89,19 @@ def _compose_spatial_poses_kernel(
 
 
 @wp.struct
-class ComposeSpatialPosesArrays:
+class SpatialPoseCompositionData:
+    """Base poses, relative poses and composed spatial pose outputs for one world.
+
+    Array fields are non-owning views; the caller must retain their allocations
+    for every launch and captured graph. Batched fields use one environment
+    (``E = 1``); structural fields use this world's own dimensions.
+
+    Attributes:
+        base_pose: Scalar-last base poses with shape ``(E, 7)``.
+        relative_pose: Base-relative transforms with shape ``(E, N, 4, 4)``.
+        poses: Inertial-frame transform output with shape ``(E, N, 4, 4)``.
+    """
+
     base_pose: wp.array2d[wp.float64]
     relative_pose: wp.array4d[wp.float64]
     poses: wp.array4d[wp.float64]
@@ -95,12 +109,28 @@ class ComposeSpatialPosesArrays:
 
 @wp.kernel(enable_backward=False)
 def packed_compose_spatial_poses_kernel(
-    worlds: wp.array(dtype=ComposeSpatialPosesArrays), work: wp.array(dtype=wp.vec3i)
+    world_data: wp.array(dtype=SpatialPoseCompositionData),
+    work_items: wp.array(dtype=wp.vec3i),
 ):
+    """Compose batched spatial base poses and base-relative transforms.
+
+    Launch with ``dim=len(work_items)``; each thread handles one work item.
+
+    Args:
+        world_data: Device array of per-world data views, including caller-owned
+            outputs and workspaces. Keep every referenced allocation alive.
+        work_items: INT32 triples ``(world_index, local_index, 0)``. The local
+            index is local sample. The third component is reserved.
+
+    Returns:
+        None. One transform in ``poses`` is written per thread.
+    """
     item = wp.tid()
-    entry = work[item]
-    d = worlds[entry[0]]
-    _compose_spatial_poses_at(0, entry[1], d.base_pose, d.relative_pose, d.poses)
+    entry = work_items[item]
+    data = world_data[entry[0]]
+    _compose_spatial_poses_at(
+        0, entry[1], data.base_pose, data.relative_pose, data.poses
+    )
 
 
 @wp.func
@@ -115,6 +145,8 @@ def _compose_spatial_jacobians_at(
     """Compose spatial floating-base Jacobians on one thread per sample.
 
     Args:
+        environment: Batch row in the supplied arrays; use zero for a single-world view.
+        sample: Sample index within the selected environment.
         base_pose: Scalar-last base poses with shape ``(E, 7)``.
         relative_pose: Base-relative transforms with shape ``(E, N, 4, 4)``.
         jacobians_internal: Base-frame internal Jacobians with shape
@@ -209,7 +241,20 @@ def _compose_spatial_jacobians_kernel(
 
 
 @wp.struct
-class ComposeSpatialJacobiansArrays:
+class SpatialJacobianCompositionData:
+    """Inputs and outputs for floating-base spatial Jacobian composition.
+
+    Array fields are non-owning views; the caller must retain their allocations
+    for every launch and captured graph. Batched fields use one environment
+    (``E = 1``); structural fields use this world's own dimensions.
+
+    Attributes:
+        base_pose: Batched scalar-last quaternion poses with shape ``(E, 7)``.
+        relative_pose: Base-relative transforms with shape ``(E, N, 4, 4)``.
+        jacobians_internal: Base-frame internal Jacobians with shape ``(E, N, 6, D)``.
+        jacobians: Inertial-frame augmented Jacobians with shape ``(E, N, 6, D + 6)``.
+    """
+
     base_pose: wp.array2d[wp.float64]
     relative_pose: wp.array4d[wp.float64]
     jacobians_internal: wp.array4d[wp.float64]
@@ -218,14 +263,32 @@ class ComposeSpatialJacobiansArrays:
 
 @wp.kernel(enable_backward=False)
 def packed_compose_spatial_jacobians_kernel(
-    worlds: wp.array(dtype=ComposeSpatialJacobiansArrays),
-    work: wp.array(dtype=wp.vec3i),
+    world_data: wp.array(dtype=SpatialJacobianCompositionData),
+    work_items: wp.array(dtype=wp.vec3i),
 ):
+    """Compose spatial floating-base Jacobians on one thread per sample.
+
+    Launch with ``dim=len(work_items)``; each thread handles one work item.
+
+    Args:
+        world_data: Device array of per-world data views, including caller-owned
+            outputs and workspaces. Keep every referenced allocation alive.
+        work_items: INT32 triples ``(world_index, local_index, 0)``. The local
+            index is local sample. The third component is reserved.
+
+    Returns:
+        None. One augmented Jacobian in ``jacobians`` is written per thread.
+    """
     item = wp.tid()
-    entry = work[item]
-    d = worlds[entry[0]]
+    entry = work_items[item]
+    data = world_data[entry[0]]
     _compose_spatial_jacobians_at(
-        0, entry[1], d.base_pose, d.relative_pose, d.jacobians_internal, d.jacobians
+        0,
+        entry[1],
+        data.base_pose,
+        data.relative_pose,
+        data.jacobians_internal,
+        data.jacobians,
     )
 
 
@@ -241,6 +304,8 @@ def _compose_spatial_jacobians_tiled_at(
     """Compose one floating spatial Jacobian cooperatively per sample.
 
     Args:
+        work_item: Flattened environment-sample index in the supplied arrays.
+        lane: Thread index within the cooperative work item.
         base_pose: Batched scalar-last quaternion poses with shape ``(E, 7)``.
         relative_pose: Base-relative transforms with shape ``(E, N, 4, 4)``.
         jacobians_internal: Base-frame internal Jacobians with shape
@@ -341,24 +406,37 @@ def _compose_spatial_jacobians_tiled_kernel(
     )
 
 
-@wp.struct
-class ComposeSpatialJacobiansTiledArrays:
-    base_pose: wp.array2d[wp.float64]
-    relative_pose: wp.array4d[wp.float64]
-    jacobians_internal: wp.array4d[wp.float64]
-    jacobians: wp.array4d[wp.float64]
-
-
 @wp.kernel(enable_backward=False)
 def packed_compose_spatial_jacobians_tiled_kernel(
-    worlds: wp.array(dtype=ComposeSpatialJacobiansTiledArrays),
-    work: wp.array(dtype=wp.vec3i),
+    world_data: wp.array(dtype=SpatialJacobianCompositionData),
+    work_items: wp.array(dtype=wp.vec3i),
 ):
+    """Compose one floating spatial Jacobian cooperatively per sample.
+
+    Launch with ``wp.launch_tiled(..., dim=len(work_items), block_dim=B)``.
+    Each block cooperates on one work item; all lanes must participate.
+    Use at least 32 threads per CUDA block.
+
+    Args:
+        world_data: Device array of per-world data views, including caller-owned
+            outputs and workspaces. Keep every referenced allocation alive.
+        work_items: INT32 triples ``(world_index, local_index, 0)``. The local
+            index is local sample. The third component is reserved.
+
+    Returns:
+        None. ``jacobians`` is updated in place by one cooperative block for
+        each environment-sample pair.
+    """
     item, lane = wp.tid()
-    entry = work[item]
-    d = worlds[entry[0]]
+    entry = work_items[item]
+    data = world_data[entry[0]]
     _compose_spatial_jacobians_tiled_at(
-        entry[1], lane, d.base_pose, d.relative_pose, d.jacobians_internal, d.jacobians
+        entry[1],
+        lane,
+        data.base_pose,
+        data.relative_pose,
+        data.jacobians_internal,
+        data.jacobians,
     )
 
 
@@ -376,6 +454,8 @@ def _compose_spatial_poses_and_twists_at(
     """Compose floating poses and one augmented Jacobian direction.
 
     Args:
+        environment: Batch row in the supplied arrays; use zero for a single-world view.
+        sample: Sample index within the selected environment.
         base_pose: Runtime scalar-last base poses ``(E, 7)``.
         qd: Batched generalized-velocity directions. The first six entries are
             the angular-linear world-frame base direction.
@@ -492,7 +572,23 @@ def _compose_spatial_poses_and_twists_kernel(
 
 
 @wp.struct
-class ComposeSpatialPosesAndTwistsArrays:
+class SpatialPoseTwistCompositionData:
+    """Inputs and outputs for floating-base spatial pose and twist composition.
+
+    Array fields are non-owning views; the caller must retain their allocations
+    for every launch and captured graph. Batched fields use one environment
+    (``E = 1``); structural fields use this world's own dimensions.
+
+    Attributes:
+        base_pose: Runtime scalar-last base poses ``(E, 7)``.
+        qd: Batched generalized-velocity directions. The first six entries are the
+            angular-linear world-frame base direction.
+        relative_pose: Fixed-base relative sample poses ``(E, N, 4, 4)``.
+        twists_internal: Base-frame internal-Jacobian products ``(E, N, 6)``.
+        poses: Absolute pose output ``(E, N, 4, 4)``.
+        twists: Absolute inertial JVP output ``(E, N, 6)``.
+    """
+
     base_pose: wp.array2d[wp.float64]
     qd: wp.array2d[wp.float64]
     relative_pose: wp.array4d[wp.float64]
@@ -503,21 +599,34 @@ class ComposeSpatialPosesAndTwistsArrays:
 
 @wp.kernel(enable_backward=False)
 def packed_compose_spatial_poses_and_twists_kernel(
-    worlds: wp.array(dtype=ComposeSpatialPosesAndTwistsArrays),
-    work: wp.array(dtype=wp.vec3i),
+    world_data: wp.array(dtype=SpatialPoseTwistCompositionData),
+    work_items: wp.array(dtype=wp.vec3i),
 ):
+    """Compose floating poses and one augmented Jacobian direction.
+
+    Launch with ``dim=len(work_items)``; each thread handles one work item.
+
+    Args:
+        world_data: Device array of per-world data views, including caller-owned
+            outputs and workspaces. Keep every referenced allocation alive.
+        work_items: INT32 triples ``(world_index, local_index, 0)``. The local
+            index is local sample. The third component is reserved.
+
+    Returns:
+        None. ``poses`` and ``twists`` are written in place.
+    """
     item = wp.tid()
-    entry = work[item]
-    d = worlds[entry[0]]
+    entry = work_items[item]
+    data = world_data[entry[0]]
     _compose_spatial_poses_and_twists_at(
         0,
         entry[1],
-        d.base_pose,
-        d.qd,
-        d.relative_pose,
-        d.twists_internal,
-        d.poses,
-        d.twists,
+        data.base_pose,
+        data.qd,
+        data.relative_pose,
+        data.twists_internal,
+        data.poses,
+        data.twists,
     )
 
 
@@ -534,6 +643,8 @@ def _compose_spatial_wrench_vjp_at(
     """Pull absolute sample wrenches through floating-base composition.
 
     Args:
+        environment: Batch row in the supplied arrays; use zero for a single-world view.
+        sample: Sample index within the selected environment.
         base_pose: Runtime scalar-last base poses ``(E, 7)``.
         relative_pose: Fixed-base relative sample poses ``(E, N, 4, 4)``.
         inertial_wrenches: Absolute inertial sample cotangents ``(E, N, 6)``.
@@ -619,7 +730,22 @@ def _compose_spatial_wrench_vjp_kernel(
 
 
 @wp.struct
-class ComposeSpatialWrenchVjpArrays:
+class SpatialWrenchProjectionData:
+    """World-frame wrenches and base-frame wrench projection buffers.
+
+    Array fields are non-owning views; the caller must retain their allocations
+    for every launch and captured graph. Batched fields use one environment
+    (``E = 1``); structural fields use this world's own dimensions.
+
+    Attributes:
+        base_pose: Runtime scalar-last base poses ``(E, 7)``.
+        relative_pose: Fixed-base relative sample poses ``(E, N, 4, 4)``.
+        inertial_wrenches: Absolute inertial sample cotangents ``(E, N, 6)``.
+        relative_wrenches: Rotated cotangent output for the internal VJP with shape
+            ``(E, N, 6)``.
+        base_generalized_force: Base effort accumulator ``(E, 6)``.
+    """
+
     base_pose: wp.array2d[wp.float64]
     relative_pose: wp.array4d[wp.float64]
     inertial_wrenches: wp.array3d[wp.float64]
@@ -629,20 +755,37 @@ class ComposeSpatialWrenchVjpArrays:
 
 @wp.kernel(enable_backward=False)
 def packed_compose_spatial_wrench_vjp_kernel(
-    worlds: wp.array(dtype=ComposeSpatialWrenchVjpArrays),
-    work: wp.array(dtype=wp.vec3i),
+    world_data: wp.array(dtype=SpatialWrenchProjectionData),
+    work_items: wp.array(dtype=wp.vec3i),
 ):
+    """Pull absolute sample wrenches through floating-base composition.
+
+    Launch with ``dim=len(work_items)``; each thread handles one work item.
+
+    Zero ``base_generalized_force`` before accumulating a new set of sample
+    wrenches.
+
+    Args:
+        world_data: Device array of per-world data views, including caller-owned
+            outputs and workspaces. Keep every referenced allocation alive.
+        work_items: INT32 triples ``(world_index, local_index, 0)``. The local
+            index is local sample. The third component is reserved.
+
+    Returns:
+        None. ``relative_wrenches`` is written and ``base_generalized_force``
+        is accumulated in place.
+    """
     item = wp.tid()
-    entry = work[item]
-    d = worlds[entry[0]]
+    entry = work_items[item]
+    data = world_data[entry[0]]
     _compose_spatial_wrench_vjp_at(
         0,
         entry[1],
-        d.base_pose,
-        d.relative_pose,
-        d.inertial_wrenches,
-        d.relative_wrenches,
-        d.base_generalized_force,
+        data.base_pose,
+        data.relative_pose,
+        data.inertial_wrenches,
+        data.relative_wrenches,
+        data.base_generalized_force,
     )
 
 
@@ -657,6 +800,8 @@ def _assemble_floating_vjp_at(
     """Assemble base and internal blocks of an augmented floating VJP.
 
     Args:
+        environment: Batch row in the supplied arrays; use zero for a single-world view.
+        column: Generalized-velocity column within the selected environment.
         base_generalized_force: Base effort ``(E, B)``.
         internal_generalized_force: Internal-coordinate effort ``(E, D)``.
         generalized_force: Augmented effort output ``(E, B + D)``.
@@ -702,7 +847,19 @@ def _assemble_floating_vjp_kernel(
 
 
 @wp.struct
-class AssembleFloatingVjpArrays:
+class FloatingBaseForceData:
+    """Base and internal generalized-force buffers for one floating world.
+
+    Array fields are non-owning views; the caller must retain their allocations
+    for every launch and captured graph. Batched fields use one environment
+    (``E = 1``); structural fields use this world's own dimensions.
+
+    Attributes:
+        base_generalized_force: Base effort ``(E, B)``.
+        internal_generalized_force: Internal-coordinate effort ``(E, D)``.
+        generalized_force: Augmented effort output ``(E, B + D)``.
+    """
+
     base_generalized_force: wp.array2d[wp.float64]
     internal_generalized_force: wp.array2d[wp.float64]
     generalized_force: wp.array2d[wp.float64]
@@ -710,17 +867,31 @@ class AssembleFloatingVjpArrays:
 
 @wp.kernel(enable_backward=False)
 def packed_assemble_floating_vjp_kernel(
-    worlds: wp.array(dtype=AssembleFloatingVjpArrays), work: wp.array(dtype=wp.vec3i)
+    world_data: wp.array(dtype=FloatingBaseForceData),
+    work_items: wp.array(dtype=wp.vec3i),
 ):
+    """Assemble base and internal blocks of an augmented floating VJP.
+
+    Launch with ``dim=len(work_items)``; each thread handles one work item.
+
+    Args:
+        world_data: Device array of per-world data views, including caller-owned
+            outputs and workspaces. Keep every referenced allocation alive.
+        work_items: INT32 triples ``(world_index, local_index, 0)``. The local
+            index is generalized-velocity column. The third component is reserved.
+
+    Returns:
+        None. ``generalized_force`` is written in place.
+    """
     item = wp.tid()
-    entry = work[item]
-    d = worlds[entry[0]]
+    entry = work_items[item]
+    data = world_data[entry[0]]
     _assemble_floating_vjp_at(
         0,
         entry[1],
-        d.base_generalized_force,
-        d.internal_generalized_force,
-        d.generalized_force,
+        data.base_generalized_force,
+        data.internal_generalized_force,
+        data.generalized_force,
     )
 
 
@@ -1294,16 +1465,15 @@ __all__ = [
 
 
 __all__ += [
-    "ComposeSpatialPosesArrays",
+    "SpatialPoseCompositionData",
     "packed_compose_spatial_poses_kernel",
-    "ComposeSpatialJacobiansArrays",
+    "SpatialJacobianCompositionData",
     "packed_compose_spatial_jacobians_kernel",
-    "ComposeSpatialJacobiansTiledArrays",
     "packed_compose_spatial_jacobians_tiled_kernel",
-    "ComposeSpatialPosesAndTwistsArrays",
+    "SpatialPoseTwistCompositionData",
     "packed_compose_spatial_poses_and_twists_kernel",
-    "ComposeSpatialWrenchVjpArrays",
+    "SpatialWrenchProjectionData",
     "packed_compose_spatial_wrench_vjp_kernel",
-    "AssembleFloatingVjpArrays",
+    "FloatingBaseForceData",
     "packed_assemble_floating_vjp_kernel",
 ]

@@ -24,8 +24,8 @@ def prepare_dynamics_terms(
             fixed. Models with moving joints retain normal joint evaluation.
 
     Returns:
-        A callable ``evaluate(q, qd) -> (M, Cqd, G)`` accepting leading batch
-        dimensions, suitable for ``jax.jit``. Rebuild this callable when any
+        A callable ``evaluate(q, qd) -> (M, Cqd, G)`` accepting one leading batch
+        dimension, suitable for ``jax.jit``. Rebuild this callable when any
         model operand changes. This low-level forward executor has no custom
         derivative rule; use the model's public API for differentiation.
     """
@@ -46,7 +46,16 @@ def prepare_dynamics_terms(
         )
         jax.block_until_ready(cached)
 
-    def evaluate(q, qd):
+    def evaluate(q: jax.Array, qd: jax.Array) -> tuple[jax.Array, jax.Array, jax.Array]:
+        """Evaluate batched dynamics using the prepared immutable operands.
+
+        Args:
+            q: Configurations with shape ``(E, num_coordinates)``.
+            qd: Generalized velocities with shape ``(E, num_velocities)``.
+
+        Returns:
+            Batched inertia matrices, convective forces and gravity forces.
+        """
         terms = (
             None
             if cached is None

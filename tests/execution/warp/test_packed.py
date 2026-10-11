@@ -1,26 +1,32 @@
 """Native packed indexing and cooperative solve numerical contracts."""
 
 import os
+from typing import Any
 
 import numpy as np
 import pytest
 import warp as wp
 
 from soromox.execution.warp.gvs.cell import (
-    CellTermsArrays,
+    GVSCellTermsData,
     cell_terms_kernel,
     packed_cell_terms_kernel,
     packed_cooperative_cell_terms_kernel,
 )
 
 
-def device():
+def device() -> Any:
+    """Select the explicitly requested test device.
+
+    Returns:
+        CUDA device when SOROMOX_TEST_CUDA=1, otherwise CPU.
+    """
     return wp.get_device(
         "cuda:0" if os.environ.get("SOROMOX_TEST_CUDA") == "1" else "cpu"
     )
 
 
-def test_packed_cells():
+def test_packed_cells() -> None:
     """Different segment/cell/basis dimensions retain scalar cell arithmetic."""
     rng = np.random.default_rng(847)
     fields = (
@@ -74,12 +80,12 @@ def test_packed_cells():
         ]
         wp.launch(cell_terms_kernel, dim=nc, inputs=arrays, device=device())
         references.append([a.numpy() for a in arrays[11:]])
-        d = CellTermsArrays()
+        d = GVSCellTermsData()
         for name, a in zip(fields, arrays, strict=True):
             setattr(d, name, a)
         descriptors.append(d)
         work.extend((w, c, 0) for c in range(nc))
-    ds = wp.array(descriptors, dtype=CellTermsArrays, device=device())
+    ds = wp.array(descriptors, dtype=GVSCellTermsData, device=device())
     work = wp.array(work, dtype=wp.vec3i, device=device())
     for kernel, dim in [
         (packed_cell_terms_kernel, work.size),
@@ -99,7 +105,16 @@ def test_packed_cells():
 )
 @pytest.mark.parametrize("n", [1, 8, 37, 65, 144, 288])
 @pytest.mark.parametrize("column_factor", [False, True])
-def test_cooperative_cholesky(n, column_factor):
+def test_cooperative_cholesky(n: int, column_factor: bool) -> None:
+    """Check Cholesky accuracy with row-major and transposed factor storage.
+
+    Args:
+        n: Linear-system dimension.
+        column_factor: Transpose the factor workspace when true.
+
+    Returns:
+        None. Asserts solution accuracy, residuals and unfloored pivots.
+    """
     from soromox.execution.warp.common.linear_solve import cooperative_cholesky_kernel
 
     rng = np.random.default_rng(n)
@@ -116,7 +131,8 @@ def test_cooperative_cholesky(n, column_factor):
     wp.launch_tiled(
         cooperative_cholesky_kernel,
         dim=3,
-        inputs=[matrix, rhs, factor, workspace, x, status, wp.float64(1e-12)],
+        inputs=[matrix, rhs, wp.float64(1e-12)],
+        outputs=[factor, workspace, x, status],
         block_dim=32,
         device=device(),
     )
@@ -131,7 +147,16 @@ def test_cooperative_cholesky(n, column_factor):
 
 @pytest.mark.parametrize("floating", [False, True])
 @pytest.mark.parametrize("moving", [False, True])
-def test_prepared_fixed_joint_terms(floating, moving):
+def test_prepared_fixed_joint_terms(floating: bool, moving: bool) -> None:
+    """Check cached and uncached joint evaluation across model variants.
+
+    Args:
+        floating: Use a floating base when true.
+        moving: Include a prismatic joint when true.
+
+    Returns:
+        None. Asserts bitwise equality of all dynamics terms.
+    """
     import jax
     import jax.numpy as jnp
 
@@ -177,15 +202,20 @@ def test_prepared_fixed_joint_terms(floating, moving):
 @pytest.mark.skipif(
     os.environ.get("SOROMOX_TEST_CUDA") != "1", reason="opt-in packed GPU factorization"
 )
-def test_packed_cholesky_and_pivot_status():
+def test_packed_cholesky_and_pivot_status() -> None:
+    """Check different solve dimensions and report floored pivots.
+
+    Returns:
+        None. Asserts packed solve results and per-world pivot status.
+    """
     from soromox.execution.warp.common.linear_solve import (
-        CholeskyArrays,
+        CholeskySolveData,
         packed_cholesky_kernel,
     )
 
     descriptors = []
     for n, pivot in [(3, 0.2), (9, 0.4), (7, -0.1)]:
-        d = CholeskyArrays()
+        d = CholeskySolveData()
         matrix = np.eye(n)[None] * 2.0
         matrix[0, -1, -1] = pivot
         d.matrix = wp.array(matrix, dtype=wp.float64, device=device())
@@ -195,7 +225,7 @@ def test_packed_cholesky_and_pivot_status():
         d.solution = wp.empty_like(d.rhs)
         d.status = wp.zeros(1, dtype=wp.int32, device=device())
         descriptors.append(d)
-    ds = wp.array(descriptors, dtype=CholeskyArrays, device=device())
+    ds = wp.array(descriptors, dtype=CholeskySolveData, device=device())
     work = wp.array([(i, 0, 0) for i in range(3)], dtype=wp.vec3i, device=device())
     wp.launch_tiled(
         packed_cholesky_kernel,

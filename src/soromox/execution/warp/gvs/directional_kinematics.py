@@ -57,6 +57,7 @@ def gvs_node_pose_twist_at(
     local tangent products produced by the GVS joint and cell term kernels.
 
     Args:
+        environment: Batch row in the supplied arrays; use zero for a single-world view.
         joint_adjoint: Flattened inverse adjoints for every joint.
         joint_velocity: Joint tangent products for the active direction.
         cell_adjoint: Flattened inverse adjoints for every full link cell.
@@ -168,7 +169,25 @@ def gvs_node_pose_twist_kernel(
 
 
 @wp.struct
-class GvsNodePoseTwistArrays:
+class GVSNodePoseTwistData:
+    """Buffers for GVS node pose twist.
+
+    Array fields are non-owning views; the caller must retain their allocations
+    for every launch and captured graph. Batched fields use one environment
+    (``E = 1``); structural fields use this world's own dimensions.
+
+    Attributes:
+        joint_adjoint: Flattened inverse adjoints for every joint.
+        joint_velocity: Joint tangent products for the active direction.
+        cell_adjoint: Flattened inverse adjoints for every full link cell.
+        cell_link_velocity: Cell tangent products for the active direction.
+        base_transform: Absolute fixed-base transform.
+        segment_lengths: Physical segment lengths.
+        num_cells_array: One-entry padded cell count.
+        node_pose: Cell-boundary pose output.
+        node_twist: Cell-boundary spatial JVP output.
+    """
+
     joint_adjoint: wp.array2d[wp.float64]
     joint_velocity: wp.array2d[wp.float64]
     cell_adjoint: wp.array2d[wp.float64]
@@ -182,22 +201,36 @@ class GvsNodePoseTwistArrays:
 
 @wp.kernel(enable_backward=False)
 def packed_gvs_node_pose_twist_kernel(
-    worlds: wp.array(dtype=GvsNodePoseTwistArrays), work: wp.array(dtype=wp.vec3i)
+    world_data: wp.array(dtype=GVSNodePoseTwistData),
+    work_items: wp.array(dtype=wp.vec3i),
 ):
+    """Propagate cell-boundary poses and one Jacobian direction.
+
+    Launch with ``dim=len(work_items)``; each thread handles one work item.
+
+    Args:
+        world_data: Device array of per-world data views, including caller-owned
+            outputs and workspaces. Keep every referenced allocation alive.
+        work_items: INT32 triples ``(world_index, local_index, 0)``. The local
+            index is zero (one work item per world). The third component is reserved.
+
+    Returns:
+        None. ``node_pose`` and ``node_twist`` are written in place.
+    """
     item = wp.tid()
-    entry = work[item]
-    d = worlds[entry[0]]
+    entry = work_items[item]
+    data = world_data[entry[0]]
     gvs_node_pose_twist_at(
         0,
-        d.joint_adjoint,
-        d.joint_velocity,
-        d.cell_adjoint,
-        d.cell_link_velocity,
-        d.base_transform,
-        d.segment_lengths,
-        d.num_cells_array,
-        d.node_pose,
-        d.node_twist,
+        data.joint_adjoint,
+        data.joint_velocity,
+        data.cell_adjoint,
+        data.cell_link_velocity,
+        data.base_transform,
+        data.segment_lengths,
+        data.num_cells_array,
+        data.node_pose,
+        data.node_twist,
     )
 
 
@@ -230,6 +263,8 @@ def gvs_pose_twist_samples_at(
     """Evaluate poses and inertial twists ``J(q, s) @ qd`` at samples.
 
     Args:
+        environment: Batch row in the supplied arrays; use zero for a single-world view.
+        sample: Sample index within the selected environment.
         q: Batched active configurations ``(E, D)``.
         qd: Batched generalized-velocity directions ``(E, D)``.
         s: Per-environment sample abscissae ``(E, N)``.
@@ -450,7 +485,37 @@ def gvs_pose_twist_samples_kernel(
 
 
 @wp.struct
-class GvsPoseTwistSamplesArrays:
+class GVSPoseTwistSamplesData:
+    """Buffers for GVS pose twist samples.
+
+    Array fields are non-owning views; the caller must retain their allocations
+    for every launch and captured graph. Batched fields use one environment
+    (``E = 1``); structural fields use this world's own dimensions.
+
+    Attributes:
+        q: Batched active configurations ``(E, D)``.
+        qd: Batched generalized-velocity directions ``(E, D)``.
+        s: Per-environment sample abscissae ``(E, N)``.
+        link_local_to_global: Padded link-local to active-coordinate map.
+        link_basis_rows: Spatial row occupied by every local basis column.
+        link_reference_z1: Reference strain at first Magnus nodes.
+        link_reference_z2: Reference strain at second Magnus nodes.
+        segment_lengths: Physical segment lengths.
+        segment_starts: Cumulative segment-start coordinates.
+        integration_points: Normalized cell-boundary coordinates.
+        basis_type_index: Basis-family index for every segment.
+        basis_active_params: Per-row basis activation parameters.
+        basis_order_params: Per-row basis orders.
+        magnus_points: Normalized two-point Magnus coordinates.
+        scale_rotations_array: One-entry rotational-basis scaling flag.
+        epsilons: Exponential and tangent thresholds.
+        num_cells_array: One-entry padded cell count.
+        node_pose: Cell-boundary poses produced by the node recurrence.
+        node_twist: Cell-boundary spatial JVPs produced by the node recurrence.
+        poses: Sample pose output ``(E, N, 4, 4)``.
+        twists: Inertial-frame sample JVP output ``(E, N, 6)``.
+    """
+
     q: wp.array2d[wp.float64]
     qd: wp.array2d[wp.float64]
     s: wp.array2d[wp.float64]
@@ -476,35 +541,49 @@ class GvsPoseTwistSamplesArrays:
 
 @wp.kernel(enable_backward=False)
 def packed_gvs_pose_twist_samples_kernel(
-    worlds: wp.array(dtype=GvsPoseTwistSamplesArrays), work: wp.array(dtype=wp.vec3i)
+    world_data: wp.array(dtype=GVSPoseTwistSamplesData),
+    work_items: wp.array(dtype=wp.vec3i),
 ):
+    """Evaluate poses and inertial twists ``J(q, s) @ qd`` at samples.
+
+    Launch with ``dim=len(work_items)``; each thread handles one work item.
+
+    Args:
+        world_data: Device array of per-world data views, including caller-owned
+            outputs and workspaces. Keep every referenced allocation alive.
+        work_items: INT32 triples ``(world_index, local_index, 0)``. The local
+            index is local sample. The third component is reserved.
+
+    Returns:
+        None. ``poses`` and ``twists`` are written in place.
+    """
     item = wp.tid()
-    entry = work[item]
-    d = worlds[entry[0]]
+    entry = work_items[item]
+    data = world_data[entry[0]]
     gvs_pose_twist_samples_at(
         0,
         entry[1],
-        d.q,
-        d.qd,
-        d.s,
-        d.link_local_to_global,
-        d.link_basis_rows,
-        d.link_reference_z1,
-        d.link_reference_z2,
-        d.segment_lengths,
-        d.segment_starts,
-        d.integration_points,
-        d.basis_type_index,
-        d.basis_active_params,
-        d.basis_order_params,
-        d.magnus_points,
-        d.scale_rotations_array,
-        d.epsilons,
-        d.num_cells_array,
-        d.node_pose,
-        d.node_twist,
-        d.poses,
-        d.twists,
+        data.q,
+        data.qd,
+        data.s,
+        data.link_local_to_global,
+        data.link_basis_rows,
+        data.link_reference_z1,
+        data.link_reference_z2,
+        data.segment_lengths,
+        data.segment_starts,
+        data.integration_points,
+        data.basis_type_index,
+        data.basis_active_params,
+        data.basis_order_params,
+        data.magnus_points,
+        data.scale_rotations_array,
+        data.epsilons,
+        data.num_cells_array,
+        data.node_pose,
+        data.node_twist,
+        data.poses,
+        data.twists,
     )
 
 
@@ -536,6 +615,8 @@ def gvs_sample_vjp_at(
     """Seed node cotangents and partial-cell generalized forces.
 
     Args:
+        environment: Batch row in the supplied arrays; use zero for a single-world view.
+        sample: Sample index within the selected environment.
         q: Batched active configurations ``(E, D)``.
         s: Per-environment sample abscissae ``(E, N)``.
         inertial_wrenches: Inertial-frame sample cotangents ``(E, N, 6)``.
@@ -775,7 +856,36 @@ def gvs_sample_vjp_kernel(
 
 
 @wp.struct
-class GvsSampleVjpArrays:
+class GVSSampleVJPData:
+    """Buffers for GVS sample vjp.
+
+    Array fields are non-owning views; the caller must retain their allocations
+    for every launch and captured graph. Batched fields use one environment
+    (``E = 1``); structural fields use this world's own dimensions.
+
+    Attributes:
+        q: Batched active configurations ``(E, D)``.
+        s: Per-environment sample abscissae ``(E, N)``.
+        inertial_wrenches: Inertial-frame sample cotangents ``(E, N, 6)``.
+        link_local_to_global: Padded link-local to active-coordinate map.
+        link_basis_rows: Spatial row occupied by every local basis column.
+        link_reference_z1: Reference strain at first Magnus nodes.
+        link_reference_z2: Reference strain at second Magnus nodes.
+        segment_lengths: Physical segment lengths.
+        segment_starts: Cumulative segment-start coordinates.
+        integration_points: Normalized cell-boundary coordinates.
+        basis_type_index: Basis-family index for every segment.
+        basis_active_params: Per-row basis activation parameters.
+        basis_order_params: Per-row basis orders.
+        magnus_points: Normalized two-point Magnus coordinates.
+        scale_rotations_array: One-entry rotational-basis scaling flag.
+        epsilons: Exponential and tangent thresholds.
+        num_cells_array: One-entry padded cell count.
+        node_pose: Cell-boundary poses produced by the node recurrence.
+        node_wrench: Cell-boundary cotangent accumulator.
+        generalized_force: Generalized-force accumulator ``(E, D)``.
+    """
+
     q: wp.array2d[wp.float64]
     s: wp.array2d[wp.float64]
     inertial_wrenches: wp.array3d[wp.float64]
@@ -800,34 +910,51 @@ class GvsSampleVjpArrays:
 
 @wp.kernel(enable_backward=False)
 def packed_gvs_sample_vjp_kernel(
-    worlds: wp.array(dtype=GvsSampleVjpArrays), work: wp.array(dtype=wp.vec3i)
+    world_data: wp.array(dtype=GVSSampleVJPData), work_items: wp.array(dtype=wp.vec3i)
 ):
+    """Seed node cotangents and partial-cell generalized forces.
+
+    Launch with ``dim=len(work_items)``; each thread handles one work item.
+
+    Zero ``node_wrench`` and ``generalized_force`` before the first sample
+    VJP stage for a new set of wrenches.
+
+    Args:
+        world_data: Device array of per-world data views, including caller-owned
+            outputs and workspaces. Keep every referenced allocation alive.
+        work_items: INT32 triples ``(world_index, local_index, 0)``. The local
+            index is local sample. The third component is reserved.
+
+    Returns:
+        None. ``node_wrench`` and ``generalized_force`` are accumulated in
+        place.
+    """
     item = wp.tid()
-    entry = work[item]
-    d = worlds[entry[0]]
+    entry = work_items[item]
+    data = world_data[entry[0]]
     gvs_sample_vjp_at(
         0,
         entry[1],
-        d.q,
-        d.s,
-        d.inertial_wrenches,
-        d.link_local_to_global,
-        d.link_basis_rows,
-        d.link_reference_z1,
-        d.link_reference_z2,
-        d.segment_lengths,
-        d.segment_starts,
-        d.integration_points,
-        d.basis_type_index,
-        d.basis_active_params,
-        d.basis_order_params,
-        d.magnus_points,
-        d.scale_rotations_array,
-        d.epsilons,
-        d.num_cells_array,
-        d.node_pose,
-        d.node_wrench,
-        d.generalized_force,
+        data.q,
+        data.s,
+        data.inertial_wrenches,
+        data.link_local_to_global,
+        data.link_basis_rows,
+        data.link_reference_z1,
+        data.link_reference_z2,
+        data.segment_lengths,
+        data.segment_starts,
+        data.integration_points,
+        data.basis_type_index,
+        data.basis_active_params,
+        data.basis_order_params,
+        data.magnus_points,
+        data.scale_rotations_array,
+        data.epsilons,
+        data.num_cells_array,
+        data.node_pose,
+        data.node_wrench,
+        data.generalized_force,
     )
 
 
@@ -847,6 +974,7 @@ def gvs_node_vjp_at(
     """Reverse the serial node recurrence on Warp CPU.
 
     Args:
+        environment: Batch row in the supplied arrays; use zero for a single-world view.
         joint_adjoint: Flattened inverse adjoints for every joint.
         joint_tangent: Joint tangents in active coordinates.
         cell_adjoint: Flattened inverse adjoints for every full link cell.
@@ -964,7 +1092,25 @@ def gvs_node_vjp_kernel(
 
 
 @wp.struct
-class GvsNodeVjpArrays:
+class GVSNodeVJPData:
+    """Buffers for GVS node vjp.
+
+    Array fields are non-owning views; the caller must retain their allocations
+    for every launch and captured graph. Batched fields use one environment
+    (``E = 1``); structural fields use this world's own dimensions.
+
+    Attributes:
+        joint_adjoint: Flattened inverse adjoints for every joint.
+        joint_tangent: Joint tangents in active coordinates.
+        cell_adjoint: Flattened inverse adjoints for every full link cell.
+        cell_tangent_local: Full-cell tangents in padded local coordinates.
+        link_local_to_global: Padded link-local to active-coordinate map.
+        segment_lengths: Physical segment lengths.
+        num_cells_array: One-entry padded cell count.
+        node_wrench: Cell-boundary cotangent accumulator.
+        generalized_force: Generalized-force accumulator ``(E, D)``.
+    """
+
     joint_adjoint: wp.array2d[wp.float64]
     joint_tangent: wp.array2d[wp.float64]
     cell_adjoint: wp.array2d[wp.float64]
@@ -978,22 +1124,36 @@ class GvsNodeVjpArrays:
 
 @wp.kernel(enable_backward=False)
 def packed_gvs_node_vjp_kernel(
-    worlds: wp.array(dtype=GvsNodeVjpArrays), work: wp.array(dtype=wp.vec3i)
+    world_data: wp.array(dtype=GVSNodeVJPData), work_items: wp.array(dtype=wp.vec3i)
 ):
+    """Reverse the serial node recurrence on Warp CPU.
+
+    Launch with ``dim=len(work_items)``; each thread handles one work item.
+
+    Args:
+        world_data: Device array of per-world data views, including caller-owned
+            outputs and workspaces. Keep every referenced allocation alive.
+        work_items: INT32 triples ``(world_index, local_index, 0)``. The local
+            index is zero (one work item per world). The third component is reserved.
+
+    Returns:
+        None. ``node_wrench`` and ``generalized_force`` are accumulated in
+        place.
+    """
     item = wp.tid()
-    entry = work[item]
-    d = worlds[entry[0]]
+    entry = work_items[item]
+    data = world_data[entry[0]]
     gvs_node_vjp_at(
         0,
-        d.joint_adjoint,
-        d.joint_tangent,
-        d.cell_adjoint,
-        d.cell_tangent_local,
-        d.link_local_to_global,
-        d.segment_lengths,
-        d.num_cells_array,
-        d.node_wrench,
-        d.generalized_force,
+        data.joint_adjoint,
+        data.joint_tangent,
+        data.cell_adjoint,
+        data.cell_tangent_local,
+        data.link_local_to_global,
+        data.segment_lengths,
+        data.num_cells_array,
+        data.node_wrench,
+        data.generalized_force,
     )
 
 
@@ -1015,6 +1175,8 @@ def gvs_cooperative_node_vjp_at(
     """Reverse node cotangents cooperatively on CUDA.
 
     Args:
+        environment: Batch row in the supplied arrays; use zero for a single-world view.
+        lane: Thread index within the cooperative work item.
         joint_adjoint: Flattened inverse adjoints for every joint.
         joint_tangent: Joint tangents in active coordinates.
         cell_adjoint: Flattened inverse adjoints for every full link cell.
@@ -1148,7 +1310,26 @@ def gvs_cooperative_node_vjp_kernel(
 
 
 @wp.struct
-class GvsCooperativeNodeVjpArrays:
+class GVSCooperativeNodeVJPData:
+    """Buffers for GVS cooperative node vjp.
+
+    Array fields are non-owning views; the caller must retain their allocations
+    for every launch and captured graph. Batched fields use one environment
+    (``E = 1``); structural fields use this world's own dimensions.
+
+    Attributes:
+        joint_adjoint: Flattened inverse adjoints for every joint.
+        joint_tangent: Joint tangents in active coordinates.
+        cell_adjoint: Flattened inverse adjoints for every full link cell.
+        cell_tangent_local: Full-cell tangents in padded local coordinates.
+        link_global_to_local: Active-to-link-local coordinate map.
+        segment_lengths: Physical segment lengths.
+        num_cells_array: One-entry padded cell count.
+        node_wrench: Cell-boundary cotangent accumulator.
+        edge_wrench: Per-environment six-vector edge scratch.
+        generalized_force: Generalized-force accumulator ``(E, D)``.
+    """
+
     joint_adjoint: wp.array2d[wp.float64]
     joint_tangent: wp.array2d[wp.float64]
     cell_adjoint: wp.array2d[wp.float64]
@@ -1163,24 +1344,41 @@ class GvsCooperativeNodeVjpArrays:
 
 @wp.kernel(enable_backward=False)
 def packed_gvs_cooperative_node_vjp_kernel(
-    worlds: wp.array(dtype=GvsCooperativeNodeVjpArrays), work: wp.array(dtype=wp.vec3i)
+    world_data: wp.array(dtype=GVSCooperativeNodeVJPData),
+    work_items: wp.array(dtype=wp.vec3i),
 ):
+    """Reverse node cotangents cooperatively on CUDA.
+
+    Launch with ``wp.launch_tiled(..., dim=len(work_items), block_dim=B)``.
+    Each block cooperates on one work item; all lanes must participate.
+    Use at least 32 threads per CUDA block.
+
+    Args:
+        world_data: Device array of per-world data views, including caller-owned
+            outputs and workspaces. Keep every referenced allocation alive.
+        work_items: INT32 triples ``(world_index, local_index, 0)``. The local
+            index is zero (one work item per world). The third component is reserved.
+
+    Returns:
+        None. ``node_wrench``, ``edge_wrench``, and ``generalized_force`` are
+        updated in place.
+    """
     item, lane = wp.tid()
-    entry = work[item]
-    d = worlds[entry[0]]
+    entry = work_items[item]
+    data = world_data[entry[0]]
     gvs_cooperative_node_vjp_at(
         0,
         lane,
-        d.joint_adjoint,
-        d.joint_tangent,
-        d.cell_adjoint,
-        d.cell_tangent_local,
-        d.link_global_to_local,
-        d.segment_lengths,
-        d.num_cells_array,
-        d.node_wrench,
-        d.edge_wrench,
-        d.generalized_force,
+        data.joint_adjoint,
+        data.joint_tangent,
+        data.cell_adjoint,
+        data.cell_tangent_local,
+        data.link_global_to_local,
+        data.segment_lengths,
+        data.num_cells_array,
+        data.node_wrench,
+        data.edge_wrench,
+        data.generalized_force,
     )
 
 
@@ -1456,87 +1654,122 @@ __all__ = [
 
 
 __all__ += [
-    "GvsNodePoseTwistArrays",
+    "GVSNodePoseTwistData",
     "packed_gvs_node_pose_twist_kernel",
-    "GvsPoseTwistSamplesArrays",
+    "GVSPoseTwistSamplesData",
     "packed_gvs_pose_twist_samples_kernel",
-    "GvsSampleVjpArrays",
+    "GVSSampleVJPData",
     "packed_gvs_sample_vjp_kernel",
-    "GvsNodeVjpArrays",
+    "GVSNodeVJPData",
     "packed_gvs_node_vjp_kernel",
-    "GvsCooperativeNodeVjpArrays",
+    "GVSCooperativeNodeVJPData",
     "packed_gvs_cooperative_node_vjp_kernel",
 ]
 
 
 @wp.kernel(enable_backward=False)
 def packed_gvs_pose_twist_samples_warp_kernel(
-    worlds: wp.array(dtype=GvsPoseTwistSamplesArrays), work: wp.array(dtype=wp.vec3i)
+    world_data: wp.array(dtype=GVSPoseTwistSamplesData),
+    work_items: wp.array(dtype=wp.vec3i),
 ):
+    """Evaluate poses and inertial twists ``J(q, s) @ qd`` at samples.
+
+    Launch with ``dim=(len(work_items), 32)`` and ``block_dim=128``.
+    Each entry starts a group of 32 independent samples; a bounds check
+    skips samples beyond the end of that world.
+
+    Args:
+        world_data: Device array of per-world data views, including caller-owned
+            outputs and workspaces. Keep every referenced allocation alive.
+        work_items: INT32 triples ``(world_index, local_index, 0)``. The local
+            index is first sample in a group of 32. The third component is reserved.
+
+    Returns:
+        None. ``poses`` and ``twists`` are written in place.
+    """
     item, lane = wp.tid()
-    entry = work[item]
-    d = worlds[entry[0]]
+    entry = work_items[item]
+    data = world_data[entry[0]]
     sample = entry[1] + lane
-    if sample < d.s.shape[1]:
+    if sample < data.s.shape[1]:
         gvs_pose_twist_samples_at(
             0,
             sample,
-            d.q,
-            d.qd,
-            d.s,
-            d.link_local_to_global,
-            d.link_basis_rows,
-            d.link_reference_z1,
-            d.link_reference_z2,
-            d.segment_lengths,
-            d.segment_starts,
-            d.integration_points,
-            d.basis_type_index,
-            d.basis_active_params,
-            d.basis_order_params,
-            d.magnus_points,
-            d.scale_rotations_array,
-            d.epsilons,
-            d.num_cells_array,
-            d.node_pose,
-            d.node_twist,
-            d.poses,
-            d.twists,
+            data.q,
+            data.qd,
+            data.s,
+            data.link_local_to_global,
+            data.link_basis_rows,
+            data.link_reference_z1,
+            data.link_reference_z2,
+            data.segment_lengths,
+            data.segment_starts,
+            data.integration_points,
+            data.basis_type_index,
+            data.basis_active_params,
+            data.basis_order_params,
+            data.magnus_points,
+            data.scale_rotations_array,
+            data.epsilons,
+            data.num_cells_array,
+            data.node_pose,
+            data.node_twist,
+            data.poses,
+            data.twists,
         )
 
 
 @wp.kernel(enable_backward=False)
 def packed_gvs_sample_vjp_warp_kernel(
-    worlds: wp.array(dtype=GvsSampleVjpArrays), work: wp.array(dtype=wp.vec3i)
+    world_data: wp.array(dtype=GVSSampleVJPData), work_items: wp.array(dtype=wp.vec3i)
 ):
+    """Seed node cotangents and partial-cell generalized forces.
+
+    Launch with ``dim=(len(work_items), 32)`` and ``block_dim=128``.
+    Each entry starts a group of 32 independent samples; a bounds check
+    skips samples beyond the end of that world.
+
+    Zero ``node_wrench`` and ``generalized_force`` before the first sample
+    VJP stage for a new set of wrenches.
+
+    Args:
+        world_data: Device array of per-world data views, including caller-owned
+            outputs and workspaces. Keep every referenced allocation alive.
+        work_items: INT32 triples ``(world_index, local_index, 0)``. The local
+            index is first sample in a group of 32. The third component is reserved.
+
+    Returns:
+        None. ``node_wrench`` and ``generalized_force`` are accumulated in
+        place.
+    """
     item, lane = wp.tid()
-    entry = work[item]
-    d = worlds[entry[0]]
+    entry = work_items[item]
+    data = world_data[entry[0]]
     sample = entry[1] + lane
-    if sample < d.s.shape[1]:
+    if sample < data.s.shape[1]:
         gvs_sample_vjp_at(
             0,
             sample,
-            d.q,
-            d.s,
-            d.inertial_wrenches,
-            d.link_local_to_global,
-            d.link_basis_rows,
-            d.link_reference_z1,
-            d.link_reference_z2,
-            d.segment_lengths,
-            d.segment_starts,
-            d.integration_points,
-            d.basis_type_index,
-            d.basis_active_params,
-            d.basis_order_params,
-            d.magnus_points,
-            d.scale_rotations_array,
-            d.epsilons,
-            d.num_cells_array,
-            d.node_pose,
-            d.node_wrench,
-            d.generalized_force,
+            data.q,
+            data.s,
+            data.inertial_wrenches,
+            data.link_local_to_global,
+            data.link_basis_rows,
+            data.link_reference_z1,
+            data.link_reference_z2,
+            data.segment_lengths,
+            data.segment_starts,
+            data.integration_points,
+            data.basis_type_index,
+            data.basis_active_params,
+            data.basis_order_params,
+            data.magnus_points,
+            data.scale_rotations_array,
+            data.epsilons,
+            data.num_cells_array,
+            data.node_pose,
+            data.node_wrench,
+            data.generalized_force,
         )
 
 

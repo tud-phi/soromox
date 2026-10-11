@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import warp as wp
 
+from soromox.execution.warp.common.joints import JointTermsData
 from soromox.execution.warp.common.se3 import (
     Vec6d,
     _ad_action,
@@ -44,6 +45,8 @@ def cooperative_joint_terms_at(
     """Evaluate one general joint cooperatively per warp-sized block.
 
     Args:
+        work_item: Flattened environment-segment index in the supplied arrays.
+        lane: Thread index within the cooperative work item.
         q: Batched active generalized coordinates.
         qd: Batched active generalized velocities.
         basis: Flattened padded joint bases.
@@ -284,40 +287,40 @@ def cooperative_joint_terms_kernel(
     )
 
 
-@wp.struct
-class CooperativeJointTermsArrays:
-    q: wp.array2d[wp.float64]
-    qd: wp.array2d[wp.float64]
-    basis: wp.array2d[wp.float64]
-    reference: wp.array2d[wp.float64]
-    local_to_global: wp.array2d[wp.int32]
-    adjoint: wp.array2d[wp.float64]
-    adjoint_dot: wp.array2d[wp.float64]
-    tangent_local: wp.array2d[wp.float64]
-    tangent_dot_qd: wp.array2d[wp.float64]
-    joint_velocity: wp.array2d[wp.float64]
-
-
 @wp.kernel(enable_backward=False)
 def packed_cooperative_joint_terms_kernel(
-    worlds: wp.array(dtype=CooperativeJointTermsArrays), work: wp.array(dtype=wp.vec3i)
+    world_data: wp.array(dtype=JointTermsData), work_items: wp.array(dtype=wp.vec3i)
 ):
+    """Evaluate one general joint cooperatively per warp-sized block.
+
+    Launch with ``wp.launch_tiled(..., dim=len(work_items), block_dim=32)``.
+    Each block cooperates on one work item; all lanes must participate.
+
+    Args:
+        world_data: Device array of per-world data views, including caller-owned
+            outputs and workspaces. Keep every referenced allocation alive.
+        work_items: INT32 triples ``(world_index, local_index, 0)``. The local
+            index is local segment. The third component is reserved.
+
+    Returns:
+        None. All results are written to the caller-owned output arrays.
+    """
     item, lane = wp.tid()
-    entry = work[item]
-    d = worlds[entry[0]]
+    entry = work_items[item]
+    data = world_data[entry[0]]
     cooperative_joint_terms_at(
         entry[1],
         lane,
-        d.q,
-        d.qd,
-        d.basis,
-        d.reference,
-        d.local_to_global,
-        d.adjoint,
-        d.adjoint_dot,
-        d.tangent_local,
-        d.tangent_dot_qd,
-        d.joint_velocity,
+        data.q,
+        data.qd,
+        data.basis,
+        data.reference,
+        data.local_to_global,
+        data.adjoint,
+        data.adjoint_dot,
+        data.tangent_local,
+        data.tangent_dot_qd,
+        data.joint_velocity,
     )
 
 
@@ -380,4 +383,4 @@ __all__ = [
 ]
 
 
-__all__ += ["CooperativeJointTermsArrays", "packed_cooperative_joint_terms_kernel"]
+__all__ += ["JointTermsData", "packed_cooperative_joint_terms_kernel"]

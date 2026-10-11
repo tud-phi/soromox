@@ -35,6 +35,7 @@ def prepare_gvs_threadlike_strain_at(
     """Prepare each environment-segment-quadrature strain once.
 
     Args:
+        item: Flattened environment-segment-quadrature index.
         q: Batched active configurations with shape ``(E, D)``.
         link_local_to_global: Padded link-local to active-coordinate map.
         link_basis: Length-scaled link basis with shape ``(S, Q, 6, L)``.
@@ -92,7 +93,21 @@ def prepare_gvs_threadlike_strain_kernel(
 
 
 @wp.struct
-class PrepareGvsThreadlikeStrainArrays:
+class GVSThreadlikeStrainData:
+    """State, strain bases and prepared quadrature strains for threadlike actuation.
+
+    Array fields are non-owning views; the caller must retain their allocations
+    for every launch and captured graph. Batched fields use one environment
+    (``E = 1``); structural fields use this world's own dimensions.
+
+    Attributes:
+        q: Batched active configurations with shape ``(E, D)``.
+        link_local_to_global: Padded link-local to active-coordinate map.
+        link_basis: Length-scaled link basis with shape ``(S, Q, 6, L)``.
+        reference_strain: Reference strain with shape ``(S, Q, 6)``.
+        strain_workspace: Caller-owned output workspace ``(E, S, Q, 6)``.
+    """
+
     q: wp.array2d[wp.float64]
     link_local_to_global: wp.array2d[wp.int32]
     link_basis: wp.array4d[wp.float64]
@@ -102,19 +117,33 @@ class PrepareGvsThreadlikeStrainArrays:
 
 @wp.kernel(enable_backward=False)
 def packed_prepare_gvs_threadlike_strain_kernel(
-    worlds: wp.array(dtype=PrepareGvsThreadlikeStrainArrays),
-    work: wp.array(dtype=wp.vec3i),
+    world_data: wp.array(dtype=GVSThreadlikeStrainData),
+    work_items: wp.array(dtype=wp.vec3i),
 ):
+    """Prepare each environment-segment-quadrature strain once.
+
+    Launch with ``dim=len(work_items)``; each thread handles one work item.
+
+    Args:
+        world_data: Device array of per-world data views, including caller-owned
+            outputs and workspaces. Keep every referenced allocation alive.
+        work_items: INT32 triples ``(world_index, local_index, 0)``. The local
+            index is flattened segment-quadrature index. The third component is
+            reserved.
+
+    Returns:
+        None. Prepared strains are written to ``strain_workspace``.
+    """
     item = wp.tid()
-    entry = work[item]
-    d = worlds[entry[0]]
+    entry = work_items[item]
+    data = world_data[entry[0]]
     prepare_gvs_threadlike_strain_at(
         entry[1],
-        d.q,
-        d.link_local_to_global,
-        d.link_basis,
-        d.reference_strain,
-        d.strain_workspace,
+        data.q,
+        data.link_local_to_global,
+        data.link_basis,
+        data.reference_strain,
+        data.strain_workspace,
     )
 
 
@@ -225,6 +254,7 @@ def gvs_threadlike_matrix_at(
     """Integrate one complete environment-DOF-path matrix entry.
 
     Args:
+        item: Flattened environment-coordinate-path index.
         strain_workspace: Prepared quadrature strains ``(E, S, Q, 6)``.
         link_global_to_local: Active-coordinate to link-local map.
         link_basis: Length-scaled link basis ``(S, Q, 6, L)``.
@@ -333,7 +363,28 @@ def gvs_threadlike_matrix_kernel(
 
 
 @wp.struct
-class GvsThreadlikeMatrixArrays:
+class GVSThreadlikeMatrixData:
+    """Buffers for GVS threadlike matrix.
+
+    Array fields are non-owning views; the caller must retain their allocations
+    for every launch and captured graph. Batched fields use one environment
+    (``E = 1``); structural fields use this world's own dimensions.
+
+    Attributes:
+        strain_workspace: Prepared quadrature strains ``(E, S, Q, 6)``.
+        link_global_to_local: Active-coordinate to link-local map.
+        link_basis: Length-scaled link basis ``(S, Q, 6, L)``.
+        physical_points: Global backbone coordinates ``(S, Q)``.
+        integration_weights: Physical quadrature weights ``(S, Q)``.
+        routing_intercepts: Linear-routing intercept vectors ``(A, 3)``.
+        routing_slopes: Linear-routing slope vectors ``(A, 3)``.
+        path_start_segments: Inclusive first segment for every path.
+        path_end_segments: Inclusive last segment for every path.
+        coordinate_scales: Signed or physical scale for every path.
+        epsilons: One-entry array containing the normalization threshold.
+        output: Caller-owned actuation matrix ``(E, D, A)``.
+    """
+
     strain_workspace: wp.array4d[wp.float64]
     link_global_to_local: wp.array2d[wp.int32]
     link_basis: wp.array4d[wp.float64]
@@ -350,25 +401,39 @@ class GvsThreadlikeMatrixArrays:
 
 @wp.kernel(enable_backward=False)
 def packed_gvs_threadlike_matrix_kernel(
-    worlds: wp.array(dtype=GvsThreadlikeMatrixArrays), work: wp.array(dtype=wp.vec3i)
+    world_data: wp.array(dtype=GVSThreadlikeMatrixData),
+    work_items: wp.array(dtype=wp.vec3i),
 ):
+    """Integrate one complete environment-DOF-path matrix entry.
+
+    Launch with ``dim=len(work_items)``; each thread handles one work item.
+
+    Args:
+        world_data: Device array of per-world data views, including caller-owned
+            outputs and workspaces. Keep every referenced allocation alive.
+        work_items: INT32 triples ``(world_index, local_index, 0)``. The local
+            index is flattened coordinate-path index. The third component is reserved.
+
+    Returns:
+        None. Every matrix entry, including zeros, is written to ``output``.
+    """
     item = wp.tid()
-    entry = work[item]
-    d = worlds[entry[0]]
+    entry = work_items[item]
+    data = world_data[entry[0]]
     gvs_threadlike_matrix_at(
         entry[1],
-        d.strain_workspace,
-        d.link_global_to_local,
-        d.link_basis,
-        d.physical_points,
-        d.integration_weights,
-        d.routing_intercepts,
-        d.routing_slopes,
-        d.path_start_segments,
-        d.path_end_segments,
-        d.coordinate_scales,
-        d.epsilons,
-        d.output,
+        data.strain_workspace,
+        data.link_global_to_local,
+        data.link_basis,
+        data.physical_points,
+        data.integration_weights,
+        data.routing_intercepts,
+        data.routing_slopes,
+        data.path_start_segments,
+        data.path_end_segments,
+        data.coordinate_scales,
+        data.epsilons,
+        data.output,
     )
 
 
@@ -392,6 +457,7 @@ def gvs_threadlike_force_at(
     """Reduce all paths for one active coordinate on Warp CPU.
 
     Args:
+        item: Flattened environment-coordinate index.
         strain_workspace: Prepared quadrature strains ``(E, S, Q, 6)``.
         controls: Batched direct-effort controls ``(E, A)``.
         link_global_to_local: Active-coordinate to link-local map.
@@ -506,7 +572,29 @@ def gvs_threadlike_force_kernel(
 
 
 @wp.struct
-class GvsThreadlikeForceArrays:
+class GVSThreadlikeForceData:
+    """Buffers for GVS threadlike force.
+
+    Array fields are non-owning views; the caller must retain their allocations
+    for every launch and captured graph. Batched fields use one environment
+    (``E = 1``); structural fields use this world's own dimensions.
+
+    Attributes:
+        strain_workspace: Prepared quadrature strains ``(E, S, Q, 6)``.
+        controls: Batched direct-effort controls ``(E, A)``.
+        link_global_to_local: Active-coordinate to link-local map.
+        link_basis: Length-scaled link basis ``(S, Q, 6, L)``.
+        physical_points: Global backbone coordinates ``(S, Q)``.
+        integration_weights: Physical quadrature weights ``(S, Q)``.
+        routing_intercepts: Linear-routing intercept vectors ``(A, 3)``.
+        routing_slopes: Linear-routing slope vectors ``(A, 3)``.
+        path_start_segments: Inclusive first segment for every path.
+        path_end_segments: Inclusive last segment for every path.
+        coordinate_scales: Signed or physical scale for every path.
+        epsilons: One-entry array containing the normalization threshold.
+        output: Caller-owned generalized force ``(E, D)``.
+    """
+
     strain_workspace: wp.array4d[wp.float64]
     controls: wp.array2d[wp.float64]
     link_global_to_local: wp.array2d[wp.int32]
@@ -524,26 +612,40 @@ class GvsThreadlikeForceArrays:
 
 @wp.kernel(enable_backward=False)
 def packed_gvs_threadlike_force_kernel(
-    worlds: wp.array(dtype=GvsThreadlikeForceArrays), work: wp.array(dtype=wp.vec3i)
+    world_data: wp.array(dtype=GVSThreadlikeForceData),
+    work_items: wp.array(dtype=wp.vec3i),
 ):
+    """Reduce all paths for one active coordinate on Warp CPU.
+
+    Launch with ``dim=len(work_items)``; each thread handles one work item.
+
+    Args:
+        world_data: Device array of per-world data views, including caller-owned
+            outputs and workspaces. Keep every referenced allocation alive.
+        work_items: INT32 triples ``(world_index, local_index, 0)``. The local
+            index is generalized-coordinate index. The third component is reserved.
+
+    Returns:
+        None. Every generalized-force entry is written to ``output``.
+    """
     item = wp.tid()
-    entry = work[item]
-    d = worlds[entry[0]]
+    entry = work_items[item]
+    data = world_data[entry[0]]
     gvs_threadlike_force_at(
         entry[1],
-        d.strain_workspace,
-        d.controls,
-        d.link_global_to_local,
-        d.link_basis,
-        d.physical_points,
-        d.integration_weights,
-        d.routing_intercepts,
-        d.routing_slopes,
-        d.path_start_segments,
-        d.path_end_segments,
-        d.coordinate_scales,
-        d.epsilons,
-        d.output,
+        data.strain_workspace,
+        data.controls,
+        data.link_global_to_local,
+        data.link_basis,
+        data.physical_points,
+        data.integration_weights,
+        data.routing_intercepts,
+        data.routing_slopes,
+        data.path_start_segments,
+        data.path_end_segments,
+        data.coordinate_scales,
+        data.epsilons,
+        data.output,
     )
 
 
@@ -569,6 +671,8 @@ def gvs_threadlike_force_block_at(
     """Reduce paths with one CUDA block per environment and segment.
 
     Args:
+        work_item: Flattened environment-segment index.
+        lane: Thread index within the cooperative work item.
         strain_workspace: Prepared quadrature strains ``(E, S, Q, 6)``.
         controls: Batched direct-effort controls ``(E, A)``.
         link_local_to_global: Padded link-local to active-coordinate map.
@@ -707,7 +811,30 @@ def gvs_threadlike_force_block_kernel(
 
 
 @wp.struct
-class GvsThreadlikeForceBlockArrays:
+class GVSThreadlikeForceBlockData:
+    """Buffers for GVS threadlike force block.
+
+    Array fields are non-owning views; the caller must retain their allocations
+    for every launch and captured graph. Batched fields use one environment
+    (``E = 1``); structural fields use this world's own dimensions.
+
+    Attributes:
+        strain_workspace: Prepared quadrature strains ``(E, S, Q, 6)``.
+        controls: Batched direct-effort controls ``(E, A)``.
+        link_local_to_global: Padded link-local to active-coordinate map.
+        link_global_to_local: Active-coordinate to link-local map.
+        link_basis: Length-scaled link basis ``(S, Q, 6, L)``.
+        physical_points: Global backbone coordinates ``(S, Q)``.
+        integration_weights: Physical quadrature weights ``(S, Q)``.
+        routing_intercepts: Linear-routing intercept vectors ``(A, 3)``.
+        routing_slopes: Linear-routing slope vectors ``(A, 3)``.
+        path_start_segments: Inclusive first segment for every path.
+        path_end_segments: Inclusive last segment for every path.
+        coordinate_scales: Signed or physical scale for every path.
+        epsilons: One-entry array containing the normalization threshold.
+        output: Caller-owned generalized force ``(E, D)``.
+    """
+
     strain_workspace: wp.array4d[wp.float64]
     controls: wp.array2d[wp.float64]
     link_local_to_global: wp.array2d[wp.int32]
@@ -726,29 +853,44 @@ class GvsThreadlikeForceBlockArrays:
 
 @wp.kernel(enable_backward=False)
 def packed_gvs_threadlike_force_block_kernel(
-    worlds: wp.array(dtype=GvsThreadlikeForceBlockArrays),
-    work: wp.array(dtype=wp.vec3i),
+    world_data: wp.array(dtype=GVSThreadlikeForceBlockData),
+    work_items: wp.array(dtype=wp.vec3i),
 ):
+    """Reduce paths with one CUDA block per environment and segment.
+
+    Launch with ``wp.launch_tiled(..., dim=len(work_items), block_dim=128)``.
+    Each block cooperates on one work item; all lanes must participate.
+
+    Args:
+        world_data: Device array of per-world data views, including caller-owned
+            outputs and workspaces. Keep every referenced allocation alive.
+        work_items: INT32 triples ``(world_index, local_index, 0)``. The local
+            index is local segment. The third component is reserved.
+
+    Returns:
+        None. Link-coordinate contributions are accumulated into ``output``;
+        joint-only coordinates are written as exact zeros.
+    """
     item, lane = wp.tid()
-    entry = work[item]
-    d = worlds[entry[0]]
+    entry = work_items[item]
+    data = world_data[entry[0]]
     gvs_threadlike_force_block_at(
         entry[1],
         lane,
-        d.strain_workspace,
-        d.controls,
-        d.link_local_to_global,
-        d.link_global_to_local,
-        d.link_basis,
-        d.physical_points,
-        d.integration_weights,
-        d.routing_intercepts,
-        d.routing_slopes,
-        d.path_start_segments,
-        d.path_end_segments,
-        d.coordinate_scales,
-        d.epsilons,
-        d.output,
+        data.strain_workspace,
+        data.controls,
+        data.link_local_to_global,
+        data.link_global_to_local,
+        data.link_basis,
+        data.physical_points,
+        data.integration_weights,
+        data.routing_intercepts,
+        data.routing_slopes,
+        data.path_start_segments,
+        data.path_end_segments,
+        data.coordinate_scales,
+        data.epsilons,
+        data.output,
     )
 
 
@@ -970,12 +1112,12 @@ __all__ = [
 
 
 __all__ += [
-    "PrepareGvsThreadlikeStrainArrays",
+    "GVSThreadlikeStrainData",
     "packed_prepare_gvs_threadlike_strain_kernel",
-    "GvsThreadlikeMatrixArrays",
+    "GVSThreadlikeMatrixData",
     "packed_gvs_threadlike_matrix_kernel",
-    "GvsThreadlikeForceArrays",
+    "GVSThreadlikeForceData",
     "packed_gvs_threadlike_force_kernel",
-    "GvsThreadlikeForceBlockArrays",
+    "GVSThreadlikeForceBlockData",
     "packed_gvs_threadlike_force_block_kernel",
 ]

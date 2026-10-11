@@ -17,9 +17,9 @@ def test_gvs_public_names_are_discoverable_without_loading_warp() -> None:
 
     expected = {
         "prepare_dynamics_terms",
-        "MixedChainArrays",
+        "GVSMixedChainData",
         "packed_mixed_chain_kernel",
-        "CellTermsArrays",
+        "GVSCellTermsData",
         "packed_cell_terms_kernel",
         "packed_cooperative_cell_terms_kernel",
         "cooperative_cell_terms_kernel",
@@ -579,3 +579,66 @@ def test_pcs_operand_contract_does_not_eagerly_load_kernel_modules() -> None:
         text=True,
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_native_gvs_data_and_index_contracts_are_documented() -> None:
+    """Keep packed data fields and explicit indexing arguments discoverable."""
+    import ast
+    from pathlib import Path
+
+    root = Path(__file__).parents[3] / "src/soromox/execution/warp"
+    modules = (
+        "common/floating_kinematics.py",
+        "common/joints.py",
+        "common/joints_cooperative.py",
+        "common/linear_solve.py",
+        "gvs/cell.py",
+        "gvs/chain.py",
+        "gvs/floating_chain.py",
+        "gvs/kinematics.py",
+        "gvs/directional_kinematics.py",
+        "gvs/actuation/threadlike.py",
+        "gvs/packed.py",
+    )
+    for module in modules:
+        for node in ast.parse((root / module).read_text()).body:
+            is_data = isinstance(node, ast.ClassDef) and any(
+                ast.unparse(decorator) == "wp.struct"
+                for decorator in node.decorator_list
+            )
+            is_function = isinstance(node, ast.FunctionDef) and (
+                node.name.endswith("_at") or node.name.startswith("packed_")
+            )
+            if not (is_data or is_function):
+                continue
+            documentation = ast.get_docstring(node)
+            assert documentation, (module, node.name)
+            if is_data:
+                assert node.name.endswith("Data")
+                section = "Attributes:"
+                names = [
+                    field.target.id
+                    for field in node.body
+                    if isinstance(field, ast.AnnAssign)
+                ]
+            else:
+                section = "Args:"
+                names = [arg.arg for arg in node.args.args]
+                assert "Returns:" in documentation, (module, node.name)
+            assert section in documentation, (module, node.name)
+            documented = [
+                line.strip().split(":", 1)[0]
+                for line in documentation.split(section, 1)[1].splitlines()
+                if line.startswith("    ")
+                and not line.startswith("        ")
+                and ":" in line
+            ]
+            assert documented == names, (module, node.name, documented, names)
+
+
+def test_scheduling_variants_share_native_data_layouts() -> None:
+    """Keep scheduling decisions independent of the joint buffer layout."""
+    pytest.importorskip("warp")
+    from soromox.execution.warp.common import joints, joints_cooperative
+
+    assert joints.JointTermsData is joints_cooperative.JointTermsData

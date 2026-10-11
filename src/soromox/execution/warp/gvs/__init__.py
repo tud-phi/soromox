@@ -20,9 +20,9 @@ from typing import Any
 
 __all__ = [
     "prepare_dynamics_terms",
-    "MixedChainArrays",
+    "GVSMixedChainData",
     "packed_mixed_chain_kernel",
-    "CellTermsArrays",
+    "GVSCellTermsData",
     "packed_cell_terms_kernel",
     "packed_cooperative_cell_terms_kernel",
     "cooperative_cell_terms_kernel",
@@ -78,9 +78,9 @@ __all__ = [
 
 _PUBLIC_MODULES = {
     "prepare_dynamics_terms": "prepared",
-    "MixedChainArrays": "packed",
+    "GVSMixedChainData": "packed",
     "packed_mixed_chain_kernel": "packed",
-    "CellTermsArrays": "cell",
+    "GVSCellTermsData": "cell",
     "packed_cell_terms_kernel": "cell",
     "packed_cooperative_cell_terms_kernel": "cell",
     "cooperative_cell_terms_kernel": "cell",

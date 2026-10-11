@@ -150,6 +150,7 @@ def joint_terms_at(
     """Evaluate one joint per ``(environment, segment)`` work item.
 
     Args:
+        work_item: Flattened environment-segment index in the supplied arrays.
         q: Batched active generalized coordinates.
         qd: Batched active generalized velocities.
         basis: Flattened padded joint bases.
@@ -269,7 +270,26 @@ def joint_terms_kernel(
 
 
 @wp.struct
-class JointTermsArrays:
+class JointTermsData:
+    """Joint state, bases and Lie-operator buffers for one world.
+
+    Array fields are non-owning views; the caller must retain their allocations
+    for every launch and captured graph. Batched fields use one environment
+    (``E = 1``); structural fields use this world's own dimensions.
+
+    Attributes:
+        q: Batched active generalized coordinates.
+        qd: Batched active generalized velocities.
+        basis: Flattened padded joint bases.
+        reference: Reference joint strains.
+        local_to_global: Padded local-to-active coordinate map.
+        adjoint: Caller-owned inverse-adjoint output.
+        adjoint_dot: Caller-owned inverse-adjoint derivative output.
+        tangent_local: Caller-owned local-tangent output.
+        tangent_dot_qd: Caller-owned tangent-derivative action output.
+        joint_velocity: Caller-owned joint-velocity output.
+    """
+
     q: wp.array2d[wp.float64]
     qd: wp.array2d[wp.float64]
     basis: wp.array2d[wp.float64]
@@ -284,23 +304,36 @@ class JointTermsArrays:
 
 @wp.kernel(enable_backward=False)
 def packed_joint_terms_kernel(
-    worlds: wp.array(dtype=JointTermsArrays), work: wp.array(dtype=wp.vec3i)
+    world_data: wp.array(dtype=JointTermsData), work_items: wp.array(dtype=wp.vec3i)
 ):
+    """Evaluate one joint per ``(environment, segment)`` work item.
+
+    Launch with ``dim=len(work_items)``; each thread handles one work item.
+
+    Args:
+        world_data: Device array of per-world data views, including caller-owned
+            outputs and workspaces. Keep every referenced allocation alive.
+        work_items: INT32 triples ``(world_index, local_index, 0)``. The local
+            index is local segment. The third component is reserved.
+
+    Returns:
+        None. All results are written to the caller-owned output arrays.
+    """
     item = wp.tid()
-    entry = work[item]
-    d = worlds[entry[0]]
+    entry = work_items[item]
+    data = world_data[entry[0]]
     joint_terms_at(
         entry[1],
-        d.q,
-        d.qd,
-        d.basis,
-        d.reference,
-        d.local_to_global,
-        d.adjoint,
-        d.adjoint_dot,
-        d.tangent_local,
-        d.tangent_dot_qd,
-        d.joint_velocity,
+        data.q,
+        data.qd,
+        data.basis,
+        data.reference,
+        data.local_to_global,
+        data.adjoint,
+        data.adjoint_dot,
+        data.tangent_local,
+        data.tangent_dot_qd,
+        data.joint_velocity,
     )
 
 
@@ -366,4 +399,4 @@ scalable_joint_terms = wp.jax_callable(launch_joint_terms, num_outputs=5)
 __all__ = ["joint_terms_kernel", "launch_joint_terms"]
 
 
-__all__ += ["JointTermsArrays", "packed_joint_terms_kernel"]
+__all__ += ["JointTermsData", "packed_joint_terms_kernel"]

@@ -153,6 +153,9 @@ def cell_terms_at(
     """Compute general cell-local Lie data for one batched cell work item.
 
     Args:
+        work_item: Flattened environment-segment-cell index in the supplied arrays.
+        lane: Thread index within the cooperative work item.
+        lanes: Number of threads sharing this cell; one on CPU or two on CUDA.
         q_link: Batched padded segment-local coordinates.
         qd_link: Batched padded segment-local velocities.
         basis_z1: Sparse basis values at the first Magnus node.
@@ -367,7 +370,32 @@ def cooperative_cell_terms_kernel(
     step_velocity: wp.array2d[wp.float64],
     tangent_velocity_dot: wp.array2d[wp.float64],
 ):
-    """Launch the shared numerical function with homogeneous indexing."""
+    """Evaluate cell Lie operators with two CUDA threads per cell.
+
+    Launch a one-dimensional grid of twice the number of cells. Threads
+    share independent adjoint and tangent columns; no block barrier is required.
+
+    Args:
+        q_link: Batched padded segment-local coordinates.
+        qd_link: Batched padded segment-local velocities.
+        basis_z1: Sparse basis values at the first Magnus node.
+        basis_z2: Sparse basis values at the second Magnus node.
+        basis_rows: Spatial row occupied by each sparse basis column.
+        reference_z1: Reference strains at first Magnus nodes.
+        reference_z2: Reference strains at second Magnus nodes.
+        segment_lengths: Physical segment lengths.
+        cell_widths: Normalized integration-cell widths.
+        num_cells: One-entry array containing cells per segment.
+        order_zero: One-entry flag selecting the constant-strain shortcut.
+        adjoint: Caller-owned flattened cell-adjoint output.
+        tangent_local: Caller-owned flattened local-tangent output.
+        link_velocity: Caller-owned flattened link-velocity output.
+        step_velocity: Caller-owned flattened step-velocity output.
+        tangent_velocity_dot: Caller-owned tangent-derivative action output.
+
+    Returns:
+        None. All results are written to the caller-owned output arrays.
+    """
     item = wp.tid()
     cell_terms_at(
         item // 2,
@@ -393,7 +421,32 @@ def cooperative_cell_terms_kernel(
 
 
 @wp.struct
-class CellTermsArrays:
+class GVSCellTermsData:
+    """GVS link state, strain bases and cell Lie-operator buffers for one world.
+
+    Array fields are non-owning views; the caller must retain their allocations
+    for every launch and captured graph. Batched fields use one environment
+    (``E = 1``); structural fields use this world's own dimensions.
+
+    Attributes:
+        q_link: Batched padded segment-local coordinates.
+        qd_link: Batched padded segment-local velocities.
+        basis_z1: Sparse basis values at the first Magnus node.
+        basis_z2: Sparse basis values at the second Magnus node.
+        basis_rows: Spatial row occupied by each sparse basis column.
+        reference_z1: Reference strains at first Magnus nodes.
+        reference_z2: Reference strains at second Magnus nodes.
+        segment_lengths: Physical segment lengths.
+        cell_widths: Normalized integration-cell widths.
+        num_cells: One-entry array containing cells per segment.
+        order_zero: One-entry flag selecting the constant-strain shortcut.
+        adjoint: Caller-owned flattened cell-adjoint output.
+        tangent_local: Caller-owned flattened local-tangent output.
+        link_velocity: Caller-owned flattened link-velocity output.
+        step_velocity: Caller-owned flattened step-velocity output.
+        tangent_velocity_dot: Caller-owned tangent-derivative action output.
+    """
+
     q_link: wp.array2d[wp.float64]
     qd_link: wp.array2d[wp.float64]
     basis_z1: wp.array2d[wp.float64]
@@ -414,61 +467,88 @@ class CellTermsArrays:
 
 @wp.kernel(enable_backward=False)
 def packed_cell_terms_kernel(
-    worlds: wp.array(dtype=CellTermsArrays), work: wp.array(dtype=wp.vec3i)
+    world_data: wp.array(dtype=GVSCellTermsData), work_items: wp.array(dtype=wp.vec3i)
 ):
+    """Compute general cell-local Lie data for one batched cell work item.
+
+    Launch with ``dim=len(work_items)``; each thread handles one work item.
+
+    Args:
+        world_data: Device array of per-world data views, including caller-owned
+            outputs and workspaces. Keep every referenced allocation alive.
+        work_items: INT32 triples ``(world_index, local_index, 0)``. The local
+            index is local cell. The third component is reserved.
+
+    Returns:
+        None. All results are written to the caller-owned output arrays.
+    """
     item = wp.tid()
-    entry = work[item]
-    d = worlds[entry[0]]
+    entry = work_items[item]
+    data = world_data[entry[0]]
     cell_terms_at(
         entry[1],
         0,
         1,
-        d.q_link,
-        d.qd_link,
-        d.basis_z1,
-        d.basis_z2,
-        d.basis_rows,
-        d.reference_z1,
-        d.reference_z2,
-        d.segment_lengths,
-        d.cell_widths,
-        d.num_cells,
-        d.order_zero,
-        d.adjoint,
-        d.tangent_local,
-        d.link_velocity,
-        d.step_velocity,
-        d.tangent_velocity_dot,
+        data.q_link,
+        data.qd_link,
+        data.basis_z1,
+        data.basis_z2,
+        data.basis_rows,
+        data.reference_z1,
+        data.reference_z2,
+        data.segment_lengths,
+        data.cell_widths,
+        data.num_cells,
+        data.order_zero,
+        data.adjoint,
+        data.tangent_local,
+        data.link_velocity,
+        data.step_velocity,
+        data.tangent_velocity_dot,
     )
 
 
 @wp.kernel(enable_backward=False)
 def packed_cooperative_cell_terms_kernel(
-    worlds: wp.array(dtype=CellTermsArrays), work: wp.array(dtype=wp.vec3i)
+    world_data: wp.array(dtype=GVSCellTermsData), work_items: wp.array(dtype=wp.vec3i)
 ):
+    """Compute general cell-local Lie data for one batched cell work item.
+
+    Launch with ``dim=(len(work_items), 2)`` and ``block_dim=128``.
+    Two threads share each cell without a block barrier.
+
+    Args:
+        world_data: Device array of per-world data views, including caller-owned
+            outputs and workspaces. Keep every referenced allocation alive.
+        work_items: INT32 triples ``(world_index, local_index, 0)``. The local
+            index is local cell. The third component is reserved.
+
+    Returns:
+        None. All results are written to the caller-owned output arrays.
+    """
     item, lane = wp.tid()
-    entry = work[item]
-    d = worlds[entry[0]]
+    entry = work_items[item]
+    data = world_data[entry[0]]
     cell_terms_at(
         entry[1],
         lane,
         2,
-        d.q_link,
-        d.qd_link,
-        d.basis_z1,
-        d.basis_z2,
-        d.basis_rows,
-        d.reference_z1,
-        d.reference_z2,
-        d.segment_lengths,
-        d.cell_widths,
-        d.num_cells,
-        d.order_zero,
-        d.adjoint,
-        d.tangent_local,
-        d.link_velocity,
-        d.step_velocity,
-        d.tangent_velocity_dot,
+        data.q_link,
+        data.qd_link,
+        data.basis_z1,
+        data.basis_z2,
+        data.basis_rows,
+        data.reference_z1,
+        data.reference_z2,
+        data.segment_lengths,
+        data.cell_widths,
+        data.num_cells,
+        data.order_zero,
+        data.adjoint,
+        data.tangent_local,
+        data.link_velocity,
+        data.step_velocity,
+        data.tangent_velocity_dot,
     )
 
 
@@ -550,7 +630,7 @@ __all__ = ["cell_terms_kernel", "launch_cell_terms"]
 
 __all__ += [
     "cooperative_cell_terms_kernel",
-    "CellTermsArrays",
+    "GVSCellTermsData",
     "packed_cell_terms_kernel",
     "packed_cooperative_cell_terms_kernel",
 ]

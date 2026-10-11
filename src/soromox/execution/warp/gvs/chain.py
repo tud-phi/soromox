@@ -59,6 +59,8 @@ def persistent_chain_at(
     """Traverse one full serial GVS chain per cooperative block.
 
     Args:
+        environment: Batch row in the supplied arrays; use zero for a single-world view.
+        lane: Thread index within the cooperative work item.
         joint_adjoint: Flattened joint inverse adjoints.
         joint_adjoint_dot: Flattened joint-adjoint derivatives.
         joint_tangent: Joint tangents in active coordinates.
@@ -661,7 +663,47 @@ def persistent_chain_kernel(
 
 
 @wp.struct
-class PersistentChainArrays:
+class GVSChainData:
+    """Fixed-base GVS chain inputs, propagation workspaces and dynamics outputs.
+
+    Array fields are non-owning views; the caller must retain their allocations
+    for every launch and captured graph. Batched fields use one environment
+    (``E = 1``); structural fields use this world's own dimensions.
+
+    Attributes:
+        joint_adjoint: Flattened joint inverse adjoints.
+        joint_adjoint_dot: Flattened joint-adjoint derivatives.
+        joint_tangent: Joint tangents in active coordinates.
+        joint_tangent_dot_qd: Joint tangent-derivative actions.
+        joint_velocity: Joint spatial velocities.
+        cell_adjoint: Flattened cell inverse adjoints.
+        cell_tangent_local: Cell tangents in padded local coordinates.
+        cell_link_velocity: Cell link velocities.
+        cell_step_velocity: Cell Magnus-step velocities.
+        cell_tangent_velocity_dot: Cell tangent-derivative actions.
+        global_to_local: Active-to-local link-coordinate map.
+        active_dofs: Cumulative active coordinate count by segment.
+        qd: Batched generalized velocities.
+        inertia_upper_rows: Packed upper-inertia row indices.
+        inertia_upper_columns: Packed upper-inertia column indices.
+        weighted_masses: Quadrature-weighted diagonal spatial inertias.
+        gravity_base: Base-frame gravity.
+        num_cells_array: One-entry array containing cells per segment.
+        num_quadrature_array: One-entry array containing quadrature count.
+        lanes_per_block: One-entry array containing active cooperative lanes.
+        jacobian_first: First caller-owned Jacobian workspace.
+        jacobian_dot_qd_first: First derivative-action workspace.
+        velocity_first: First spatial-velocity workspace.
+        gravity_first: First local-gravity workspace.
+        jacobian_second: Second Jacobian workspace.
+        jacobian_dot_qd_second: Second derivative-action workspace.
+        velocity_second: Second spatial-velocity workspace.
+        gravity_second: Second local-gravity workspace.
+        inertia: Batched inertia output.
+        coriolis_qd: Batched convective-force output.
+        gravity_force: Batched generalized-gravity output.
+    """
+
     joint_adjoint: wp.array2d[wp.float64]
     joint_adjoint_dot: wp.array2d[wp.float64]
     joint_tangent: wp.array2d[wp.float64]
@@ -697,45 +739,60 @@ class PersistentChainArrays:
 
 @wp.kernel(enable_backward=False)
 def packed_persistent_chain_kernel(
-    worlds: wp.array(dtype=PersistentChainArrays), work: wp.array(dtype=wp.vec3i)
+    world_data: wp.array(dtype=GVSChainData), work_items: wp.array(dtype=wp.vec3i)
 ):
+    """Traverse one full serial GVS chain per cooperative block.
+
+    Launch with ``wp.launch_tiled(..., dim=len(work_items), block_dim=B)``.
+    Each block cooperates on one work item; all lanes must participate.
+    Use the same block size as the arrays' ``lanes_per_block[0]``.
+
+    Args:
+        world_data: Device array of per-world data views, including caller-owned
+            outputs and workspaces. Keep every referenced allocation alive.
+        work_items: INT32 triples ``(world_index, local_index, 0)``. The local
+            index is zero (one work item per world). The third component is reserved.
+
+    Returns:
+        None. Workspaces and outputs are updated in place.
+    """
     item, lane = wp.tid()
-    entry = work[item]
-    d = worlds[entry[0]]
+    entry = work_items[item]
+    data = world_data[entry[0]]
     persistent_chain_at(
         0,
         lane,
-        d.joint_adjoint,
-        d.joint_adjoint_dot,
-        d.joint_tangent,
-        d.joint_tangent_dot_qd,
-        d.joint_velocity,
-        d.cell_adjoint,
-        d.cell_tangent_local,
-        d.cell_link_velocity,
-        d.cell_step_velocity,
-        d.cell_tangent_velocity_dot,
-        d.global_to_local,
-        d.active_dofs,
-        d.qd,
-        d.inertia_upper_rows,
-        d.inertia_upper_columns,
-        d.weighted_masses,
-        d.gravity_base,
-        d.num_cells_array,
-        d.num_quadrature_array,
-        d.lanes_per_block,
-        d.jacobian_first,
-        d.jacobian_dot_qd_first,
-        d.velocity_first,
-        d.gravity_first,
-        d.jacobian_second,
-        d.jacobian_dot_qd_second,
-        d.velocity_second,
-        d.gravity_second,
-        d.inertia,
-        d.coriolis_qd,
-        d.gravity_force,
+        data.joint_adjoint,
+        data.joint_adjoint_dot,
+        data.joint_tangent,
+        data.joint_tangent_dot_qd,
+        data.joint_velocity,
+        data.cell_adjoint,
+        data.cell_tangent_local,
+        data.cell_link_velocity,
+        data.cell_step_velocity,
+        data.cell_tangent_velocity_dot,
+        data.global_to_local,
+        data.active_dofs,
+        data.qd,
+        data.inertia_upper_rows,
+        data.inertia_upper_columns,
+        data.weighted_masses,
+        data.gravity_base,
+        data.num_cells_array,
+        data.num_quadrature_array,
+        data.lanes_per_block,
+        data.jacobian_first,
+        data.jacobian_dot_qd_first,
+        data.velocity_first,
+        data.gravity_first,
+        data.jacobian_second,
+        data.jacobian_dot_qd_second,
+        data.velocity_second,
+        data.gravity_second,
+        data.inertia,
+        data.coriolis_qd,
+        data.gravity_force,
     )
 
 
@@ -868,4 +925,4 @@ scalable_persistent_chain = wp.jax_callable(launch_persistent_chain, num_outputs
 __all__ = ["launch_persistent_chain", "persistent_chain_kernel"]
 
 
-__all__ += ["PersistentChainArrays", "packed_persistent_chain_kernel"]
+__all__ += ["GVSChainData", "packed_persistent_chain_kernel"]

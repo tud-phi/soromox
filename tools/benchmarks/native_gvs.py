@@ -13,7 +13,9 @@ import hashlib
 import json
 import subprocess
 import time
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import jax
 
@@ -26,7 +28,18 @@ from soromox.execution.warp.gvs.operands import GVSOperands
 from soromox.systems import GVS, GVSSegment, JointSpec, LinkSpec, StrainBasisSpec
 
 
-def robot(links, order, all_strains, moving):
+def robot(links: int, order: int, all_strains: bool, moving: bool) -> GVS:
+    """Build a fixed-base GVS model for the backend comparison.
+
+    Args:
+        links: Number of serial links.
+        order: Polynomial order for each selected strain.
+        all_strains: Select all six strains; otherwise select two bending strains.
+        moving: Alternate revolute and prismatic joints when true.
+
+    Returns:
+        A GVS model with the Warp backend selected.
+    """
     return GVS.from_segments(
         tuple(
             GVSSegment(
@@ -63,7 +76,17 @@ def robot(links, order, all_strains, moving):
     )
 
 
-def time_call(fn, args, repeats):
+def time_call(fn: Callable, args: tuple, repeats: int) -> dict[str, Any]:
+    """Measure synchronized steady-state JAX execution time.
+
+    Args:
+        fn: Compiled function to warm up and measure.
+        args: Positional function arguments.
+        repeats: Number of timed groups of ten calls.
+
+    Returns:
+        Median and individual group durations per call in microseconds.
+    """
     jax.block_until_ready(fn(*args))
     samples = []
     for _ in range(repeats):
@@ -75,7 +98,12 @@ def time_call(fn, args, repeats):
     return {"us": float(np.median(samples)), "samples_us": samples}
 
 
-def main():
+def main() -> None:
+    """Run the benchmark command described by the module.
+
+    Returns:
+        None. Writes the requested report and prints validation or timing results.
+    """
     p = argparse.ArgumentParser()
     p.add_argument("--worlds", type=int, nargs="+", default=[32, 128, 512])
     p.add_argument(
@@ -128,7 +156,20 @@ def main():
                     jax.vmap(lambda x, y, r=r: r.dynamics_terms(x, y, backend="warp"))
                 )
 
-            def forward_fn(q, v, terms=terms, r=r):
+            def forward_fn(
+                q: jax.Array, v: jax.Array, terms: Callable = terms, r: GVS = r
+            ) -> jax.Array:
+                """Evaluate unforced forward dynamics for a batch of states.
+
+                Args:
+                    q: Batched generalized coordinates.
+                    v: Batched generalized velocities.
+                    terms: Dynamics-term callable captured for this benchmark case.
+                    r: Robot supplying stiffness and damping.
+
+                Returns:
+                    Batched generalized accelerations from the JAX linear solve.
+                """
                 m, c, g = terms(q, v)
                 rhs = (
                     -c

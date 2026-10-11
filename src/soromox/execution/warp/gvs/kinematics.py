@@ -280,6 +280,7 @@ def gvs_node_poses_at(
     """Build GVS cell-boundary poses without Jacobian propagation.
 
     Args:
+        environment: Batch row in the supplied arrays; use zero for a single-world view.
         joint_adjoint: Flattened inverse adjoints for every joint.
         cell_adjoint: Flattened inverse adjoints for every full link cell.
         base_transform: Absolute robot base transform.
@@ -356,7 +357,22 @@ def gvs_node_poses_kernel(
 
 
 @wp.struct
-class GvsNodePosesArrays:
+class GVSNodePosesData:
+    """Buffers for GVS node poses.
+
+    Array fields are non-owning views; the caller must retain their allocations
+    for every launch and captured graph. Batched fields use one environment
+    (``E = 1``); structural fields use this world's own dimensions.
+
+    Attributes:
+        joint_adjoint: Flattened inverse adjoints for every joint.
+        cell_adjoint: Flattened inverse adjoints for every full link cell.
+        base_transform: Absolute robot base transform.
+        segment_lengths: Physical link lengths used for the segment count.
+        num_cells_array: One-entry array containing the padded cell count.
+        node_pose: Caller-owned flattened node-pose workspace.
+    """
+
     joint_adjoint: wp.array2d[wp.float64]
     cell_adjoint: wp.array2d[wp.float64]
     base_transform: wp.array2d[wp.float64]
@@ -367,19 +383,32 @@ class GvsNodePosesArrays:
 
 @wp.kernel(enable_backward=False)
 def packed_gvs_node_poses_kernel(
-    worlds: wp.array(dtype=GvsNodePosesArrays), work: wp.array(dtype=wp.vec3i)
+    world_data: wp.array(dtype=GVSNodePosesData), work_items: wp.array(dtype=wp.vec3i)
 ):
+    """Build GVS cell-boundary poses without Jacobian propagation.
+
+    Launch with ``dim=len(work_items)``; each thread handles one work item.
+
+    Args:
+        world_data: Device array of per-world data views, including caller-owned
+            outputs and workspaces. Keep every referenced allocation alive.
+        work_items: INT32 triples ``(world_index, local_index, 0)``. The local
+            index is zero (one work item per world). The third component is reserved.
+
+    Returns:
+        None. Cell-boundary poses are written in place.
+    """
     item = wp.tid()
-    entry = work[item]
-    d = worlds[entry[0]]
+    entry = work_items[item]
+    data = world_data[entry[0]]
     gvs_node_poses_at(
         0,
-        d.joint_adjoint,
-        d.cell_adjoint,
-        d.base_transform,
-        d.segment_lengths,
-        d.num_cells_array,
-        d.node_pose,
+        data.joint_adjoint,
+        data.cell_adjoint,
+        data.base_transform,
+        data.segment_lengths,
+        data.num_cells_array,
+        data.node_pose,
     )
 
 
@@ -399,6 +428,7 @@ def gvs_node_states_at(
     """Build reusable GVS cell-boundary pose and body-Jacobian states.
 
     Args:
+        environment: Batch row in the supplied arrays; use zero for a single-world view.
         joint_adjoint: Flattened inverse adjoints for every joint.
         joint_tangent: Joint tangents in active coordinates.
         cell_adjoint: Flattened inverse adjoints for every full link cell.
@@ -533,7 +563,25 @@ def gvs_node_states_kernel(
 
 
 @wp.struct
-class GvsNodeStatesArrays:
+class GVSNodeStatesData:
+    """Buffers for GVS node states.
+
+    Array fields are non-owning views; the caller must retain their allocations
+    for every launch and captured graph. Batched fields use one environment
+    (``E = 1``); structural fields use this world's own dimensions.
+
+    Attributes:
+        joint_adjoint: Flattened inverse adjoints for every joint.
+        joint_tangent: Joint tangents in active coordinates.
+        cell_adjoint: Flattened inverse adjoints for every full link cell.
+        cell_tangent_local: Full-cell tangents in padded local coordinates.
+        link_global_to_local: Active-to-local link-coordinate map.
+        base_transform: Absolute robot base transform.
+        num_cells_array: One-entry array containing the padded cell count.
+        node_pose: Caller-owned flattened node-pose workspace.
+        node_jacobian: Caller-owned flattened body-Jacobian workspace.
+    """
+
     joint_adjoint: wp.array2d[wp.float64]
     joint_tangent: wp.array2d[wp.float64]
     cell_adjoint: wp.array2d[wp.float64]
@@ -547,22 +595,35 @@ class GvsNodeStatesArrays:
 
 @wp.kernel(enable_backward=False)
 def packed_gvs_node_states_kernel(
-    worlds: wp.array(dtype=GvsNodeStatesArrays), work: wp.array(dtype=wp.vec3i)
+    world_data: wp.array(dtype=GVSNodeStatesData), work_items: wp.array(dtype=wp.vec3i)
 ):
+    """Build reusable GVS cell-boundary pose and body-Jacobian states.
+
+    Launch with ``dim=len(work_items)``; each thread handles one work item.
+
+    Args:
+        world_data: Device array of per-world data views, including caller-owned
+            outputs and workspaces. Keep every referenced allocation alive.
+        work_items: INT32 triples ``(world_index, local_index, 0)``. The local
+            index is zero (one work item per world). The third component is reserved.
+
+    Returns:
+        None. Boundary states are written in place.
+    """
     item = wp.tid()
-    entry = work[item]
-    d = worlds[entry[0]]
+    entry = work_items[item]
+    data = world_data[entry[0]]
     gvs_node_states_at(
         0,
-        d.joint_adjoint,
-        d.joint_tangent,
-        d.cell_adjoint,
-        d.cell_tangent_local,
-        d.link_global_to_local,
-        d.base_transform,
-        d.num_cells_array,
-        d.node_pose,
-        d.node_jacobian,
+        data.joint_adjoint,
+        data.joint_tangent,
+        data.cell_adjoint,
+        data.cell_tangent_local,
+        data.link_global_to_local,
+        data.base_transform,
+        data.num_cells_array,
+        data.node_pose,
+        data.node_jacobian,
     )
 
 
@@ -588,6 +649,8 @@ def gvs_cooperative_node_states_at(
     :func:`gvs_node_states_kernel`.
 
     Args:
+        environment: Batch row in the supplied arrays; use zero for a single-world view.
+        lane: Thread index within the cooperative work item.
         joint_adjoint: Flattened inverse adjoints for every joint.
         joint_tangent: Joint tangents in active coordinates.
         cell_adjoint: Flattened inverse adjoints for every full link cell.
@@ -732,39 +795,41 @@ def gvs_cooperative_node_states_kernel(
     )
 
 
-@wp.struct
-class GvsCooperativeNodeStatesArrays:
-    joint_adjoint: wp.array2d[wp.float64]
-    joint_tangent: wp.array2d[wp.float64]
-    cell_adjoint: wp.array2d[wp.float64]
-    cell_tangent_local: wp.array2d[wp.float64]
-    link_global_to_local: wp.array2d[wp.int32]
-    base_transform: wp.array2d[wp.float64]
-    num_cells_array: wp.array[wp.int32]
-    node_pose: wp.array2d[wp.float64]
-    node_jacobian: wp.array2d[wp.float64]
-
-
 @wp.kernel(enable_backward=False)
 def packed_gvs_cooperative_node_states_kernel(
-    worlds: wp.array(dtype=GvsCooperativeNodeStatesArrays),
-    work: wp.array(dtype=wp.vec3i),
+    world_data: wp.array(dtype=GVSNodeStatesData),
+    work_items: wp.array(dtype=wp.vec3i),
 ):
+    """Build GVS boundary states cooperatively on CUDA.
+
+    Launch with ``wp.launch_tiled(..., dim=len(work_items), block_dim=B)``.
+    Each block cooperates on one work item; all lanes must participate.
+    Use at least 32 threads per CUDA block.
+
+    Args:
+        world_data: Device array of per-world data views, including caller-owned
+            outputs and workspaces. Keep every referenced allocation alive.
+        work_items: INT32 triples ``(world_index, local_index, 0)``. The local
+            index is zero (one work item per world). The third component is reserved.
+
+    Returns:
+        None. Boundary states are written in place.
+    """
     item, lane = wp.tid()
-    entry = work[item]
-    d = worlds[entry[0]]
+    entry = work_items[item]
+    data = world_data[entry[0]]
     gvs_cooperative_node_states_at(
         0,
         lane,
-        d.joint_adjoint,
-        d.joint_tangent,
-        d.cell_adjoint,
-        d.cell_tangent_local,
-        d.link_global_to_local,
-        d.base_transform,
-        d.num_cells_array,
-        d.node_pose,
-        d.node_jacobian,
+        data.joint_adjoint,
+        data.joint_tangent,
+        data.cell_adjoint,
+        data.cell_tangent_local,
+        data.link_global_to_local,
+        data.base_transform,
+        data.num_cells_array,
+        data.node_pose,
+        data.node_jacobian,
     )
 
 
@@ -794,6 +859,8 @@ def gvs_pose_samples_at(
     """Evaluate GVS poses without Jacobian recurrence or output work.
 
     Args:
+        environment: Batch row in the supplied arrays; use zero for a single-world view.
+        sample: Sample index within the selected environment.
         q: Batched active configurations ``(E, D)``.
         s: Per-environment abscissae with shape ``(E, N)``.
         link_local_to_global: Padded local-to-active link-coordinate map.
@@ -977,7 +1044,34 @@ def gvs_pose_samples_kernel(
 
 
 @wp.struct
-class GvsPoseSamplesArrays:
+class GVSPoseSamplesData:
+    """Buffers for GVS pose samples.
+
+    Array fields are non-owning views; the caller must retain their allocations
+    for every launch and captured graph. Batched fields use one environment
+    (``E = 1``); structural fields use this world's own dimensions.
+
+    Attributes:
+        q: Batched active configurations ``(E, D)``.
+        s: Per-environment abscissae with shape ``(E, N)``.
+        link_local_to_global: Padded local-to-active link-coordinate map.
+        link_basis_rows: Spatial row occupied by every local basis column.
+        link_reference_z1: Reference strain at first Magnus nodes.
+        link_reference_z2: Reference strain at second Magnus nodes.
+        segment_lengths: Physical link lengths.
+        segment_starts: Cumulative link-start positions.
+        integration_points: Normalized cell-boundary coordinates.
+        basis_type_index: Basis-family index for every segment.
+        basis_active_params: Per-row basis activation parameters.
+        basis_order_params: Per-row basis-order parameters.
+        magnus_points: Two normalized Gauss points within a partial cell.
+        scale_rotations_array: One-entry rotational-basis scaling flag.
+        epsilons: Exponential and tangent thresholds.
+        num_cells_array: One-entry array containing the padded cell count.
+        node_pose: Precomputed flattened node poses.
+        poses: Caller-owned SE(3) pose output.
+    """
+
     q: wp.array2d[wp.float64]
     s: wp.array2d[wp.float64]
     link_local_to_global: wp.array2d[wp.int32]
@@ -1000,32 +1094,45 @@ class GvsPoseSamplesArrays:
 
 @wp.kernel(enable_backward=False)
 def packed_gvs_pose_samples_kernel(
-    worlds: wp.array(dtype=GvsPoseSamplesArrays), work: wp.array(dtype=wp.vec3i)
+    world_data: wp.array(dtype=GVSPoseSamplesData), work_items: wp.array(dtype=wp.vec3i)
 ):
+    """Evaluate GVS poses without Jacobian recurrence or output work.
+
+    Launch with ``dim=len(work_items)``; each thread handles one work item.
+
+    Args:
+        world_data: Device array of per-world data views, including caller-owned
+            outputs and workspaces. Keep every referenced allocation alive.
+        work_items: INT32 triples ``(world_index, local_index, 0)``. The local
+            index is local sample. The third component is reserved.
+
+    Returns:
+        None. Pose outputs are written in place.
+    """
     item = wp.tid()
-    entry = work[item]
-    d = worlds[entry[0]]
+    entry = work_items[item]
+    data = world_data[entry[0]]
     gvs_pose_samples_at(
         0,
         entry[1],
-        d.q,
-        d.s,
-        d.link_local_to_global,
-        d.link_basis_rows,
-        d.link_reference_z1,
-        d.link_reference_z2,
-        d.segment_lengths,
-        d.segment_starts,
-        d.integration_points,
-        d.basis_type_index,
-        d.basis_active_params,
-        d.basis_order_params,
-        d.magnus_points,
-        d.scale_rotations_array,
-        d.epsilons,
-        d.num_cells_array,
-        d.node_pose,
-        d.poses,
+        data.q,
+        data.s,
+        data.link_local_to_global,
+        data.link_basis_rows,
+        data.link_reference_z1,
+        data.link_reference_z2,
+        data.segment_lengths,
+        data.segment_starts,
+        data.integration_points,
+        data.basis_type_index,
+        data.basis_active_params,
+        data.basis_order_params,
+        data.magnus_points,
+        data.scale_rotations_array,
+        data.epsilons,
+        data.num_cells_array,
+        data.node_pose,
+        data.poses,
     )
 
 
@@ -1184,6 +1291,8 @@ def gvs_jacobian_samples_at(
     """Evaluate GVS inertial Jacobians without pose output writes.
 
     Args:
+        environment: Batch row in the supplied arrays; use zero for a single-world view.
+        sample: Sample index within the selected environment.
         q: Batched active configurations ``(E, D)``.
         s: Per-environment abscissae with shape ``(E, N)``.
         link_local_to_global: Padded local-to-active link-coordinate map.
@@ -1391,7 +1500,36 @@ def gvs_jacobian_samples_kernel(
 
 
 @wp.struct
-class GvsJacobianSamplesArrays:
+class GVSJacobianSamplesData:
+    """Buffers for GVS jacobian samples.
+
+    Array fields are non-owning views; the caller must retain their allocations
+    for every launch and captured graph. Batched fields use one environment
+    (``E = 1``); structural fields use this world's own dimensions.
+
+    Attributes:
+        q: Batched active configurations ``(E, D)``.
+        s: Per-environment abscissae with shape ``(E, N)``.
+        link_local_to_global: Padded local-to-active link-coordinate map.
+        link_global_to_local: Active-to-local link-coordinate map.
+        link_basis_rows: Spatial row occupied by every local basis column.
+        link_reference_z1: Reference strain at first Magnus nodes.
+        link_reference_z2: Reference strain at second Magnus nodes.
+        segment_lengths: Physical link lengths.
+        segment_starts: Cumulative link-start positions.
+        integration_points: Normalized cell-boundary coordinates.
+        basis_type_index: Basis-family index for every segment.
+        basis_active_params: Per-row basis activation parameters.
+        basis_order_params: Per-row basis-order parameters.
+        magnus_points: Two normalized Gauss points within a partial cell.
+        scale_rotations_array: One-entry rotational-basis scaling flag.
+        epsilons: Exponential and tangent thresholds.
+        num_cells_array: One-entry array containing the padded cell count.
+        node_pose: Precomputed flattened node poses.
+        node_jacobian: Precomputed flattened boundary body Jacobians.
+        jacobians: Caller-owned inertial-Jacobian output.
+    """
+
     q: wp.array2d[wp.float64]
     s: wp.array2d[wp.float64]
     link_local_to_global: wp.array2d[wp.int32]
@@ -1416,34 +1554,48 @@ class GvsJacobianSamplesArrays:
 
 @wp.kernel(enable_backward=False)
 def packed_gvs_jacobian_samples_kernel(
-    worlds: wp.array(dtype=GvsJacobianSamplesArrays), work: wp.array(dtype=wp.vec3i)
+    world_data: wp.array(dtype=GVSJacobianSamplesData),
+    work_items: wp.array(dtype=wp.vec3i),
 ):
+    """Evaluate GVS inertial Jacobians without pose output writes.
+
+    Launch with ``dim=len(work_items)``; each thread handles one work item.
+
+    Args:
+        world_data: Device array of per-world data views, including caller-owned
+            outputs and workspaces. Keep every referenced allocation alive.
+        work_items: INT32 triples ``(world_index, local_index, 0)``. The local
+            index is local sample. The third component is reserved.
+
+    Returns:
+        None. Jacobian outputs are written in place.
+    """
     item = wp.tid()
-    entry = work[item]
-    d = worlds[entry[0]]
+    entry = work_items[item]
+    data = world_data[entry[0]]
     gvs_jacobian_samples_at(
         0,
         entry[1],
-        d.q,
-        d.s,
-        d.link_local_to_global,
-        d.link_global_to_local,
-        d.link_basis_rows,
-        d.link_reference_z1,
-        d.link_reference_z2,
-        d.segment_lengths,
-        d.segment_starts,
-        d.integration_points,
-        d.basis_type_index,
-        d.basis_active_params,
-        d.basis_order_params,
-        d.magnus_points,
-        d.scale_rotations_array,
-        d.epsilons,
-        d.num_cells_array,
-        d.node_pose,
-        d.node_jacobian,
-        d.jacobians,
+        data.q,
+        data.s,
+        data.link_local_to_global,
+        data.link_global_to_local,
+        data.link_basis_rows,
+        data.link_reference_z1,
+        data.link_reference_z2,
+        data.segment_lengths,
+        data.segment_starts,
+        data.integration_points,
+        data.basis_type_index,
+        data.basis_active_params,
+        data.basis_order_params,
+        data.magnus_points,
+        data.scale_rotations_array,
+        data.epsilons,
+        data.num_cells_array,
+        data.node_pose,
+        data.node_jacobian,
+        data.jacobians,
     )
 
 
@@ -1476,6 +1628,8 @@ def gvs_samples_at(
     """Evaluate fused GVS poses and inertial Jacobians at runtime samples.
 
     Args:
+        environment: Batch row in the supplied arrays; use zero for a single-world view.
+        sample: Sample index within the selected environment.
         q: Batched active configurations ``(E, D)``.
         s: Per-environment abscissae with shape ``(E, N)``.
         link_local_to_global: Padded local-to-active link-coordinate map.
@@ -1694,7 +1848,37 @@ def gvs_samples_kernel(
 
 
 @wp.struct
-class GvsSamplesArrays:
+class GVSSamplesData:
+    """Buffers for GVS samples.
+
+    Array fields are non-owning views; the caller must retain their allocations
+    for every launch and captured graph. Batched fields use one environment
+    (``E = 1``); structural fields use this world's own dimensions.
+
+    Attributes:
+        q: Batched active configurations ``(E, D)``.
+        s: Per-environment abscissae with shape ``(E, N)``.
+        link_local_to_global: Padded local-to-active link-coordinate map.
+        link_global_to_local: Active-to-local link-coordinate map.
+        link_basis_rows: Spatial row occupied by every local basis column.
+        link_reference_z1: Reference strain at first Magnus nodes.
+        link_reference_z2: Reference strain at second Magnus nodes.
+        segment_lengths: Physical link lengths.
+        segment_starts: Cumulative link-start positions.
+        integration_points: Normalized cell-boundary coordinates.
+        basis_type_index: Basis-family index for every segment.
+        basis_active_params: Per-row basis activation parameters.
+        basis_order_params: Per-row basis-order parameters.
+        magnus_points: Two normalized Gauss points within a partial cell.
+        scale_rotations_array: One-entry rotational-basis scaling flag.
+        epsilons: Exponential and tangent thresholds.
+        num_cells_array: One-entry array containing the padded cell count.
+        node_pose: Precomputed flattened node poses.
+        node_jacobian: Precomputed flattened boundary body Jacobians.
+        poses: Caller-owned SE(3) pose output.
+        jacobians: Caller-owned inertial-Jacobian output.
+    """
+
     q: wp.array2d[wp.float64]
     s: wp.array2d[wp.float64]
     link_local_to_global: wp.array2d[wp.int32]
@@ -1720,35 +1904,48 @@ class GvsSamplesArrays:
 
 @wp.kernel(enable_backward=False)
 def packed_gvs_samples_kernel(
-    worlds: wp.array(dtype=GvsSamplesArrays), work: wp.array(dtype=wp.vec3i)
+    world_data: wp.array(dtype=GVSSamplesData), work_items: wp.array(dtype=wp.vec3i)
 ):
+    """Evaluate fused GVS poses and inertial Jacobians at runtime samples.
+
+    Launch with ``dim=len(work_items)``; each thread handles one work item.
+
+    Args:
+        world_data: Device array of per-world data views, including caller-owned
+            outputs and workspaces. Keep every referenced allocation alive.
+        work_items: INT32 triples ``(world_index, local_index, 0)``. The local
+            index is local sample. The third component is reserved.
+
+    Returns:
+        None. Fused outputs are written in place.
+    """
     item = wp.tid()
-    entry = work[item]
-    d = worlds[entry[0]]
+    entry = work_items[item]
+    data = world_data[entry[0]]
     gvs_samples_at(
         0,
         entry[1],
-        d.q,
-        d.s,
-        d.link_local_to_global,
-        d.link_global_to_local,
-        d.link_basis_rows,
-        d.link_reference_z1,
-        d.link_reference_z2,
-        d.segment_lengths,
-        d.segment_starts,
-        d.integration_points,
-        d.basis_type_index,
-        d.basis_active_params,
-        d.basis_order_params,
-        d.magnus_points,
-        d.scale_rotations_array,
-        d.epsilons,
-        d.num_cells_array,
-        d.node_pose,
-        d.node_jacobian,
-        d.poses,
-        d.jacobians,
+        data.q,
+        data.s,
+        data.link_local_to_global,
+        data.link_global_to_local,
+        data.link_basis_rows,
+        data.link_reference_z1,
+        data.link_reference_z2,
+        data.segment_lengths,
+        data.segment_starts,
+        data.integration_points,
+        data.basis_type_index,
+        data.basis_active_params,
+        data.basis_order_params,
+        data.magnus_points,
+        data.scale_rotations_array,
+        data.epsilons,
+        data.num_cells_array,
+        data.node_pose,
+        data.node_jacobian,
+        data.poses,
+        data.jacobians,
     )
 
 
@@ -2137,87 +2334,116 @@ __all__ = [
 
 
 __all__ += [
-    "GvsNodePosesArrays",
+    "GVSNodePosesData",
     "packed_gvs_node_poses_kernel",
-    "GvsNodeStatesArrays",
+    "GVSNodeStatesData",
     "packed_gvs_node_states_kernel",
-    "GvsCooperativeNodeStatesArrays",
     "packed_gvs_cooperative_node_states_kernel",
-    "GvsPoseSamplesArrays",
+    "GVSPoseSamplesData",
     "packed_gvs_pose_samples_kernel",
-    "GvsJacobianSamplesArrays",
+    "GVSJacobianSamplesData",
     "packed_gvs_jacobian_samples_kernel",
-    "GvsSamplesArrays",
+    "GVSSamplesData",
     "packed_gvs_samples_kernel",
 ]
 
 
 @wp.kernel(enable_backward=False)
 def packed_gvs_pose_samples_warp_kernel(
-    worlds: wp.array(dtype=GvsPoseSamplesArrays), work: wp.array(dtype=wp.vec3i)
+    world_data: wp.array(dtype=GVSPoseSamplesData), work_items: wp.array(dtype=wp.vec3i)
 ):
+    """Evaluate GVS poses without Jacobian recurrence or output work.
+
+    Launch with ``dim=(len(work_items), 32)`` and ``block_dim=128``.
+    Each entry starts a group of 32 independent samples; a bounds check
+    skips samples beyond the end of that world.
+
+    Args:
+        world_data: Device array of per-world data views, including caller-owned
+            outputs and workspaces. Keep every referenced allocation alive.
+        work_items: INT32 triples ``(world_index, local_index, 0)``. The local
+            index is first sample in a group of 32. The third component is reserved.
+
+    Returns:
+        None. Pose outputs are written in place.
+    """
     item, lane = wp.tid()
-    entry = work[item]
-    d = worlds[entry[0]]
+    entry = work_items[item]
+    data = world_data[entry[0]]
     sample = entry[1] + lane
-    if sample < d.s.shape[1]:
+    if sample < data.s.shape[1]:
         gvs_pose_samples_at(
             0,
             sample,
-            d.q,
-            d.s,
-            d.link_local_to_global,
-            d.link_basis_rows,
-            d.link_reference_z1,
-            d.link_reference_z2,
-            d.segment_lengths,
-            d.segment_starts,
-            d.integration_points,
-            d.basis_type_index,
-            d.basis_active_params,
-            d.basis_order_params,
-            d.magnus_points,
-            d.scale_rotations_array,
-            d.epsilons,
-            d.num_cells_array,
-            d.node_pose,
-            d.poses,
+            data.q,
+            data.s,
+            data.link_local_to_global,
+            data.link_basis_rows,
+            data.link_reference_z1,
+            data.link_reference_z2,
+            data.segment_lengths,
+            data.segment_starts,
+            data.integration_points,
+            data.basis_type_index,
+            data.basis_active_params,
+            data.basis_order_params,
+            data.magnus_points,
+            data.scale_rotations_array,
+            data.epsilons,
+            data.num_cells_array,
+            data.node_pose,
+            data.poses,
         )
 
 
 @wp.kernel(enable_backward=False)
 def packed_gvs_samples_warp_kernel(
-    worlds: wp.array(dtype=GvsSamplesArrays), work: wp.array(dtype=wp.vec3i)
+    world_data: wp.array(dtype=GVSSamplesData), work_items: wp.array(dtype=wp.vec3i)
 ):
+    """Evaluate fused GVS poses and inertial Jacobians at runtime samples.
+
+    Launch with ``dim=(len(work_items), 32)`` and ``block_dim=128``.
+    Each entry starts a group of 32 independent samples; a bounds check
+    skips samples beyond the end of that world.
+
+    Args:
+        world_data: Device array of per-world data views, including caller-owned
+            outputs and workspaces. Keep every referenced allocation alive.
+        work_items: INT32 triples ``(world_index, local_index, 0)``. The local
+            index is first sample in a group of 32. The third component is reserved.
+
+    Returns:
+        None. Fused outputs are written in place.
+    """
     item, lane = wp.tid()
-    entry = work[item]
-    d = worlds[entry[0]]
+    entry = work_items[item]
+    data = world_data[entry[0]]
     sample = entry[1] + lane
-    if sample < d.s.shape[1]:
+    if sample < data.s.shape[1]:
         gvs_samples_at(
             0,
             sample,
-            d.q,
-            d.s,
-            d.link_local_to_global,
-            d.link_global_to_local,
-            d.link_basis_rows,
-            d.link_reference_z1,
-            d.link_reference_z2,
-            d.segment_lengths,
-            d.segment_starts,
-            d.integration_points,
-            d.basis_type_index,
-            d.basis_active_params,
-            d.basis_order_params,
-            d.magnus_points,
-            d.scale_rotations_array,
-            d.epsilons,
-            d.num_cells_array,
-            d.node_pose,
-            d.node_jacobian,
-            d.poses,
-            d.jacobians,
+            data.q,
+            data.s,
+            data.link_local_to_global,
+            data.link_global_to_local,
+            data.link_basis_rows,
+            data.link_reference_z1,
+            data.link_reference_z2,
+            data.segment_lengths,
+            data.segment_starts,
+            data.integration_points,
+            data.basis_type_index,
+            data.basis_active_params,
+            data.basis_order_params,
+            data.magnus_points,
+            data.scale_rotations_array,
+            data.epsilons,
+            data.num_cells_array,
+            data.node_pose,
+            data.node_jacobian,
+            data.poses,
+            data.jacobians,
         )
 
 

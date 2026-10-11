@@ -13,6 +13,10 @@ and include benchmark baseline and measurement context for performance claims.
 
 ### Added
 
+- Native Warp GVS kernels for heterogeneous worlds, with FP64 dynamics,
+  kinematics and actuation across different joints and strain bases; see
+  [PR #227](https://github.com/tud-phi/soromox/pull/227).
+
 - Python 3.15 support, with numerical tests and patched Open3D source-build
   and rendering checks in Ubuntu CI.
 
