@@ -216,8 +216,8 @@ class GVSNodePoseTwistData:
 
 @wp.kernel(enable_backward=False)
 def packed_gvs_node_pose_twist_kernel(
-    world_data: wp.array(dtype=GVSNodePoseTwistData),
-    work_items: wp.array(dtype=wp.vec3i),
+    world_data: wp.array[GVSNodePoseTwistData],
+    work_items: wp.array[wp.vec3i],
 ):
     """Propagate cell-boundary poses and one Jacobian direction using packed world data.
 
@@ -578,8 +578,8 @@ class GVSPoseTwistSamplesData:
 
 @wp.kernel(enable_backward=False)
 def packed_gvs_pose_twist_samples_kernel(
-    world_data: wp.array(dtype=GVSPoseTwistSamplesData),
-    work_items: wp.array(dtype=wp.vec3i),
+    world_data: wp.array[GVSPoseTwistSamplesData],
+    work_items: wp.array[wp.vec3i],
 ):
     """Evaluate poses and inertial twists ``J(q, s) @ qd`` at samples using packed world data.
 
@@ -969,7 +969,7 @@ class GVSSampleVJPData:
 
 @wp.kernel(enable_backward=False)
 def packed_gvs_sample_vjp_kernel(
-    world_data: wp.array(dtype=GVSSampleVJPData), work_items: wp.array(dtype=wp.vec3i)
+    world_data: wp.array[GVSSampleVJPData], work_items: wp.array[wp.vec3i]
 ):
     """Seed node cotangents and partial-cell generalized forces using packed world data.
 
@@ -1202,7 +1202,7 @@ class GVSNodeVJPData:
 
 @wp.kernel(enable_backward=False)
 def packed_gvs_node_vjp_kernel(
-    world_data: wp.array(dtype=GVSNodeVJPData), work_items: wp.array(dtype=wp.vec3i)
+    world_data: wp.array[GVSNodeVJPData], work_items: wp.array[wp.vec3i]
 ):
     """Reverse the serial node recurrence on Warp CPU using packed world data.
 
@@ -1442,8 +1442,8 @@ class GVSCooperativeNodeVJPData:
 
 @wp.kernel(enable_backward=False)
 def packed_gvs_cooperative_node_vjp_kernel(
-    world_data: wp.array(dtype=GVSCooperativeNodeVJPData),
-    work_items: wp.array(dtype=wp.vec3i),
+    world_data: wp.array[GVSCooperativeNodeVJPData],
+    work_items: wp.array[wp.vec3i],
 ):
     """Reverse node cotangents cooperatively on CUDA using packed world data.
 
@@ -1798,8 +1798,8 @@ __all__ += [
 
 @wp.kernel(enable_backward=False)
 def packed_gvs_pose_twist_samples_warp_kernel(
-    world_data: wp.array(dtype=GVSPoseTwistSamplesData),
-    work_items: wp.array(dtype=wp.vec3i),
+    world_data: wp.array[GVSPoseTwistSamplesData],
+    work_items: wp.array[wp.vec3i],
 ):
     """Evaluate poses and inertial twists ``J(q, s) @ qd`` at samples using packed world data.
 
@@ -1854,7 +1854,7 @@ def packed_gvs_pose_twist_samples_warp_kernel(
 
 @wp.kernel(enable_backward=False)
 def packed_gvs_sample_vjp_warp_kernel(
-    world_data: wp.array(dtype=GVSSampleVJPData), work_items: wp.array(dtype=wp.vec3i)
+    world_data: wp.array[GVSSampleVJPData], work_items: wp.array[wp.vec3i]
 ):
     """Seed node cotangents and partial-cell generalized forces using packed world data.
 

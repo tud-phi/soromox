@@ -133,8 +133,8 @@ class GVSThreadlikeStrainData:
 
 @wp.kernel(enable_backward=False)
 def packed_prepare_gvs_threadlike_strain_kernel(
-    world_data: wp.array(dtype=GVSThreadlikeStrainData),
-    work_items: wp.array(dtype=wp.vec3i),
+    world_data: wp.array[GVSThreadlikeStrainData],
+    work_items: wp.array[wp.vec3i],
 ):
     """Prepare each environment-segment-quadrature strain once using packed world data.
 
@@ -439,8 +439,8 @@ class GVSThreadlikeMatrixData:
 
 @wp.kernel(enable_backward=False)
 def packed_gvs_threadlike_matrix_kernel(
-    world_data: wp.array(dtype=GVSThreadlikeMatrixData),
-    work_items: wp.array(dtype=wp.vec3i),
+    world_data: wp.array[GVSThreadlikeMatrixData],
+    work_items: wp.array[wp.vec3i],
 ):
     """Integrate one complete environment-DOF-path matrix entry using packed world data.
 
@@ -672,8 +672,8 @@ class GVSThreadlikeForceData:
 
 @wp.kernel(enable_backward=False)
 def packed_gvs_threadlike_force_kernel(
-    world_data: wp.array(dtype=GVSThreadlikeForceData),
-    work_items: wp.array(dtype=wp.vec3i),
+    world_data: wp.array[GVSThreadlikeForceData],
+    work_items: wp.array[wp.vec3i],
 ):
     """Reduce all paths for one active coordinate on Warp CPU using packed world data.
 
@@ -936,8 +936,8 @@ class GVSThreadlikeForceBlockData:
 
 @wp.kernel(enable_backward=False)
 def packed_gvs_threadlike_force_block_kernel(
-    world_data: wp.array(dtype=GVSThreadlikeForceBlockData),
-    work_items: wp.array(dtype=wp.vec3i),
+    world_data: wp.array[GVSThreadlikeForceBlockData],
+    work_items: wp.array[wp.vec3i],
 ):
     """Reduce paths with one CUDA block per environment and segment using packed world data.
 

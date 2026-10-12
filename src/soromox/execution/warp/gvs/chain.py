@@ -757,7 +757,7 @@ class GVSChainData:
 
 @wp.kernel(enable_backward=False)
 def packed_persistent_chain_kernel(
-    world_data: wp.array(dtype=GVSChainData), work_items: wp.array(dtype=wp.vec3i)
+    world_data: wp.array[GVSChainData], work_items: wp.array[wp.vec3i]
 ):
     """Traverse one full serial GVS chain per cooperative block using packed world data.
 

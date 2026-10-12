@@ -497,7 +497,7 @@ class GVSCellTermsData:
 
 @wp.kernel(enable_backward=False)
 def packed_cell_terms_kernel(
-    world_data: wp.array(dtype=GVSCellTermsData), work_items: wp.array(dtype=wp.vec3i)
+    world_data: wp.array[GVSCellTermsData], work_items: wp.array[wp.vec3i]
 ):
     """Compute general cell-local Lie data for one batched cell work item using packed world data.
 
@@ -544,7 +544,7 @@ def packed_cell_terms_kernel(
 
 @wp.kernel(enable_backward=False)
 def packed_cooperative_cell_terms_kernel(
-    world_data: wp.array(dtype=GVSCellTermsData), work_items: wp.array(dtype=wp.vec3i)
+    world_data: wp.array[GVSCellTermsData], work_items: wp.array[wp.vec3i]
 ):
     """Compute general cell-local Lie data for one batched cell work item using packed world data.
 

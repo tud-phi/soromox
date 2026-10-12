@@ -96,9 +96,9 @@ class GVSMixedChainData:
 
 @wp.kernel(enable_backward=False)
 def packed_mixed_chain_kernel(
-    world_data: wp.array(dtype=GVSMixedChainData),
-    work_items: wp.array(dtype=wp.vec3i),
-    is_floating: wp.array(dtype=wp.int32),
+    world_data: wp.array[GVSMixedChainData],
+    work_items: wp.array[wp.vec3i],
+    is_floating: wp.array[wp.int32],
 ):
     """Evaluate mixed fixed-base and floating-base GVS chain dynamics using packed world data.
 

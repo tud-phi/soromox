@@ -120,8 +120,8 @@ class SpatialPoseCompositionData:
 
 @wp.kernel(enable_backward=False)
 def packed_compose_spatial_poses_kernel(
-    world_data: wp.array(dtype=SpatialPoseCompositionData),
-    work_items: wp.array(dtype=wp.vec3i),
+    world_data: wp.array[SpatialPoseCompositionData],
+    work_items: wp.array[wp.vec3i],
 ):
     """Compose batched spatial base poses and base-relative transforms using packed world data.
 
@@ -289,8 +289,8 @@ class SpatialJacobianCompositionData:
 
 @wp.kernel(enable_backward=False)
 def packed_compose_spatial_jacobians_kernel(
-    world_data: wp.array(dtype=SpatialJacobianCompositionData),
-    work_items: wp.array(dtype=wp.vec3i),
+    world_data: wp.array[SpatialJacobianCompositionData],
+    work_items: wp.array[wp.vec3i],
 ):
     """Compose spatial floating-base Jacobians on one thread per sample using packed world data.
 
@@ -450,8 +450,8 @@ def homogeneous_compose_spatial_jacobians_tiled_kernel(
 
 @wp.kernel(enable_backward=False)
 def packed_compose_spatial_jacobians_tiled_kernel(
-    world_data: wp.array(dtype=SpatialJacobianCompositionData),
-    work_items: wp.array(dtype=wp.vec3i),
+    world_data: wp.array[SpatialJacobianCompositionData],
+    work_items: wp.array[wp.vec3i],
 ):
     """Compose one floating spatial Jacobian cooperatively per sample using packed world data.
 
@@ -656,8 +656,8 @@ class SpatialPoseTwistCompositionData:
 
 @wp.kernel(enable_backward=False)
 def packed_compose_spatial_poses_and_twists_kernel(
-    world_data: wp.array(dtype=SpatialPoseTwistCompositionData),
-    work_items: wp.array(dtype=wp.vec3i),
+    world_data: wp.array[SpatialPoseTwistCompositionData],
+    work_items: wp.array[wp.vec3i],
 ):
     """Compose floating poses and one augmented Jacobian direction using packed world data.
 
@@ -827,8 +827,8 @@ class SpatialWrenchProjectionData:
 
 @wp.kernel(enable_backward=False)
 def packed_compose_spatial_wrench_vjp_kernel(
-    world_data: wp.array(dtype=SpatialWrenchProjectionData),
-    work_items: wp.array(dtype=wp.vec3i),
+    world_data: wp.array[SpatialWrenchProjectionData],
+    work_items: wp.array[wp.vec3i],
 ):
     """Pull absolute sample wrenches through floating-base composition using packed world data.
 
@@ -955,8 +955,8 @@ class FloatingBaseForceData:
 
 @wp.kernel(enable_backward=False)
 def packed_assemble_floating_vjp_kernel(
-    world_data: wp.array(dtype=FloatingBaseForceData),
-    work_items: wp.array(dtype=wp.vec3i),
+    world_data: wp.array[FloatingBaseForceData],
+    work_items: wp.array[wp.vec3i],
 ):
     """Assemble base and internal blocks of an augmented floating VJP using packed world data.
 

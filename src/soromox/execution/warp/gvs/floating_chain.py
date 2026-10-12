@@ -826,8 +826,8 @@ class GVSFloatingChainData:
 
 @wp.kernel(enable_backward=False)
 def packed_floating_persistent_chain_kernel(
-    world_data: wp.array(dtype=GVSFloatingChainData),
-    work_items: wp.array(dtype=wp.vec3i),
+    world_data: wp.array[GVSFloatingChainData],
+    work_items: wp.array[wp.vec3i],
 ):
     """Traverse one augmented floating GVS chain per cooperative block using packed world data.
 

@@ -199,8 +199,8 @@ class CholeskySolveData:
 
 @wp.kernel(enable_backward=False)
 def packed_cholesky_kernel(
-    world_data: wp.array(dtype=CholeskySolveData),
-    work_items: wp.array(dtype=wp.vec3i),
+    world_data: wp.array[CholeskySolveData],
+    work_items: wp.array[wp.vec3i],
     diagonal_regularization: wp.float64,
 ):
     """Solve FP64 symmetric positive-definite systems with cooperative Cholesky using packed world data.

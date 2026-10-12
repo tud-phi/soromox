@@ -304,7 +304,7 @@ def homogeneous_cooperative_joint_terms_kernel(
 
 @wp.kernel(enable_backward=False)
 def packed_cooperative_joint_terms_kernel(
-    world_data: wp.array(dtype=JointTermsData), work_items: wp.array(dtype=wp.vec3i)
+    world_data: wp.array[JointTermsData], work_items: wp.array[wp.vec3i]
 ):
     """Evaluate one general joint cooperatively per warp-sized block using packed world data.
 

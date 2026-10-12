@@ -398,7 +398,7 @@ class GVSNodePosesData:
 
 @wp.kernel(enable_backward=False)
 def packed_gvs_node_poses_kernel(
-    world_data: wp.array(dtype=GVSNodePosesData), work_items: wp.array(dtype=wp.vec3i)
+    world_data: wp.array[GVSNodePosesData], work_items: wp.array[wp.vec3i]
 ):
     """Build GVS cell-boundary poses without Jacobian propagation using packed world data.
 
@@ -629,7 +629,7 @@ class GVSNodeStatesData:
 
 @wp.kernel(enable_backward=False)
 def packed_gvs_node_states_kernel(
-    world_data: wp.array(dtype=GVSNodeStatesData), work_items: wp.array(dtype=wp.vec3i)
+    world_data: wp.array[GVSNodeStatesData], work_items: wp.array[wp.vec3i]
 ):
     """Build reusable GVS cell-boundary pose and body-Jacobian states using packed world data.
 
@@ -851,8 +851,8 @@ def homogeneous_gvs_cooperative_node_states_kernel(
 
 @wp.kernel(enable_backward=False)
 def packed_gvs_cooperative_node_states_kernel(
-    world_data: wp.array(dtype=GVSNodeStatesData),
-    work_items: wp.array(dtype=wp.vec3i),
+    world_data: wp.array[GVSNodeStatesData],
+    work_items: wp.array[wp.vec3i],
 ):
     """Build GVS boundary states cooperatively on CUDA using packed world data.
 
@@ -1170,7 +1170,7 @@ class GVSPoseSamplesData:
 
 @wp.kernel(enable_backward=False)
 def packed_gvs_pose_samples_kernel(
-    world_data: wp.array(dtype=GVSPoseSamplesData), work_items: wp.array(dtype=wp.vec3i)
+    world_data: wp.array[GVSPoseSamplesData], work_items: wp.array[wp.vec3i]
 ):
     """Evaluate GVS poses without Jacobian recurrence or output work using packed world data.
 
@@ -1652,8 +1652,8 @@ class GVSJacobianSamplesData:
 
 @wp.kernel(enable_backward=False)
 def packed_gvs_jacobian_samples_kernel(
-    world_data: wp.array(dtype=GVSJacobianSamplesData),
-    work_items: wp.array(dtype=wp.vec3i),
+    world_data: wp.array[GVSJacobianSamplesData],
+    work_items: wp.array[wp.vec3i],
 ):
     """Evaluate GVS inertial Jacobians without pose output writes using packed world data.
 
@@ -2024,7 +2024,7 @@ class GVSSamplesData:
 
 @wp.kernel(enable_backward=False)
 def packed_gvs_samples_kernel(
-    world_data: wp.array(dtype=GVSSamplesData), work_items: wp.array(dtype=wp.vec3i)
+    world_data: wp.array[GVSSamplesData], work_items: wp.array[wp.vec3i]
 ):
     """Evaluate fused GVS poses and inertial Jacobians at runtime samples using packed world data.
 
@@ -2522,7 +2522,7 @@ __all__ += [
 
 @wp.kernel(enable_backward=False)
 def packed_gvs_pose_samples_warp_kernel(
-    world_data: wp.array(dtype=GVSPoseSamplesData), work_items: wp.array(dtype=wp.vec3i)
+    world_data: wp.array[GVSPoseSamplesData], work_items: wp.array[wp.vec3i]
 ):
     """Evaluate GVS poses without Jacobian recurrence or output work using packed world data.
 
@@ -2574,7 +2574,7 @@ def packed_gvs_pose_samples_warp_kernel(
 
 @wp.kernel(enable_backward=False)
 def packed_gvs_samples_warp_kernel(
-    world_data: wp.array(dtype=GVSSamplesData), work_items: wp.array(dtype=wp.vec3i)
+    world_data: wp.array[GVSSamplesData], work_items: wp.array[wp.vec3i]
 ):
     """Evaluate fused GVS poses and inertial Jacobians at runtime samples using packed world data.
 
