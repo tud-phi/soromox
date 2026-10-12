@@ -32,7 +32,9 @@ and include benchmark baseline and measurement context for performance claims.
 ### Breaking changes
 
 - Renamed direct GVS Warp kernels and launchers to `homogeneous_*_kernel`
-  and `launch_homogeneous_*`; integration callers must use the explicit names.
+  and `launch_homogeneous_*`; homogeneous kernels take the shared `*Data`
+  structs, while host launchers retain array arguments. Integration callers
+  must use the explicit names and updated kernel signatures.
   See the [batch layout contracts](../api/execution/warp/gvs.md#batch-layouts-and-naming)
   and [PR #227](https://github.com/tud-phi/soromox/pull/227).
 

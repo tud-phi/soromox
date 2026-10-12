@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 import warp as wp
 
+from soromox.execution.warp.common.linear_solve import CholeskySolveData
 from soromox.execution.warp.gvs.cell import (
     GVSCellTermsData,
     homogeneous_cell_terms_kernel,
@@ -78,11 +79,11 @@ def test_packed_cells() -> None:
             )
             for a in arrays
         ]
-        wp.launch(homogeneous_cell_terms_kernel, dim=nc, inputs=arrays, device=device())
-        references.append([a.numpy() for a in arrays[11:]])
         d = GVSCellTermsData()
         for name, a in zip(fields, arrays, strict=True):
             setattr(d, name, a)
+        wp.launch(homogeneous_cell_terms_kernel, dim=nc, inputs=[d], device=device())
+        references.append([a.numpy() for a in arrays[11:]])
         descriptors.append(d)
         work.extend((w, c, 0) for c in range(nc))
     ds = wp.array(descriptors, dtype=GVSCellTermsData, device=device())
@@ -130,11 +131,20 @@ def test_cooperative_cholesky(n: int, column_factor: bool) -> None:
         factor = factor.transpose((0, 2, 1))
     x, workspace = wp.zeros_like(rhs), wp.zeros_like(rhs)
     status = wp.zeros(3, dtype=wp.int32, device=device())
+    data = CholeskySolveData()
+    data.matrix = matrix
+    data.rhs = rhs
+    data.factor = factor
+    data.workspace = workspace
+    data.solution = x
+    data.status = status
     wp.launch_tiled(
         homogeneous_cooperative_cholesky_kernel,
         dim=3,
-        inputs=[matrix, rhs, wp.float64(1e-12)],
-        outputs=[factor, workspace, x, status],
+        inputs=[
+            data,
+            wp.float64(1e-12),
+        ],
         block_dim=32,
         device=device(),
     )

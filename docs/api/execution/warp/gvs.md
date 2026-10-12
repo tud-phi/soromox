@@ -10,7 +10,8 @@
 
 | Entry points | Input layout |
 | --- | --- |
-| `homogeneous_*_kernel`, `launch_homogeneous_*` | A rectangular batch with common structural dimensions and coordinate layout. |
+| `homogeneous_*_kernel` | One `*Data` struct passed directly, referencing a rectangular batch with common structural dimensions and coordinate layout. |
+| `launch_homogeneous_*` | Array arguments at the JAX boundary; the launcher assembles the shared struct and launches the homogeneous kernel. |
 | `packed_*_kernel` | Per-world `*Data` structs and an INT32 work map `(world_index, local_index, 0)`; each world may have its own structure and parameters. |
 | `*_at` | Shared numerical functions with explicit indices into the supplied array views. |
 
@@ -18,7 +19,19 @@ Values can vary by world when their arrays carry a world axis. Other inputs
 are shared: for example, homogeneous cell kernels share bases and geometry,
 and homogeneous chain kernels share weighted masses and gravity. Each symbol
 documents its sharing rules, indexing and launch dimensions. Callers retain
-all referenced FP64 buffers. Packed descriptors may share matching model arrays.
+all referenced arrays. Packed descriptors may share matching model arrays.
+
+The same struct type serves both kernel families. A homogeneous kernel receives
+one struct whose batched fields span all `E` worlds. A packed kernel receives an
+array of these structs, each containing one world's views (`E = 1`). Homogeneous
+kernels compute indices directly from the launch grid; packed kernels select a
+descriptor through the work map.
+
+Native callers can bind a struct once and reuse it while its array views remain
+valid. Assign fields on the host before launching, and keep the referenced arrays
+alive throughout CUDA graph use. Updating array contents preserves the binding;
+replacing an allocation requires rebinding the field and recapturing graphs that
+use the old allocation.
 
 ## Linear-threadlike actuation
 

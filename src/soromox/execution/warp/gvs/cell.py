@@ -288,175 +288,15 @@ def cell_terms_at(
             row += 1
 
 
-@wp.kernel(enable_backward=False)
-def homogeneous_cell_terms_kernel(
-    q_link: wp.array2d[wp.float64],
-    qd_link: wp.array2d[wp.float64],
-    basis_z1: wp.array2d[wp.float64],
-    basis_z2: wp.array2d[wp.float64],
-    basis_rows: wp.array2d[wp.int32],
-    reference_z1: wp.array2d[wp.float64],
-    reference_z2: wp.array2d[wp.float64],
-    segment_lengths: wp.array[wp.float64],
-    cell_widths: wp.array[wp.float64],
-    num_cells: wp.array[wp.int32],
-    order_zero: wp.array[wp.int32],
-    adjoint: wp.array2d[wp.float64],
-    tangent_local: wp.array2d[wp.float64],
-    link_velocity: wp.array2d[wp.float64],
-    step_velocity: wp.array2d[wp.float64],
-    tangent_velocity_dot: wp.array2d[wp.float64],
-):
-    """Compute Lie operators for a homogeneous batch of cells.
-
-    All worlds use the same structural dimensions and coordinate layout. Dimensions:
-    E = worlds, S = segments, C = cells per segment.
-
-    Shared across worlds: ``basis_z1``, ``basis_z2``, ``basis_rows``,
-    ``reference_z1``, ``reference_z2``, ``segment_lengths``, ``cell_widths``,
-    ``num_cells``, ``order_zero``.
-
-    State, computed operator, workspace and output arrays carry the world axis,
-    either explicitly or flattened as documented in Args. Their values may differ by
-    world.
-
-    Launch with ``dim=E*S*C``: one thread per flattened world/segment/cell index.
-
-    Args:
-        q_link: Batched padded segment-local coordinates.
-        qd_link: Batched padded segment-local velocities.
-        basis_z1: Sparse basis values at the first Magnus node.
-        basis_z2: Sparse basis values at the second Magnus node.
-        basis_rows: Spatial row occupied by each sparse basis column.
-        reference_z1: Reference strains at first Magnus nodes.
-        reference_z2: Reference strains at second Magnus nodes.
-        segment_lengths: Physical segment lengths.
-        cell_widths: Normalized integration-cell widths.
-        num_cells: One-entry array containing cells per segment.
-        order_zero: One-entry flag selecting the constant-strain shortcut.
-        adjoint: Caller-owned flattened cell-adjoint output.
-        tangent_local: Caller-owned flattened local-tangent output.
-        link_velocity: Caller-owned flattened link-velocity output.
-        step_velocity: Caller-owned flattened step-velocity output.
-        tangent_velocity_dot: Caller-owned tangent-derivative action output.
-
-    Returns:
-        None. All results are written to the caller-owned output arrays.
-    """
-    work_item = wp.tid()
-    cell_terms_at(
-        work_item,
-        0,
-        1,
-        q_link,
-        qd_link,
-        basis_z1,
-        basis_z2,
-        basis_rows,
-        reference_z1,
-        reference_z2,
-        segment_lengths,
-        cell_widths,
-        num_cells,
-        order_zero,
-        adjoint,
-        tangent_local,
-        link_velocity,
-        step_velocity,
-        tangent_velocity_dot,
-    )
-
-
-@wp.kernel(enable_backward=False)
-def homogeneous_cooperative_cell_terms_kernel(
-    q_link: wp.array2d[wp.float64],
-    qd_link: wp.array2d[wp.float64],
-    basis_z1: wp.array2d[wp.float64],
-    basis_z2: wp.array2d[wp.float64],
-    basis_rows: wp.array2d[wp.int32],
-    reference_z1: wp.array2d[wp.float64],
-    reference_z2: wp.array2d[wp.float64],
-    segment_lengths: wp.array[wp.float64],
-    cell_widths: wp.array[wp.float64],
-    num_cells: wp.array[wp.int32],
-    order_zero: wp.array[wp.int32],
-    adjoint: wp.array2d[wp.float64],
-    tangent_local: wp.array2d[wp.float64],
-    link_velocity: wp.array2d[wp.float64],
-    step_velocity: wp.array2d[wp.float64],
-    tangent_velocity_dot: wp.array2d[wp.float64],
-):
-    """Compute homogeneous cell operators with two CUDA threads per cell.
-
-    All worlds use the same structural dimensions and coordinate layout. Dimensions:
-    E = worlds, S = segments, C = cells per segment.
-
-    Shared across worlds: ``basis_z1``, ``basis_z2``, ``basis_rows``,
-    ``reference_z1``, ``reference_z2``, ``segment_lengths``, ``cell_widths``,
-    ``num_cells``, ``order_zero``.
-
-    State, computed operator, workspace and output arrays carry the world axis,
-    either explicitly or flattened as documented in Args. Their values may differ by
-    world.
-
-    Launch with ``dim=2*E*S*C`` and ``block_dim=128``. Adjacent thread pairs handle
-    one flattened world/segment/cell index.
-
-    Launch a one-dimensional grid of twice the number of cells. Threads
-    share independent adjoint and tangent columns; no block barrier is required.
-
-    Args:
-        q_link: Batched padded segment-local coordinates.
-        qd_link: Batched padded segment-local velocities.
-        basis_z1: Sparse basis values at the first Magnus node.
-        basis_z2: Sparse basis values at the second Magnus node.
-        basis_rows: Spatial row occupied by each sparse basis column.
-        reference_z1: Reference strains at first Magnus nodes.
-        reference_z2: Reference strains at second Magnus nodes.
-        segment_lengths: Physical segment lengths.
-        cell_widths: Normalized integration-cell widths.
-        num_cells: One-entry array containing cells per segment.
-        order_zero: One-entry flag selecting the constant-strain shortcut.
-        adjoint: Caller-owned flattened cell-adjoint output.
-        tangent_local: Caller-owned flattened local-tangent output.
-        link_velocity: Caller-owned flattened link-velocity output.
-        step_velocity: Caller-owned flattened step-velocity output.
-        tangent_velocity_dot: Caller-owned tangent-derivative action output.
-
-    Returns:
-        None. All results are written to the caller-owned output arrays.
-    """
-    item = wp.tid()
-    cell_terms_at(
-        item // 2,
-        item % 2,
-        2,
-        q_link,
-        qd_link,
-        basis_z1,
-        basis_z2,
-        basis_rows,
-        reference_z1,
-        reference_z2,
-        segment_lengths,
-        cell_widths,
-        num_cells,
-        order_zero,
-        adjoint,
-        tangent_local,
-        link_velocity,
-        step_velocity,
-        tangent_velocity_dot,
-    )
-
-
 @wp.struct
 class GVSCellTermsData:
-    """GVS link state, strain bases and cell Lie-operator buffers for one world.
+    """GVS link state, strain bases and cell Lie-operator buffers for a compatible batch.
 
     Array fields are non-owning views; the caller must retain their allocations
-    for every launch and captured graph. Batched fields use one environment
-    (``E = 1``); structural fields use this world's own dimensions.
+    for every launch and captured graph. Homogeneous kernels receive this struct
+    directly with batched fields spanning E worlds and shared structural fields.
+    Packed kernels select it from a device array with E = 1 per descriptor; each
+    descriptor may have its own structural dimensions and parameter values.
 
     Attributes:
         q_link: Batched padded segment-local coordinates.
@@ -493,6 +333,106 @@ class GVSCellTermsData:
     link_velocity: wp.array2d[wp.float64]
     step_velocity: wp.array2d[wp.float64]
     tangent_velocity_dot: wp.array2d[wp.float64]
+
+
+@wp.kernel(enable_backward=False)
+def homogeneous_cell_terms_kernel(data: GVSCellTermsData):
+    """Compute Lie operators for a homogeneous batch of cells.
+
+    All worlds use the same structural dimensions and coordinate layout. Dimensions:
+    E = worlds, S = segments, C = cells per segment.
+
+    Shared across worlds: ``basis_z1``, ``basis_z2``, ``basis_rows``,
+    ``reference_z1``, ``reference_z2``, ``segment_lengths``, ``cell_widths``,
+    ``num_cells``, ``order_zero``.
+
+    State, computed operator, workspace and output arrays carry the world axis,
+    either explicitly or flattened as documented by the struct. Values may differ by
+    world.
+
+    Launch with ``dim=E*S*C``: one thread per flattened world/segment/cell index.
+
+    Args:
+        data: Shared GVSCellTermsData layout referencing the complete homogeneous
+            batch (E worlds). See the struct for field shapes and ownership.
+
+    Returns:
+        None. All results are written to the caller-owned output arrays.
+    """
+    work_item = wp.tid()
+    cell_terms_at(
+        work_item,
+        0,
+        1,
+        data.q_link,
+        data.qd_link,
+        data.basis_z1,
+        data.basis_z2,
+        data.basis_rows,
+        data.reference_z1,
+        data.reference_z2,
+        data.segment_lengths,
+        data.cell_widths,
+        data.num_cells,
+        data.order_zero,
+        data.adjoint,
+        data.tangent_local,
+        data.link_velocity,
+        data.step_velocity,
+        data.tangent_velocity_dot,
+    )
+
+
+@wp.kernel(enable_backward=False)
+def homogeneous_cooperative_cell_terms_kernel(data: GVSCellTermsData):
+    """Compute homogeneous cell operators with two CUDA threads per cell.
+
+    All worlds use the same structural dimensions and coordinate layout. Dimensions:
+    E = worlds, S = segments, C = cells per segment.
+
+    Shared across worlds: ``basis_z1``, ``basis_z2``, ``basis_rows``,
+    ``reference_z1``, ``reference_z2``, ``segment_lengths``, ``cell_widths``,
+    ``num_cells``, ``order_zero``.
+
+    State, computed operator, workspace and output arrays carry the world axis,
+    either explicitly or flattened as documented by the struct. Values may differ by
+    world.
+
+    Launch with ``dim=2*E*S*C`` and ``block_dim=128``. Adjacent thread pairs handle
+    one flattened world/segment/cell index.
+
+    Launch a one-dimensional grid of twice the number of cells. Threads
+    share independent adjoint and tangent columns; no block barrier is required.
+
+    Args:
+        data: Shared GVSCellTermsData layout referencing the complete homogeneous
+            batch (E worlds). See the struct for field shapes and ownership.
+
+    Returns:
+        None. All results are written to the caller-owned output arrays.
+    """
+    item = wp.tid()
+    cell_terms_at(
+        item // 2,
+        item % 2,
+        2,
+        data.q_link,
+        data.qd_link,
+        data.basis_z1,
+        data.basis_z2,
+        data.basis_rows,
+        data.reference_z1,
+        data.reference_z2,
+        data.segment_lengths,
+        data.cell_widths,
+        data.num_cells,
+        data.order_zero,
+        data.adjoint,
+        data.tangent_local,
+        data.link_velocity,
+        data.step_velocity,
+        data.tangent_velocity_dot,
+    )
 
 
 @wp.kernel(enable_backward=False)
@@ -648,31 +588,29 @@ def launch_homogeneous_cell_terms(
     """
     work_items = q_link.shape[0] * reference_z1.shape[0] // segment_lengths.shape[0]
     cooperative = q_link.device.is_cuda
+    data = GVSCellTermsData()
+    data.q_link = q_link
+    data.qd_link = qd_link
+    data.basis_z1 = basis_z1
+    data.basis_z2 = basis_z2
+    data.basis_rows = basis_rows
+    data.reference_z1 = reference_z1
+    data.reference_z2 = reference_z2
+    data.segment_lengths = segment_lengths
+    data.cell_widths = cell_widths
+    data.num_cells = num_cells
+    data.order_zero = order_zero
+    data.adjoint = adjoint
+    data.tangent_local = tangent_local
+    data.link_velocity = link_velocity
+    data.step_velocity = step_velocity
+    data.tangent_velocity_dot = tangent_velocity_dot
     wp.launch(
         homogeneous_cooperative_cell_terms_kernel
         if cooperative
         else homogeneous_cell_terms_kernel,
         dim=work_items * 2 if cooperative else work_items,
-        inputs=[
-            q_link,
-            qd_link,
-            basis_z1,
-            basis_z2,
-            basis_rows,
-            reference_z1,
-            reference_z2,
-            segment_lengths,
-            cell_widths,
-            num_cells,
-            order_zero,
-        ],
-        outputs=[
-            adjoint,
-            tangent_local,
-            link_velocity,
-            step_velocity,
-            tangent_velocity_dot,
-        ],
+        inputs=[data],
         block_dim=128,
     )
 

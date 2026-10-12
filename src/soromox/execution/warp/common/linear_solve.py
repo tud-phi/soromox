@@ -115,68 +115,15 @@ def cholesky_solve_at(
             row -= 1
 
 
-@wp.kernel(enable_backward=False)
-def homogeneous_cooperative_cholesky_kernel(
-    matrix: wp.array3d[wp.float64],
-    rhs: wp.array2d[wp.float64],
-    diagonal_regularization: wp.float64,
-    factor: wp.array3d[wp.float64],
-    workspace: wp.array2d[wp.float64],
-    solution: wp.array2d[wp.float64],
-    status: wp.array[wp.int32],
-):
-    """Solve a homogeneous batch of equally sized linear systems.
-
-    All worlds use the same structural dimensions and coordinate layout. Dimensions:
-    E = worlds, D = coordinates.
-
-    Shared across worlds: ``diagonal_regularization``.
-
-    Matrix and right-hand-side values may differ for every world; every system has
-    dimension D. Workspaces and outputs retain the world axis.
-
-    Launch with ``wp.launch_tiled(..., dim=E, block_dim=32)``. Exactly 32 threads
-    cooperate on each linear system.
-
-    Use 32 threads per system. Inputs, outputs and workspaces must not alias.
-    Launch with ``wp.launch_tiled(..., dim=E, block_dim=32)`` on CUDA.
-
-    Args:
-        matrix: Symmetric input matrices with shape ``(E, D, D)``; reads the lower
-            triangle.
-        rhs: Right-hand sides with shape ``(E, D)``.
-        diagonal_regularization: Strictly positive floor applied to Cholesky pivots
-            before taking their square root.
-        factor: Caller-owned Cholesky-factor workspace with shape ``(E, D, D)``.
-        workspace: Caller-owned forward-substitution workspace with shape ``(E, D)``.
-        solution: Caller-owned solution output with shape ``(E, D)``.
-        status: INT32 output of shape ``(E,)``; one if a pivot was floored, otherwise
-            zero.
-
-    Returns:
-        None. Writes ``factor``, ``workspace``, ``solution`` and ``status`` in place.
-    """
-    environment, lane = wp.tid()
-    cholesky_solve_at(
-        environment,
-        lane,
-        matrix,
-        rhs,
-        diagonal_regularization,
-        factor,
-        workspace,
-        solution,
-        status,
-    )
-
-
 @wp.struct
 class CholeskySolveData:
-    """FP64 linear-system inputs, solve workspaces and outputs for one world.
+    """FP64 linear-system inputs, solve workspaces and outputs for a compatible batch.
 
     Array fields are non-owning views; the caller must retain their allocations
-    for every launch and captured graph. Batched fields use one environment
-    (``E = 1``); structural fields use this world's own dimensions.
+    for every launch and captured graph. Homogeneous kernels receive this struct
+    directly with batched fields spanning E worlds and shared structural fields.
+    Packed kernels select it from a device array with E = 1 per descriptor; each
+    descriptor may have its own structural dimensions and parameter values.
 
     Attributes:
         matrix: Symmetric input matrices with shape ``(E, D, D)``; reads the lower
@@ -195,6 +142,48 @@ class CholeskySolveData:
     workspace: wp.array2d[wp.float64]
     solution: wp.array2d[wp.float64]
     status: wp.array[wp.int32]
+
+
+@wp.kernel(enable_backward=False)
+def homogeneous_cooperative_cholesky_kernel(
+    data: CholeskySolveData, diagonal_regularization: wp.float64
+):
+    """Solve a homogeneous batch of equally sized linear systems.
+
+    All worlds use the same structural dimensions and coordinate layout. Dimensions:
+    E = worlds, D = coordinates.
+
+    Shared across worlds: ``diagonal_regularization``.
+
+    Matrix and right-hand-side values may differ for every world; every system has
+    dimension D. Workspaces and outputs retain the world axis.
+
+    Launch with ``wp.launch_tiled(..., dim=E, block_dim=32)``. Exactly 32 threads
+    cooperate on each linear system.
+
+    Use 32 threads per system. Inputs, outputs and workspaces must not alias.
+    Launch with ``wp.launch_tiled(..., dim=E, block_dim=32)`` on CUDA.
+
+    Args:
+        data: Shared CholeskySolveData layout referencing the complete homogeneous
+            batch (E worlds). See the struct for field shapes and ownership.
+        diagonal_regularization: Strictly positive floor for Cholesky pivots.
+
+    Returns:
+        None. Writes ``factor``, ``workspace``, ``solution`` and ``status`` in place.
+    """
+    environment, lane = wp.tid()
+    cholesky_solve_at(
+        environment,
+        lane,
+        data.matrix,
+        data.rhs,
+        diagonal_regularization,
+        data.factor,
+        data.workspace,
+        data.solution,
+        data.status,
+    )
 
 
 @wp.kernel(enable_backward=False)

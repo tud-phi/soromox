@@ -19,6 +19,24 @@ from importlib import import_module
 from typing import Any
 
 __all__ = [
+    "GVSChainData",
+    "GVSCooperativeNodeVJPData",
+    "GVSFloatingChainData",
+    "GVSJacobianSamplesData",
+    "GVSNodePoseTwistData",
+    "GVSNodePosesData",
+    "GVSNodeStatesData",
+    "GVSNodeVJPData",
+    "GVSPoseSamplesData",
+    "GVSPoseTwistSamplesData",
+    "GVSSampleVJPData",
+    "GVSSamplesData",
+    "GVSThreadlikeForceBlockData",
+    "GVSThreadlikeForceData",
+    "GVSThreadlikeMatrixData",
+    "GVSThreadlikeStrainData",
+    "JointTermsData",
+
     "GVSMixedChainData",
     "packed_mixed_chain_kernel",
     "GVSCellTermsData",
@@ -71,6 +89,24 @@ __all__ = [
 ]
 
 _PUBLIC_MODULES = {
+    "GVSChainData": "chain",
+    "GVSCooperativeNodeVJPData": "directional_kinematics",
+    "GVSFloatingChainData": "floating_chain",
+    "GVSJacobianSamplesData": "kinematics",
+    "GVSNodePoseTwistData": "directional_kinematics",
+    "GVSNodePosesData": "kinematics",
+    "GVSNodeStatesData": "kinematics",
+    "GVSNodeVJPData": "directional_kinematics",
+    "GVSPoseSamplesData": "kinematics",
+    "GVSPoseTwistSamplesData": "directional_kinematics",
+    "GVSSampleVJPData": "directional_kinematics",
+    "GVSSamplesData": "kinematics",
+    "GVSThreadlikeForceBlockData": "actuation.threadlike",
+    "GVSThreadlikeForceData": "actuation.threadlike",
+    "GVSThreadlikeMatrixData": "actuation.threadlike",
+    "GVSThreadlikeStrainData": "actuation.threadlike",
+    "JointTermsData": "common.joints",
+
     "GVSMixedChainData": "packed",
     "packed_mixed_chain_kernel": "packed",
     "GVSCellTermsData": "cell",

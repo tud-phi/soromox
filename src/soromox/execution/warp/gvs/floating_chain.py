@@ -615,145 +615,15 @@ def floating_persistent_chain_at(
         segment += 1
 
 
-@wp.kernel(enable_backward=False)
-def homogeneous_floating_persistent_chain_kernel(
-    joint_adjoint: wp.array2d[wp.float64],
-    joint_adjoint_dot: wp.array2d[wp.float64],
-    joint_tangent: wp.array2d[wp.float64],
-    joint_tangent_dot_qd: wp.array2d[wp.float64],
-    joint_velocity: wp.array2d[wp.float64],
-    cell_adjoint: wp.array2d[wp.float64],
-    cell_tangent_local: wp.array2d[wp.float64],
-    cell_link_velocity: wp.array2d[wp.float64],
-    cell_step_velocity: wp.array2d[wp.float64],
-    cell_tangent_velocity_dot: wp.array2d[wp.float64],
-    global_to_local: wp.array2d[wp.int32],
-    active_dofs: wp.array[wp.int32],
-    base_pose: wp.array2d[wp.float64],
-    velocity: wp.array2d[wp.float64],
-    inertia_upper_rows: wp.array[wp.int32],
-    inertia_upper_columns: wp.array[wp.int32],
-    weighted_masses: wp.array2d[wp.float64],
-    gravity_world: wp.array[wp.float64],
-    num_cells_array: wp.array[wp.int32],
-    num_quadrature_array: wp.array[wp.int32],
-    lanes_per_block: wp.array[wp.int32],
-    jacobian_first: wp.array2d[wp.float64],
-    jacobian_dot_qd_first: wp.array2d[wp.float64],
-    velocity_first: wp.array2d[wp.float64],
-    gravity_first: wp.array2d[wp.float64],
-    jacobian_second: wp.array2d[wp.float64],
-    jacobian_dot_qd_second: wp.array2d[wp.float64],
-    velocity_second: wp.array2d[wp.float64],
-    gravity_second: wp.array2d[wp.float64],
-    inertia: wp.array3d[wp.float64],
-    coriolis_qd: wp.array2d[wp.float64],
-    gravity_force: wp.array2d[wp.float64],
-):
-    """Assemble dynamics for a homogeneous batch of floating-base chains.
-
-    All worlds use the same structural dimensions and coordinate layout. Dimensions:
-    E = worlds, B = threads per block.
-
-    Shared across worlds: ``global_to_local``, ``active_dofs``,
-    ``inertia_upper_rows``, ``inertia_upper_columns``, ``weighted_masses``,
-    ``gravity_world``, ``num_cells_array``, ``num_quadrature_array``,
-    ``lanes_per_block``.
-
-    State, computed operator, workspace and output arrays carry the world axis,
-    either explicitly or flattened as documented in Args. Their values may differ by
-    world.
-
-    Launch with ``wp.launch_tiled(..., dim=E, block_dim=B)``. Set
-    ``lanes_per_block[0] = B``; all lanes cooperate on one world.
-
-    Joint and cell Lie operators are shared with the fixed pipeline. The
-    floating entry specializes root initialization, shifted internal columns,
-    augmented causal widths, and full dynamics accumulation.
-
-    Args:
-        joint_adjoint: Flattened joint inverse adjoints.
-        joint_adjoint_dot: Flattened joint-adjoint derivatives.
-        joint_tangent: Internal joint tangents.
-        joint_tangent_dot_qd: Joint tangent-derivative actions.
-        joint_velocity: Internal joint spatial velocities.
-        cell_adjoint: Flattened cell inverse adjoints.
-        cell_tangent_local: Cell tangents in padded local coordinates.
-        cell_link_velocity: Internal link velocities per cell.
-        cell_step_velocity: Internal Magnus-step velocities per cell.
-        cell_tangent_velocity_dot: Cell tangent-derivative actions.
-        global_to_local: Internal active-to-local link-coordinate map.
-        active_dofs: Cumulative internal coordinate count by segment.
-        base_pose: Runtime scalar-last quaternion poses with shape ``(E, 7)``.
-        velocity: Total angular-first generalized velocities.
-        inertia_upper_rows: Packed augmented upper-inertia row indices.
-        inertia_upper_columns: Packed augmented upper-inertia column indices.
-        weighted_masses: Quadrature-weighted diagonal spatial inertias.
-        gravity_world: World-frame spatial gravity.
-        num_cells_array: One-entry array containing cells per segment.
-        num_quadrature_array: One-entry array containing quadrature count.
-        lanes_per_block: One-entry array containing cooperative lanes.
-        jacobian_first: First caller-owned Jacobian workspace.
-        jacobian_dot_qd_first: First derivative-action workspace.
-        velocity_first: First spatial-velocity workspace.
-        gravity_first: First local-gravity workspace.
-        jacobian_second: Second Jacobian workspace.
-        jacobian_dot_qd_second: Second derivative-action workspace.
-        velocity_second: Second spatial-velocity workspace.
-        gravity_second: Second local-gravity workspace.
-        inertia: Batched augmented inertia output.
-        coriolis_qd: Batched augmented convective-force output.
-        gravity_force: Batched augmented generalized-gravity output.
-
-    Returns:
-        None. Workspaces and outputs are updated in place.
-    """
-    environment, lane = wp.tid()
-    floating_persistent_chain_at(
-        environment,
-        lane,
-        joint_adjoint,
-        joint_adjoint_dot,
-        joint_tangent,
-        joint_tangent_dot_qd,
-        joint_velocity,
-        cell_adjoint,
-        cell_tangent_local,
-        cell_link_velocity,
-        cell_step_velocity,
-        cell_tangent_velocity_dot,
-        global_to_local,
-        active_dofs,
-        base_pose,
-        velocity,
-        inertia_upper_rows,
-        inertia_upper_columns,
-        weighted_masses,
-        gravity_world,
-        num_cells_array,
-        num_quadrature_array,
-        lanes_per_block,
-        jacobian_first,
-        jacobian_dot_qd_first,
-        velocity_first,
-        gravity_first,
-        jacobian_second,
-        jacobian_dot_qd_second,
-        velocity_second,
-        gravity_second,
-        inertia,
-        coriolis_qd,
-        gravity_force,
-    )
-
-
 @wp.struct
 class GVSFloatingChainData:
     """Floating-base GVS chain inputs, propagation workspaces and dynamics outputs.
 
     Array fields are non-owning views; the caller must retain their allocations
-    for every launch and captured graph. Batched fields use one environment
-    (``E = 1``); structural fields use this world's own dimensions.
+    for every launch and captured graph. Homogeneous kernels receive this struct
+    directly with batched fields spanning E worlds and shared structural fields.
+    Packed kernels select it from a device array with E = 1 per descriptor; each
+    descriptor may have its own structural dimensions and parameter values.
 
     Attributes:
         joint_adjoint: Flattened joint inverse adjoints.
@@ -822,6 +692,75 @@ class GVSFloatingChainData:
     inertia: wp.array3d[wp.float64]
     coriolis_qd: wp.array2d[wp.float64]
     gravity_force: wp.array2d[wp.float64]
+
+
+@wp.kernel(enable_backward=False)
+def homogeneous_floating_persistent_chain_kernel(data: GVSFloatingChainData):
+    """Assemble dynamics for a homogeneous batch of floating-base chains.
+
+    All worlds use the same structural dimensions and coordinate layout. Dimensions:
+    E = worlds, B = threads per block.
+
+    Shared across worlds: ``global_to_local``, ``active_dofs``,
+    ``inertia_upper_rows``, ``inertia_upper_columns``, ``weighted_masses``,
+    ``gravity_world``, ``num_cells_array``, ``num_quadrature_array``,
+    ``lanes_per_block``.
+
+    State, computed operator, workspace and output arrays carry the world axis,
+    either explicitly or flattened as documented by the struct. Values may differ by
+    world.
+
+    Launch with ``wp.launch_tiled(..., dim=E, block_dim=B)``. Set
+    ``lanes_per_block[0] = B``; all lanes cooperate on one world.
+
+    Joint and cell Lie operators are shared with the fixed pipeline. The
+    floating entry specializes root initialization, shifted internal columns,
+    augmented causal widths, and full dynamics accumulation.
+
+    Args:
+        data: Shared GVSFloatingChainData layout referencing the complete homogeneous
+            batch (E worlds). See the struct for field shapes and ownership.
+
+    Returns:
+        None. Workspaces and outputs are updated in place.
+    """
+    environment, lane = wp.tid()
+    floating_persistent_chain_at(
+        environment,
+        lane,
+        data.joint_adjoint,
+        data.joint_adjoint_dot,
+        data.joint_tangent,
+        data.joint_tangent_dot_qd,
+        data.joint_velocity,
+        data.cell_adjoint,
+        data.cell_tangent_local,
+        data.cell_link_velocity,
+        data.cell_step_velocity,
+        data.cell_tangent_velocity_dot,
+        data.global_to_local,
+        data.active_dofs,
+        data.base_pose,
+        data.velocity,
+        data.inertia_upper_rows,
+        data.inertia_upper_columns,
+        data.weighted_masses,
+        data.gravity_world,
+        data.num_cells_array,
+        data.num_quadrature_array,
+        data.lanes_per_block,
+        data.jacobian_first,
+        data.jacobian_dot_qd_first,
+        data.velocity_first,
+        data.gravity_first,
+        data.jacobian_second,
+        data.jacobian_dot_qd_second,
+        data.velocity_second,
+        data.gravity_second,
+        data.inertia,
+        data.coriolis_qd,
+        data.gravity_force,
+    )
 
 
 @wp.kernel(enable_backward=False)
@@ -978,45 +917,43 @@ def launch_homogeneous_floating_persistent_chain(
     Returns:
         None. Workspaces and outputs are updated in place.
     """
+    data = GVSFloatingChainData()
+    data.joint_adjoint = joint_adjoint
+    data.joint_adjoint_dot = joint_adjoint_dot
+    data.joint_tangent = joint_tangent
+    data.joint_tangent_dot_qd = joint_tangent_dot_qd
+    data.joint_velocity = joint_velocity
+    data.cell_adjoint = cell_adjoint
+    data.cell_tangent_local = cell_tangent_local
+    data.cell_link_velocity = cell_link_velocity
+    data.cell_step_velocity = cell_step_velocity
+    data.cell_tangent_velocity_dot = cell_tangent_velocity_dot
+    data.global_to_local = global_to_local
+    data.active_dofs = active_dofs
+    data.base_pose = base_pose
+    data.velocity = velocity
+    data.inertia_upper_rows = inertia_upper_rows
+    data.inertia_upper_columns = inertia_upper_columns
+    data.weighted_masses = weighted_masses
+    data.gravity_world = gravity_world
+    data.num_cells_array = num_cells
+    data.num_quadrature_array = num_quadrature
+    data.lanes_per_block = lanes_per_block
+    data.jacobian_first = jacobian_first
+    data.jacobian_dot_qd_first = jacobian_dot_qd_first
+    data.velocity_first = velocity_first
+    data.gravity_first = gravity_first
+    data.jacobian_second = jacobian_second
+    data.jacobian_dot_qd_second = jacobian_dot_qd_second
+    data.velocity_second = velocity_second
+    data.gravity_second = gravity_second
+    data.inertia = inertia
+    data.coriolis_qd = coriolis_qd
+    data.gravity_force = gravity_force
     wp.launch_tiled(
         homogeneous_floating_persistent_chain_kernel,
         dim=velocity.shape[0],
-        inputs=[
-            joint_adjoint,
-            joint_adjoint_dot,
-            joint_tangent,
-            joint_tangent_dot_qd,
-            joint_velocity,
-            cell_adjoint,
-            cell_tangent_local,
-            cell_link_velocity,
-            cell_step_velocity,
-            cell_tangent_velocity_dot,
-            global_to_local,
-            active_dofs,
-            base_pose,
-            velocity,
-            inertia_upper_rows,
-            inertia_upper_columns,
-            weighted_masses,
-            gravity_world,
-            num_cells,
-            num_quadrature,
-            lanes_per_block,
-        ],
-        outputs=[
-            jacobian_first,
-            jacobian_dot_qd_first,
-            velocity_first,
-            gravity_first,
-            jacobian_second,
-            jacobian_dot_qd_second,
-            velocity_second,
-            gravity_second,
-            inertia,
-            coriolis_qd,
-            gravity_force,
-        ],
+        inputs=[data],
         block_dim=block_dim,
     )
 

@@ -33,6 +33,8 @@ from soromox.execution.warp.gvs.kinematics import (
     homogeneous_gvs_node_poses_kernel,
 )
 
+from soromox.execution.warp.gvs.kinematics import GVSNodePosesData
+
 wp.set_module_options({"enable_backward": False})
 
 SPATIAL_DIM = 6
@@ -125,71 +127,15 @@ def gvs_node_pose_twist_at(
         segment += 1
 
 
-@wp.kernel(enable_backward=False)
-def homogeneous_gvs_node_pose_twist_kernel(
-    joint_adjoint: wp.array2d[wp.float64],
-    joint_velocity: wp.array2d[wp.float64],
-    cell_adjoint: wp.array2d[wp.float64],
-    cell_link_velocity: wp.array2d[wp.float64],
-    base_transform: wp.array2d[wp.float64],
-    segment_lengths: wp.array[wp.float64],
-    num_cells_array: wp.array[wp.int32],
-    node_pose: wp.array2d[wp.float64],
-    node_twist: wp.array2d[wp.float64],
-):
-    """Propagate boundary poses and twists for a homogeneous batch.
-
-    All worlds use the same structural dimensions and coordinate layout. Dimensions:
-    E = worlds.
-
-    Shared across worlds: ``base_transform``, ``segment_lengths``,
-    ``num_cells_array``.
-
-    State, computed operator, workspace and output arrays carry the world axis,
-    either explicitly or flattened as documented in Args. Their values may differ by
-    world.
-
-    Launch with ``dim=E``: one thread traverses each world.
-
-    ``joint_velocity`` and ``cell_link_velocity`` are the already-contracted
-    local tangent products produced by the GVS joint and cell term kernels.
-
-    Args:
-        joint_adjoint: Flattened inverse adjoints for every joint.
-        joint_velocity: Joint tangent products for the active direction.
-        cell_adjoint: Flattened inverse adjoints for every full link cell.
-        cell_link_velocity: Cell tangent products for the active direction.
-        base_transform: Absolute fixed-base transform.
-        segment_lengths: Physical segment lengths.
-        num_cells_array: One-entry padded cell count.
-        node_pose: Cell-boundary pose output.
-        node_twist: Cell-boundary spatial JVP output.
-
-    Returns:
-        None. ``node_pose`` and ``node_twist`` are written in place.
-    """
-    environment = wp.tid()
-    gvs_node_pose_twist_at(
-        environment,
-        joint_adjoint,
-        joint_velocity,
-        cell_adjoint,
-        cell_link_velocity,
-        base_transform,
-        segment_lengths,
-        num_cells_array,
-        node_pose,
-        node_twist,
-    )
-
-
 @wp.struct
 class GVSNodePoseTwistData:
     """Buffers for GVS node pose twist.
 
     Array fields are non-owning views; the caller must retain their allocations
-    for every launch and captured graph. Batched fields use one environment
-    (``E = 1``); structural fields use this world's own dimensions.
+    for every launch and captured graph. Homogeneous kernels receive this struct
+    directly with batched fields spanning E worlds and shared structural fields.
+    Packed kernels select it from a device array with E = 1 per descriptor; each
+    descriptor may have its own structural dimensions and parameter values.
 
     Attributes:
         joint_adjoint: Flattened inverse adjoints for every joint.
@@ -212,6 +158,47 @@ class GVSNodePoseTwistData:
     num_cells_array: wp.array[wp.int32]
     node_pose: wp.array2d[wp.float64]
     node_twist: wp.array2d[wp.float64]
+
+
+@wp.kernel(enable_backward=False)
+def homogeneous_gvs_node_pose_twist_kernel(data: GVSNodePoseTwistData):
+    """Propagate boundary poses and twists for a homogeneous batch.
+
+    All worlds use the same structural dimensions and coordinate layout. Dimensions:
+    E = worlds.
+
+    Shared across worlds: ``base_transform``, ``segment_lengths``,
+    ``num_cells_array``.
+
+    State, computed operator, workspace and output arrays carry the world axis,
+    either explicitly or flattened as documented by the struct. Values may differ by
+    world.
+
+    Launch with ``dim=E``: one thread traverses each world.
+
+    ``joint_velocity`` and ``cell_link_velocity`` are the already-contracted
+    local tangent products produced by the GVS joint and cell term kernels.
+
+    Args:
+        data: Shared GVSNodePoseTwistData layout referencing the complete homogeneous
+            batch (E worlds). See the struct for field shapes and ownership.
+
+    Returns:
+        None. ``node_pose`` and ``node_twist`` are written in place.
+    """
+    environment = wp.tid()
+    gvs_node_pose_twist_at(
+        environment,
+        data.joint_adjoint,
+        data.joint_velocity,
+        data.cell_adjoint,
+        data.cell_link_velocity,
+        data.base_transform,
+        data.segment_lengths,
+        data.num_cells_array,
+        data.node_pose,
+        data.node_twist,
+    )
 
 
 @wp.kernel(enable_backward=False)
@@ -426,108 +413,15 @@ def gvs_pose_twist_samples_at(
         row += 1
 
 
-@wp.kernel(enable_backward=False)
-def homogeneous_gvs_pose_twist_samples_kernel(
-    q: wp.array2d[wp.float64],
-    qd: wp.array2d[wp.float64],
-    s: wp.array2d[wp.float64],
-    link_local_to_global: wp.array2d[wp.int32],
-    link_basis_rows: wp.array2d[wp.int32],
-    link_reference_z1: wp.array2d[wp.float64],
-    link_reference_z2: wp.array2d[wp.float64],
-    segment_lengths: wp.array[wp.float64],
-    segment_starts: wp.array[wp.float64],
-    integration_points: wp.array2d[wp.float64],
-    basis_type_index: wp.array[wp.int32],
-    basis_active_params: wp.array2d[wp.float64],
-    basis_order_params: wp.array2d[wp.float64],
-    magnus_points: wp.array[wp.float64],
-    scale_rotations_array: wp.array[wp.int32],
-    epsilons: wp.array[wp.float64],
-    num_cells_array: wp.array[wp.int32],
-    node_pose: wp.array2d[wp.float64],
-    node_twist: wp.array2d[wp.float64],
-    poses: wp.array4d[wp.float64],
-    twists: wp.array3d[wp.float64],
-):
-    """Evaluate sampled poses and twists for a homogeneous batch.
-
-    All worlds use the same structural dimensions and coordinate layout. Dimensions:
-    E = worlds, N = samples, D = coordinates.
-
-    Shared across worlds: ``link_local_to_global``, ``link_basis_rows``,
-    ``link_reference_z1``, ``link_reference_z2``, ``segment_lengths``,
-    ``segment_starts``, ``integration_points``, ``basis_type_index``,
-    ``basis_active_params``, ``basis_order_params``, ``magnus_points``,
-    ``scale_rotations_array``, ``epsilons``, ``num_cells_array``.
-
-    State, computed operator, workspace and output arrays carry the world axis,
-    either explicitly or flattened as documented in Args. Their values may differ by
-    world.
-
-    Launch with ``dim=(E, N)``: one thread per world/sample pair.
-
-    Args:
-        q: Batched active configurations ``(E, D)``.
-        qd: Batched generalized-velocity directions ``(E, D)``.
-        s: Per-environment sample abscissae ``(E, N)``.
-        link_local_to_global: Padded link-local to active-coordinate map.
-        link_basis_rows: Spatial row occupied by every local basis column.
-        link_reference_z1: Reference strain at first Magnus nodes.
-        link_reference_z2: Reference strain at second Magnus nodes.
-        segment_lengths: Physical segment lengths.
-        segment_starts: Cumulative segment-start coordinates.
-        integration_points: Normalized cell-boundary coordinates.
-        basis_type_index: Basis-family index for every segment.
-        basis_active_params: Per-row basis activation parameters.
-        basis_order_params: Per-row basis orders.
-        magnus_points: Normalized two-point Magnus coordinates.
-        scale_rotations_array: One-entry rotational-basis scaling flag.
-        epsilons: Exponential and tangent thresholds.
-        num_cells_array: One-entry padded cell count.
-        node_pose: Cell-boundary poses produced by the node recurrence.
-        node_twist: Cell-boundary spatial JVPs produced by the node recurrence.
-        poses: Sample pose output ``(E, N, 4, 4)``.
-        twists: Inertial-frame sample JVP output ``(E, N, 6)``.
-
-    Returns:
-        None. ``poses`` and ``twists`` are written in place.
-    """
-    environment, sample = wp.tid()
-    gvs_pose_twist_samples_at(
-        environment,
-        sample,
-        q,
-        qd,
-        s,
-        link_local_to_global,
-        link_basis_rows,
-        link_reference_z1,
-        link_reference_z2,
-        segment_lengths,
-        segment_starts,
-        integration_points,
-        basis_type_index,
-        basis_active_params,
-        basis_order_params,
-        magnus_points,
-        scale_rotations_array,
-        epsilons,
-        num_cells_array,
-        node_pose,
-        node_twist,
-        poses,
-        twists,
-    )
-
-
 @wp.struct
 class GVSPoseTwistSamplesData:
     """Buffers for GVS pose twist samples.
 
     Array fields are non-owning views; the caller must retain their allocations
-    for every launch and captured graph. Batched fields use one environment
-    (``E = 1``); structural fields use this world's own dimensions.
+    for every launch and captured graph. Homogeneous kernels receive this struct
+    directly with batched fields spanning E worlds and shared structural fields.
+    Packed kernels select it from a device array with E = 1 per descriptor; each
+    descriptor may have its own structural dimensions and parameter values.
 
     Attributes:
         q: Batched active configurations ``(E, D)``.
@@ -574,6 +468,60 @@ class GVSPoseTwistSamplesData:
     node_twist: wp.array2d[wp.float64]
     poses: wp.array4d[wp.float64]
     twists: wp.array3d[wp.float64]
+
+
+@wp.kernel(enable_backward=False)
+def homogeneous_gvs_pose_twist_samples_kernel(data: GVSPoseTwistSamplesData):
+    """Evaluate sampled poses and twists for a homogeneous batch.
+
+    All worlds use the same structural dimensions and coordinate layout. Dimensions:
+    E = worlds, N = samples, D = coordinates.
+
+    Shared across worlds: ``link_local_to_global``, ``link_basis_rows``,
+    ``link_reference_z1``, ``link_reference_z2``, ``segment_lengths``,
+    ``segment_starts``, ``integration_points``, ``basis_type_index``,
+    ``basis_active_params``, ``basis_order_params``, ``magnus_points``,
+    ``scale_rotations_array``, ``epsilons``, ``num_cells_array``.
+
+    State, computed operator, workspace and output arrays carry the world axis,
+    either explicitly or flattened as documented by the struct. Values may differ by
+    world.
+
+    Launch with ``dim=(E, N)``: one thread per world/sample pair.
+
+    Args:
+        data: Shared GVSPoseTwistSamplesData layout referencing the complete homogeneous
+            batch (E worlds). See the struct for field shapes and ownership.
+
+    Returns:
+        None. ``poses`` and ``twists`` are written in place.
+    """
+    environment, sample = wp.tid()
+    gvs_pose_twist_samples_at(
+        environment,
+        sample,
+        data.q,
+        data.qd,
+        data.s,
+        data.link_local_to_global,
+        data.link_basis_rows,
+        data.link_reference_z1,
+        data.link_reference_z2,
+        data.segment_lengths,
+        data.segment_starts,
+        data.integration_points,
+        data.basis_type_index,
+        data.basis_active_params,
+        data.basis_order_params,
+        data.magnus_points,
+        data.scale_rotations_array,
+        data.epsilons,
+        data.num_cells_array,
+        data.node_pose,
+        data.node_twist,
+        data.poses,
+        data.twists,
+    )
 
 
 @wp.kernel(enable_backward=False)
@@ -821,106 +769,15 @@ def gvs_sample_vjp_at(
         local += 1
 
 
-@wp.kernel(enable_backward=False)
-def homogeneous_gvs_sample_vjp_kernel(
-    q: wp.array2d[wp.float64],
-    s: wp.array2d[wp.float64],
-    inertial_wrenches: wp.array3d[wp.float64],
-    link_local_to_global: wp.array2d[wp.int32],
-    link_basis_rows: wp.array2d[wp.int32],
-    link_reference_z1: wp.array2d[wp.float64],
-    link_reference_z2: wp.array2d[wp.float64],
-    segment_lengths: wp.array[wp.float64],
-    segment_starts: wp.array[wp.float64],
-    integration_points: wp.array2d[wp.float64],
-    basis_type_index: wp.array[wp.int32],
-    basis_active_params: wp.array2d[wp.float64],
-    basis_order_params: wp.array2d[wp.float64],
-    magnus_points: wp.array[wp.float64],
-    scale_rotations_array: wp.array[wp.int32],
-    epsilons: wp.array[wp.float64],
-    num_cells_array: wp.array[wp.int32],
-    node_pose: wp.array2d[wp.float64],
-    node_wrench: wp.array2d[wp.float64],
-    generalized_force: wp.array2d[wp.float64],
-):
-    """Project sample wrenches for a homogeneous batch.
-
-    All worlds use the same structural dimensions and coordinate layout. Dimensions:
-    E = worlds, N = samples, D = coordinates.
-
-    Shared across worlds: ``link_local_to_global``, ``link_basis_rows``,
-    ``link_reference_z1``, ``link_reference_z2``, ``segment_lengths``,
-    ``segment_starts``, ``integration_points``, ``basis_type_index``,
-    ``basis_active_params``, ``basis_order_params``, ``magnus_points``,
-    ``scale_rotations_array``, ``epsilons``, ``num_cells_array``.
-
-    State, computed operator, workspace and output arrays carry the world axis,
-    either explicitly or flattened as documented in Args. Their values may differ by
-    world.
-
-    Launch with ``dim=(E, N)``: one thread per world/sample pair.
-
-    Args:
-        q: Batched active configurations ``(E, D)``.
-        s: Per-environment sample abscissae ``(E, N)``.
-        inertial_wrenches: Inertial-frame sample cotangents ``(E, N, 6)``.
-        link_local_to_global: Padded link-local to active-coordinate map.
-        link_basis_rows: Spatial row occupied by every local basis column.
-        link_reference_z1: Reference strain at first Magnus nodes.
-        link_reference_z2: Reference strain at second Magnus nodes.
-        segment_lengths: Physical segment lengths.
-        segment_starts: Cumulative segment-start coordinates.
-        integration_points: Normalized cell-boundary coordinates.
-        basis_type_index: Basis-family index for every segment.
-        basis_active_params: Per-row basis activation parameters.
-        basis_order_params: Per-row basis orders.
-        magnus_points: Normalized two-point Magnus coordinates.
-        scale_rotations_array: One-entry rotational-basis scaling flag.
-        epsilons: Exponential and tangent thresholds.
-        num_cells_array: One-entry padded cell count.
-        node_pose: Cell-boundary poses produced by the node recurrence.
-        node_wrench: Cell-boundary cotangent accumulator.
-        generalized_force: Generalized-force accumulator ``(E, D)``.
-
-    Returns:
-        None. ``node_wrench`` and ``generalized_force`` are accumulated in
-        place.
-    """
-    environment, sample = wp.tid()
-    gvs_sample_vjp_at(
-        environment,
-        sample,
-        q,
-        s,
-        inertial_wrenches,
-        link_local_to_global,
-        link_basis_rows,
-        link_reference_z1,
-        link_reference_z2,
-        segment_lengths,
-        segment_starts,
-        integration_points,
-        basis_type_index,
-        basis_active_params,
-        basis_order_params,
-        magnus_points,
-        scale_rotations_array,
-        epsilons,
-        num_cells_array,
-        node_pose,
-        node_wrench,
-        generalized_force,
-    )
-
-
 @wp.struct
 class GVSSampleVJPData:
     """Buffers for GVS sample vjp.
 
     Array fields are non-owning views; the caller must retain their allocations
-    for every launch and captured graph. Batched fields use one environment
-    (``E = 1``); structural fields use this world's own dimensions.
+    for every launch and captured graph. Homogeneous kernels receive this struct
+    directly with batched fields spanning E worlds and shared structural fields.
+    Packed kernels select it from a device array with E = 1 per descriptor; each
+    descriptor may have its own structural dimensions and parameter values.
 
     Attributes:
         q: Batched active configurations ``(E, D)``.
@@ -965,6 +822,60 @@ class GVSSampleVJPData:
     node_pose: wp.array2d[wp.float64]
     node_wrench: wp.array2d[wp.float64]
     generalized_force: wp.array2d[wp.float64]
+
+
+@wp.kernel(enable_backward=False)
+def homogeneous_gvs_sample_vjp_kernel(data: GVSSampleVJPData):
+    """Project sample wrenches for a homogeneous batch.
+
+    All worlds use the same structural dimensions and coordinate layout. Dimensions:
+    E = worlds, N = samples, D = coordinates.
+
+    Shared across worlds: ``link_local_to_global``, ``link_basis_rows``,
+    ``link_reference_z1``, ``link_reference_z2``, ``segment_lengths``,
+    ``segment_starts``, ``integration_points``, ``basis_type_index``,
+    ``basis_active_params``, ``basis_order_params``, ``magnus_points``,
+    ``scale_rotations_array``, ``epsilons``, ``num_cells_array``.
+
+    State, computed operator, workspace and output arrays carry the world axis,
+    either explicitly or flattened as documented by the struct. Values may differ by
+    world.
+
+    Launch with ``dim=(E, N)``: one thread per world/sample pair.
+
+    Args:
+        data: Shared GVSSampleVJPData layout referencing the complete homogeneous
+            batch (E worlds). See the struct for field shapes and ownership.
+
+    Returns:
+        None. ``node_wrench`` and ``generalized_force`` are accumulated in
+        place.
+    """
+    environment, sample = wp.tid()
+    gvs_sample_vjp_at(
+        environment,
+        sample,
+        data.q,
+        data.s,
+        data.inertial_wrenches,
+        data.link_local_to_global,
+        data.link_basis_rows,
+        data.link_reference_z1,
+        data.link_reference_z2,
+        data.segment_lengths,
+        data.segment_starts,
+        data.integration_points,
+        data.basis_type_index,
+        data.basis_active_params,
+        data.basis_order_params,
+        data.magnus_points,
+        data.scale_rotations_array,
+        data.epsilons,
+        data.num_cells_array,
+        data.node_pose,
+        data.node_wrench,
+        data.generalized_force,
+    )
 
 
 @wp.kernel(enable_backward=False)
@@ -1113,69 +1024,15 @@ def gvs_node_vjp_at(
         segment -= 1
 
 
-@wp.kernel(enable_backward=False)
-def homogeneous_gvs_node_vjp_kernel(
-    joint_adjoint: wp.array2d[wp.float64],
-    joint_tangent: wp.array2d[wp.float64],
-    cell_adjoint: wp.array2d[wp.float64],
-    cell_tangent_local: wp.array2d[wp.float64],
-    link_local_to_global: wp.array2d[wp.int32],
-    segment_lengths: wp.array[wp.float64],
-    num_cells_array: wp.array[wp.int32],
-    node_wrench: wp.array2d[wp.float64],
-    generalized_force: wp.array2d[wp.float64],
-):
-    """Propagate boundary wrenches for a homogeneous batch.
-
-    All worlds use the same structural dimensions and coordinate layout. Dimensions:
-    E = worlds, D = coordinates.
-
-    Shared across worlds: ``link_local_to_global``, ``segment_lengths``,
-    ``num_cells_array``.
-
-    State, computed operator, workspace and output arrays carry the world axis,
-    either explicitly or flattened as documented in Args. Their values may differ by
-    world.
-
-    Launch with ``dim=E``: one thread traverses each world.
-
-    Args:
-        joint_adjoint: Flattened inverse adjoints for every joint.
-        joint_tangent: Joint tangents in active coordinates.
-        cell_adjoint: Flattened inverse adjoints for every full link cell.
-        cell_tangent_local: Full-cell tangents in padded local coordinates.
-        link_local_to_global: Padded link-local to active-coordinate map.
-        segment_lengths: Physical segment lengths.
-        num_cells_array: One-entry padded cell count.
-        node_wrench: Cell-boundary cotangent accumulator.
-        generalized_force: Generalized-force accumulator ``(E, D)``.
-
-    Returns:
-        None. ``node_wrench`` and ``generalized_force`` are accumulated in
-        place.
-    """
-    environment = wp.tid()
-    gvs_node_vjp_at(
-        environment,
-        joint_adjoint,
-        joint_tangent,
-        cell_adjoint,
-        cell_tangent_local,
-        link_local_to_global,
-        segment_lengths,
-        num_cells_array,
-        node_wrench,
-        generalized_force,
-    )
-
-
 @wp.struct
 class GVSNodeVJPData:
     """Buffers for GVS node vjp.
 
     Array fields are non-owning views; the caller must retain their allocations
-    for every launch and captured graph. Batched fields use one environment
-    (``E = 1``); structural fields use this world's own dimensions.
+    for every launch and captured graph. Homogeneous kernels receive this struct
+    directly with batched fields spanning E worlds and shared structural fields.
+    Packed kernels select it from a device array with E = 1 per descriptor; each
+    descriptor may have its own structural dimensions and parameter values.
 
     Attributes:
         joint_adjoint: Flattened inverse adjoints for every joint.
@@ -1198,6 +1055,45 @@ class GVSNodeVJPData:
     num_cells_array: wp.array[wp.int32]
     node_wrench: wp.array2d[wp.float64]
     generalized_force: wp.array2d[wp.float64]
+
+
+@wp.kernel(enable_backward=False)
+def homogeneous_gvs_node_vjp_kernel(data: GVSNodeVJPData):
+    """Propagate boundary wrenches for a homogeneous batch.
+
+    All worlds use the same structural dimensions and coordinate layout. Dimensions:
+    E = worlds, D = coordinates.
+
+    Shared across worlds: ``link_local_to_global``, ``segment_lengths``,
+    ``num_cells_array``.
+
+    State, computed operator, workspace and output arrays carry the world axis,
+    either explicitly or flattened as documented by the struct. Values may differ by
+    world.
+
+    Launch with ``dim=E``: one thread traverses each world.
+
+    Args:
+        data: Shared GVSNodeVJPData layout referencing the complete homogeneous
+            batch (E worlds). See the struct for field shapes and ownership.
+
+    Returns:
+        None. ``node_wrench`` and ``generalized_force`` are accumulated in
+        place.
+    """
+    environment = wp.tid()
+    gvs_node_vjp_at(
+        environment,
+        data.joint_adjoint,
+        data.joint_tangent,
+        data.cell_adjoint,
+        data.cell_tangent_local,
+        data.link_local_to_global,
+        data.segment_lengths,
+        data.num_cells_array,
+        data.node_wrench,
+        data.generalized_force,
+    )
 
 
 @wp.kernel(enable_backward=False)
@@ -1346,74 +1242,15 @@ def gvs_cooperative_node_vjp_at(
         segment -= 1
 
 
-@wp.kernel(enable_backward=False)
-def homogeneous_gvs_cooperative_node_vjp_kernel(
-    joint_adjoint: wp.array2d[wp.float64],
-    joint_tangent: wp.array2d[wp.float64],
-    cell_adjoint: wp.array2d[wp.float64],
-    cell_tangent_local: wp.array2d[wp.float64],
-    link_global_to_local: wp.array2d[wp.int32],
-    segment_lengths: wp.array[wp.float64],
-    num_cells_array: wp.array[wp.int32],
-    node_wrench: wp.array2d[wp.float64],
-    edge_wrench: wp.array2d[wp.float64],
-    generalized_force: wp.array2d[wp.float64],
-):
-    """Propagate homogeneous boundary wrenches cooperatively.
-
-    All worlds use the same structural dimensions and coordinate layout. Dimensions:
-    E = worlds, D = coordinates, B = threads per block.
-
-    Shared across worlds: ``link_global_to_local``, ``segment_lengths``,
-    ``num_cells_array``.
-
-    State, computed operator, workspace and output arrays carry the world axis,
-    either explicitly or flattened as documented in Args. Their values may differ by
-    world.
-
-    Launch with ``wp.launch_tiled(..., dim=E, block_dim=B)`` with at least 32 CUDA
-    threads per block; all lanes cooperate on one world.
-
-    Args:
-        joint_adjoint: Flattened inverse adjoints for every joint.
-        joint_tangent: Joint tangents in active coordinates.
-        cell_adjoint: Flattened inverse adjoints for every full link cell.
-        cell_tangent_local: Full-cell tangents in padded local coordinates.
-        link_global_to_local: Active-to-link-local coordinate map.
-        segment_lengths: Physical segment lengths.
-        num_cells_array: One-entry padded cell count.
-        node_wrench: Cell-boundary cotangent accumulator.
-        edge_wrench: Per-environment six-vector edge scratch.
-        generalized_force: Generalized-force accumulator ``(E, D)``.
-
-    Returns:
-        None. ``node_wrench``, ``edge_wrench``, and ``generalized_force`` are
-        updated in place.
-    """
-    environment, lane = wp.tid()
-    gvs_cooperative_node_vjp_at(
-        environment,
-        lane,
-        joint_adjoint,
-        joint_tangent,
-        cell_adjoint,
-        cell_tangent_local,
-        link_global_to_local,
-        segment_lengths,
-        num_cells_array,
-        node_wrench,
-        edge_wrench,
-        generalized_force,
-    )
-
-
 @wp.struct
 class GVSCooperativeNodeVJPData:
     """Buffers for GVS cooperative node vjp.
 
     Array fields are non-owning views; the caller must retain their allocations
-    for every launch and captured graph. Batched fields use one environment
-    (``E = 1``); structural fields use this world's own dimensions.
+    for every launch and captured graph. Homogeneous kernels receive this struct
+    directly with batched fields spanning E worlds and shared structural fields.
+    Packed kernels select it from a device array with E = 1 per descriptor; each
+    descriptor may have its own structural dimensions and parameter values.
 
     Attributes:
         joint_adjoint: Flattened inverse adjoints for every joint.
@@ -1438,6 +1275,48 @@ class GVSCooperativeNodeVJPData:
     node_wrench: wp.array2d[wp.float64]
     edge_wrench: wp.array2d[wp.float64]
     generalized_force: wp.array2d[wp.float64]
+
+
+@wp.kernel(enable_backward=False)
+def homogeneous_gvs_cooperative_node_vjp_kernel(data: GVSCooperativeNodeVJPData):
+    """Propagate homogeneous boundary wrenches cooperatively.
+
+    All worlds use the same structural dimensions and coordinate layout. Dimensions:
+    E = worlds, D = coordinates, B = threads per block.
+
+    Shared across worlds: ``link_global_to_local``, ``segment_lengths``,
+    ``num_cells_array``.
+
+    State, computed operator, workspace and output arrays carry the world axis,
+    either explicitly or flattened as documented by the struct. Values may differ by
+    world.
+
+    Launch with ``wp.launch_tiled(..., dim=E, block_dim=B)`` with at least 32 CUDA
+    threads per block; all lanes cooperate on one world.
+
+    Args:
+        data: Shared GVSCooperativeNodeVJPData layout referencing the complete homogeneous
+            batch (E worlds). See the struct for field shapes and ownership.
+
+    Returns:
+        None. ``node_wrench``, ``edge_wrench``, and ``generalized_force`` are
+        updated in place.
+    """
+    environment, lane = wp.tid()
+    gvs_cooperative_node_vjp_at(
+        environment,
+        lane,
+        data.joint_adjoint,
+        data.joint_tangent,
+        data.cell_adjoint,
+        data.cell_tangent_local,
+        data.link_global_to_local,
+        data.segment_lengths,
+        data.num_cells_array,
+        data.node_wrench,
+        data.edge_wrench,
+        data.generalized_force,
+    )
 
 
 @wp.kernel(enable_backward=False)
@@ -1563,45 +1442,47 @@ def launch_homogeneous_gvs_forward_kinematics_and_jvp(
         stream.
     """
 
+    data = GVSNodePoseTwistData()
+    data.joint_adjoint = joint_adjoint
+    data.joint_velocity = joint_velocity
+    data.cell_adjoint = cell_adjoint
+    data.cell_link_velocity = cell_link_velocity
+    data.base_transform = base_transform
+    data.segment_lengths = segment_lengths
+    data.num_cells_array = num_cells
+    data.node_pose = node_pose
+    data.node_twist = node_twist
     wp.launch(
         homogeneous_gvs_node_pose_twist_kernel,
         dim=q.shape[0],
-        inputs=[
-            joint_adjoint,
-            joint_velocity,
-            cell_adjoint,
-            cell_link_velocity,
-            base_transform,
-            segment_lengths,
-            num_cells,
-        ],
-        outputs=[node_pose, node_twist],
+        inputs=[data],
     )
+    data = GVSPoseTwistSamplesData()
+    data.q = q
+    data.qd = qd
+    data.s = s
+    data.link_local_to_global = link_local_to_global
+    data.link_basis_rows = link_basis_rows
+    data.link_reference_z1 = link_reference_z1
+    data.link_reference_z2 = link_reference_z2
+    data.segment_lengths = segment_lengths
+    data.segment_starts = segment_starts
+    data.integration_points = integration_points
+    data.basis_type_index = basis_type_index
+    data.basis_active_params = basis_active_params
+    data.basis_order_params = basis_order_params
+    data.magnus_points = magnus_points
+    data.scale_rotations_array = scale_rotations
+    data.epsilons = epsilons
+    data.num_cells_array = num_cells
+    data.node_pose = node_pose
+    data.node_twist = node_twist
+    data.poses = poses
+    data.twists = twists
     wp.launch(
         homogeneous_gvs_pose_twist_samples_kernel,
         dim=(q.shape[0], s.shape[1]),
-        inputs=[
-            q,
-            qd,
-            s,
-            link_local_to_global,
-            link_basis_rows,
-            link_reference_z1,
-            link_reference_z2,
-            segment_lengths,
-            segment_starts,
-            integration_points,
-            basis_type_index,
-            basis_active_params,
-            basis_order_params,
-            magnus_points,
-            scale_rotations,
-            epsilons,
-            num_cells,
-            node_pose,
-            node_twist,
-        ],
-        outputs=[poses, twists],
+        inputs=[data],
         block_dim=128,
     )
 
@@ -1697,77 +1578,78 @@ def launch_homogeneous_gvs_inertial_jacobian_vjp(
     node_wrench.zero_()
     generalized_force.zero_()
     if not node_poses_ready:
+        data = GVSNodePosesData()
+        data.joint_adjoint = joint_adjoint
+        data.cell_adjoint = cell_adjoint
+        data.base_transform = base_transform
+        data.segment_lengths = segment_lengths
+        data.num_cells_array = num_cells
+        data.node_pose = node_pose
         wp.launch(
             homogeneous_gvs_node_poses_kernel,
             dim=q.shape[0],
-            inputs=[
-                joint_adjoint,
-                cell_adjoint,
-                base_transform,
-                segment_lengths,
-                num_cells,
-            ],
-            outputs=[node_pose],
+            inputs=[data],
         )
+    data = GVSSampleVJPData()
+    data.q = q
+    data.s = s
+    data.inertial_wrenches = inertial_wrenches
+    data.link_local_to_global = link_local_to_global
+    data.link_basis_rows = link_basis_rows
+    data.link_reference_z1 = link_reference_z1
+    data.link_reference_z2 = link_reference_z2
+    data.segment_lengths = segment_lengths
+    data.segment_starts = segment_starts
+    data.integration_points = integration_points
+    data.basis_type_index = basis_type_index
+    data.basis_active_params = basis_active_params
+    data.basis_order_params = basis_order_params
+    data.magnus_points = magnus_points
+    data.scale_rotations_array = scale_rotations
+    data.epsilons = epsilons
+    data.num_cells_array = num_cells
+    data.node_pose = node_pose
+    data.node_wrench = node_wrench
+    data.generalized_force = generalized_force
     wp.launch(
         homogeneous_gvs_sample_vjp_kernel,
         dim=(q.shape[0], s.shape[1]),
-        inputs=[
-            q,
-            s,
-            inertial_wrenches,
-            link_local_to_global,
-            link_basis_rows,
-            link_reference_z1,
-            link_reference_z2,
-            segment_lengths,
-            segment_starts,
-            integration_points,
-            basis_type_index,
-            basis_active_params,
-            basis_order_params,
-            magnus_points,
-            scale_rotations,
-            epsilons,
-            num_cells,
-            node_pose,
-        ],
-        outputs=[node_wrench, generalized_force],
+        inputs=[data],
         block_dim=128,
     )
-    reverse_inputs = [
-        joint_adjoint,
-        joint_tangent,
-        cell_adjoint,
-        cell_tangent_local,
-    ]
     if q.device.is_cuda:
+        data = GVSCooperativeNodeVJPData()
+        data.joint_adjoint = joint_adjoint
+        data.joint_tangent = joint_tangent
+        data.cell_adjoint = cell_adjoint
+        data.cell_tangent_local = cell_tangent_local
+        data.link_global_to_local = link_global_to_local
+        data.segment_lengths = segment_lengths
+        data.num_cells_array = num_cells
+        data.node_wrench = node_wrench
+        data.edge_wrench = edge_wrench
+        data.generalized_force = generalized_force
         wp.launch_tiled(
             homogeneous_gvs_cooperative_node_vjp_kernel,
             dim=q.shape[0],
-            inputs=[
-                *reverse_inputs,
-                link_global_to_local,
-                segment_lengths,
-                num_cells,
-                node_wrench,
-                edge_wrench,
-            ],
-            outputs=[generalized_force],
+            inputs=[data],
             block_dim=block_dim,
         )
     else:
+        data = GVSNodeVJPData()
+        data.joint_adjoint = joint_adjoint
+        data.joint_tangent = joint_tangent
+        data.cell_adjoint = cell_adjoint
+        data.cell_tangent_local = cell_tangent_local
+        data.link_local_to_global = link_local_to_global
+        data.segment_lengths = segment_lengths
+        data.num_cells_array = num_cells
+        data.node_wrench = node_wrench
+        data.generalized_force = generalized_force
         wp.launch(
             homogeneous_gvs_node_vjp_kernel,
             dim=q.shape[0],
-            inputs=[
-                *reverse_inputs,
-                link_local_to_global,
-                segment_lengths,
-                num_cells,
-                node_wrench,
-            ],
-            outputs=[generalized_force],
+            inputs=[data],
         )
 
 

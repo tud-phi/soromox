@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import inspect
 import os
 from typing import Any
 
@@ -273,7 +272,10 @@ def _compare(
         for name, value in fields.items():
             setattr(descriptor, name, value)
         descriptors.append(descriptor)
-        arguments = [world[name] for name in inspect.signature(direct.func).parameters]
+        direct_data = data_type()
+        for name in data_type.vars:
+            setattr(direct_data, name, world[name])
+        arguments = [direct_data]
         if tiled:
             wp.launch_tiled(
                 direct, dim=count, inputs=arguments, block_dim=tiled, device=device
