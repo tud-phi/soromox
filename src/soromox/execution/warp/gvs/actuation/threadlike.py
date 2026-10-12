@@ -34,6 +34,9 @@ def prepare_gvs_threadlike_strain_at(
 ):
     """Prepare each environment-segment-quadrature strain once.
 
+    Explicit indices address the supplied array views. Homogeneous wrappers pass the
+    full batch; packed wrappers pass one world's views and local indices.
+
     Args:
         item: Flattened environment-segment-quadrature index.
         q: Batched active configurations with shape ``(E, D)``.
@@ -67,14 +70,27 @@ def prepare_gvs_threadlike_strain_at(
 
 
 @wp.kernel(enable_backward=False)
-def prepare_gvs_threadlike_strain_kernel(
+def homogeneous_gvs_threadlike_strain_kernel(
     q: wp.array2d[wp.float64],
     link_local_to_global: wp.array2d[wp.int32],
     link_basis: wp.array4d[wp.float64],
     reference_strain: wp.array3d[wp.float64],
     strain_workspace: wp.array4d[wp.float64],
 ):
-    """Prepare each environment-segment-quadrature strain once.
+    """Prepare quadrature strains for homogeneous tendon actuation.
+
+    All worlds use the same structural dimensions and coordinate layout. Dimensions:
+    E = worlds, S = segments, Q = quadrature points, D = coordinates.
+
+    Shared across worlds: ``link_local_to_global``, ``link_basis``,
+    ``reference_strain``.
+
+    State, computed operator, workspace and output arrays carry the world axis,
+    either explicitly or flattened as documented in Args. Their values may differ by
+    world.
+
+    Launch with ``dim=E*S*Q``: one thread per flattened world/segment/quadrature
+    index.
 
     Args:
         q: Batched active configurations with shape ``(E, D)``.
@@ -120,7 +136,11 @@ def packed_prepare_gvs_threadlike_strain_kernel(
     world_data: wp.array(dtype=GVSThreadlikeStrainData),
     work_items: wp.array(dtype=wp.vec3i),
 ):
-    """Prepare each environment-segment-quadrature strain once.
+    """Prepare each environment-segment-quadrature strain once using packed world data.
+
+    Each selected descriptor contains one world (E = 1). Structure and numerical
+    model parameters may differ between worlds. Descriptors may share allocations
+    when their values match.
 
     Launch with ``dim=len(work_items)``; each thread handles one work item.
 
@@ -253,6 +273,9 @@ def gvs_threadlike_matrix_at(
 ):
     """Integrate one complete environment-DOF-path matrix entry.
 
+    Explicit indices address the supplied array views. Homogeneous wrappers pass the
+    full batch; packed wrappers pass one world's views and local indices.
+
     Args:
         item: Flattened environment-coordinate-path index.
         strain_workspace: Prepared quadrature strains ``(E, S, Q, 6)``.
@@ -311,7 +334,7 @@ def gvs_threadlike_matrix_at(
 
 
 @wp.kernel(enable_backward=False)
-def gvs_threadlike_matrix_kernel(
+def homogeneous_gvs_threadlike_matrix_kernel(
     strain_workspace: wp.array4d[wp.float64],
     link_global_to_local: wp.array2d[wp.int32],
     link_basis: wp.array4d[wp.float64],
@@ -325,7 +348,22 @@ def gvs_threadlike_matrix_kernel(
     epsilons: wp.array[wp.float64],
     output: wp.array3d[wp.float64],
 ):
-    """Integrate one complete environment-DOF-path matrix entry.
+    """Integrate tendon actuation matrices for a homogeneous batch.
+
+    All worlds use the same structural dimensions and coordinate layout. Dimensions:
+    E = worlds, S = segments, Q = quadrature points, D = coordinates, A = actuator
+    paths.
+
+    Shared across worlds: ``link_global_to_local``, ``link_basis``,
+    ``physical_points``, ``integration_weights``, ``routing_intercepts``,
+    ``routing_slopes``, ``path_start_segments``, ``path_end_segments``,
+    ``coordinate_scales``, ``epsilons``.
+
+    State, computed operator, workspace and output arrays carry the world axis,
+    either explicitly or flattened as documented in Args. Their values may differ by
+    world.
+
+    Launch with ``dim=E*D*A``: one thread per flattened world/coordinate/path index.
 
     Args:
         strain_workspace: Prepared quadrature strains ``(E, S, Q, 6)``.
@@ -404,7 +442,11 @@ def packed_gvs_threadlike_matrix_kernel(
     world_data: wp.array(dtype=GVSThreadlikeMatrixData),
     work_items: wp.array(dtype=wp.vec3i),
 ):
-    """Integrate one complete environment-DOF-path matrix entry.
+    """Integrate one complete environment-DOF-path matrix entry using packed world data.
+
+    Each selected descriptor contains one world (E = 1). Structure and numerical
+    model parameters may differ between worlds. Descriptors may share allocations
+    when their values match.
 
     Launch with ``dim=len(work_items)``; each thread handles one work item.
 
@@ -455,6 +497,9 @@ def gvs_threadlike_force_at(
     output: wp.array2d[wp.float64],
 ):
     """Reduce all paths for one active coordinate on Warp CPU.
+
+    Explicit indices address the supplied array views. Homogeneous wrappers pass the
+    full batch; packed wrappers pass one world's views and local indices.
 
     Args:
         item: Flattened environment-coordinate index.
@@ -517,7 +562,7 @@ def gvs_threadlike_force_at(
 
 
 @wp.kernel(enable_backward=False)
-def gvs_threadlike_force_kernel(
+def homogeneous_gvs_threadlike_force_kernel(
     strain_workspace: wp.array4d[wp.float64],
     controls: wp.array2d[wp.float64],
     link_global_to_local: wp.array2d[wp.int32],
@@ -532,7 +577,22 @@ def gvs_threadlike_force_kernel(
     epsilons: wp.array[wp.float64],
     output: wp.array2d[wp.float64],
 ):
-    """Reduce all paths for one active coordinate on Warp CPU.
+    """Integrate tendon forces for a homogeneous batch.
+
+    All worlds use the same structural dimensions and coordinate layout. Dimensions:
+    E = worlds, S = segments, Q = quadrature points, D = coordinates, A = actuator
+    paths.
+
+    Shared across worlds: ``link_global_to_local``, ``link_basis``,
+    ``physical_points``, ``integration_weights``, ``routing_intercepts``,
+    ``routing_slopes``, ``path_start_segments``, ``path_end_segments``,
+    ``coordinate_scales``, ``epsilons``.
+
+    State, computed operator, workspace and output arrays carry the world axis,
+    either explicitly or flattened as documented in Args. Their values may differ by
+    world.
+
+    Launch with ``dim=E*D``: one thread per flattened world/coordinate index.
 
     Args:
         strain_workspace: Prepared quadrature strains ``(E, S, Q, 6)``.
@@ -615,7 +675,11 @@ def packed_gvs_threadlike_force_kernel(
     world_data: wp.array(dtype=GVSThreadlikeForceData),
     work_items: wp.array(dtype=wp.vec3i),
 ):
-    """Reduce all paths for one active coordinate on Warp CPU.
+    """Reduce all paths for one active coordinate on Warp CPU using packed world data.
+
+    Each selected descriptor contains one world (E = 1). Structure and numerical
+    model parameters may differ between worlds. Descriptors may share allocations
+    when their values match.
 
     Launch with ``dim=len(work_items)``; each thread handles one work item.
 
@@ -669,6 +733,9 @@ def gvs_threadlike_force_block_at(
     output: wp.array2d[wp.float64],
 ):
     """Reduce paths with one CUDA block per environment and segment.
+
+    Explicit indices address the supplied array views. Homogeneous wrappers pass the
+    full batch; packed wrappers pass one world's views and local indices.
 
     Args:
         work_item: Flattened environment-segment index.
@@ -751,7 +818,7 @@ def gvs_threadlike_force_block_at(
 
 
 @wp.kernel(enable_backward=False)
-def gvs_threadlike_force_block_kernel(
+def homogeneous_gvs_threadlike_force_block_kernel(
     strain_workspace: wp.array4d[wp.float64],
     controls: wp.array2d[wp.float64],
     link_local_to_global: wp.array2d[wp.int32],
@@ -767,7 +834,23 @@ def gvs_threadlike_force_block_kernel(
     epsilons: wp.array[wp.float64],
     output: wp.array2d[wp.float64],
 ):
-    """Reduce paths with one CUDA block per environment and segment.
+    """Integrate homogeneous tendon forces with 128 threads per segment.
+
+    All worlds use the same structural dimensions and coordinate layout. Dimensions:
+    E = worlds, S = segments, Q = quadrature points, D = coordinates, A = actuator
+    paths.
+
+    Shared across worlds: ``link_local_to_global``, ``link_global_to_local``,
+    ``link_basis``, ``physical_points``, ``integration_weights``,
+    ``routing_intercepts``, ``routing_slopes``, ``path_start_segments``,
+    ``path_end_segments``, ``coordinate_scales``, ``epsilons``.
+
+    State, computed operator, workspace and output arrays carry the world axis,
+    either explicitly or flattened as documented in Args. Their values may differ by
+    world.
+
+    Launch with ``wp.launch_tiled(..., dim=E*S, block_dim=128)``. Exactly 128
+    threads cooperate on each world/segment index.
 
     Args:
         strain_workspace: Prepared quadrature strains ``(E, S, Q, 6)``.
@@ -856,7 +939,11 @@ def packed_gvs_threadlike_force_block_kernel(
     world_data: wp.array(dtype=GVSThreadlikeForceBlockData),
     work_items: wp.array(dtype=wp.vec3i),
 ):
-    """Reduce paths with one CUDA block per environment and segment.
+    """Reduce paths with one CUDA block per environment and segment using packed world data.
+
+    Each selected descriptor contains one world (E = 1). Structure and numerical
+    model parameters may differ between worlds. Descriptors may share allocations
+    when their values match.
 
     Launch with ``wp.launch_tiled(..., dim=len(work_items), block_dim=128)``.
     Each block cooperates on one work item; all lanes must participate.
@@ -914,7 +1001,7 @@ def _launch_strain_preparation(
         None. The launch is enqueued without synchronization.
     """
     wp.launch(
-        prepare_gvs_threadlike_strain_kernel,
+        homogeneous_gvs_threadlike_strain_kernel,
         dim=q.shape[0] * reference_strain.shape[0] * reference_strain.shape[1],
         inputs=[q, link_local_to_global, link_basis, reference_strain],
         outputs=[strain_workspace],
@@ -922,7 +1009,7 @@ def _launch_strain_preparation(
     )
 
 
-def launch_gvs_threadlike_actuation_matrix(
+def launch_homogeneous_gvs_threadlike_actuation_matrix(
     q: wp.array2d[wp.float64],
     link_local_to_global: wp.array2d[wp.int32],
     link_global_to_local: wp.array2d[wp.int32],
@@ -939,7 +1026,24 @@ def launch_gvs_threadlike_actuation_matrix(
     strain_workspace: wp.array4d[wp.float64],
     output: wp.array3d[wp.float64],
 ):
-    """Prepare strains and fill a caller-owned GVS actuation matrix.
+    """Launch gvs threadlike actuation matrix for a homogeneous batch.
+
+    All worlds use the same structural dimensions and coordinate layout. Dimensions:
+    E = worlds, S = segments, Q = quadrature points, D = coordinates, A = actuator
+    paths.
+
+    Shared across worlds: ``link_local_to_global``, ``link_global_to_local``,
+    ``link_basis``, ``reference_strain``, ``physical_points``,
+    ``integration_weights``, ``routing_intercepts``, ``routing_slopes``,
+    ``path_start_segments``, ``path_end_segments``, ``coordinate_scales``,
+    ``epsilons``.
+
+    State, computed operator, workspace and output arrays carry the world axis,
+    either explicitly or flattened as documented in Args. Their values may differ by
+    world.
+
+    The launcher derives its work grid from these common dimensions and enqueues the
+    homogeneous kernels on the current Warp stream.
 
     Args:
         q: Batched active configurations with shape ``(E, D)``.
@@ -973,7 +1077,7 @@ def launch_gvs_threadlike_actuation_matrix(
         strain_workspace,
     )
     wp.launch(
-        gvs_threadlike_matrix_kernel,
+        homogeneous_gvs_threadlike_matrix_kernel,
         dim=q.shape[0] * output.shape[1] * output.shape[2],
         inputs=[
             strain_workspace,
@@ -993,7 +1097,7 @@ def launch_gvs_threadlike_actuation_matrix(
     )
 
 
-def launch_gvs_threadlike_actuation_force(
+def launch_homogeneous_gvs_threadlike_actuation_force(
     q: wp.array2d[wp.float64],
     controls: wp.array2d[wp.float64],
     link_local_to_global: wp.array2d[wp.int32],
@@ -1011,7 +1115,24 @@ def launch_gvs_threadlike_actuation_force(
     strain_workspace: wp.array4d[wp.float64],
     output: wp.array2d[wp.float64],
 ):
-    """Prepare strains and fill a caller-owned fused GVS force.
+    """Prepare strains and fill a caller-owned fused GVS force in a homogeneous batch.
+
+    All worlds use the same structural dimensions and coordinate layout. Dimensions:
+    E = worlds, S = segments, Q = quadrature points, D = coordinates, A = actuator
+    paths.
+
+    Shared across worlds: ``link_local_to_global``, ``link_global_to_local``,
+    ``link_basis``, ``reference_strain``, ``physical_points``,
+    ``integration_weights``, ``routing_intercepts``, ``routing_slopes``,
+    ``path_start_segments``, ``path_end_segments``, ``coordinate_scales``,
+    ``epsilons``.
+
+    State, computed operator, workspace and output arrays carry the world axis,
+    either explicitly or flattened as documented in Args. Their values may differ by
+    world.
+
+    The launcher derives its work grid from these common dimensions and enqueues the
+    homogeneous kernels on the current Warp stream.
 
     Args:
         q: Batched active configurations with shape ``(E, D)``.
@@ -1062,7 +1183,7 @@ def launch_gvs_threadlike_actuation_force(
     ]
     if q.device.is_cuda:
         wp.launch_tiled(
-            gvs_threadlike_force_block_kernel,
+            homogeneous_gvs_threadlike_force_block_kernel,
             dim=q.shape[0] * link_local_to_global.shape[0],
             inputs=[
                 strain_workspace,
@@ -1084,7 +1205,7 @@ def launch_gvs_threadlike_actuation_force(
         )
     else:
         wp.launch(
-            gvs_threadlike_force_kernel,
+            homogeneous_gvs_threadlike_force_kernel,
             dim=q.shape[0] * output.shape[1],
             inputs=common,
             outputs=[output],
@@ -1093,21 +1214,21 @@ def launch_gvs_threadlike_actuation_force(
 
 
 gvs_threadlike_actuation_matrix = wp.jax_callable(
-    launch_gvs_threadlike_actuation_matrix, num_outputs=2
+    launch_homogeneous_gvs_threadlike_actuation_matrix, num_outputs=2
 )
 gvs_threadlike_actuation_force = wp.jax_callable(
-    launch_gvs_threadlike_actuation_force, num_outputs=2
+    launch_homogeneous_gvs_threadlike_actuation_force, num_outputs=2
 )
 
 
 __all__ = [
     "GVS_THREADLIKE_FORCE_BLOCK_DIM",
-    "gvs_threadlike_force_block_kernel",
-    "gvs_threadlike_force_kernel",
-    "gvs_threadlike_matrix_kernel",
-    "launch_gvs_threadlike_actuation_force",
-    "launch_gvs_threadlike_actuation_matrix",
-    "prepare_gvs_threadlike_strain_kernel",
+    "homogeneous_gvs_threadlike_force_block_kernel",
+    "homogeneous_gvs_threadlike_force_kernel",
+    "homogeneous_gvs_threadlike_matrix_kernel",
+    "launch_homogeneous_gvs_threadlike_actuation_force",
+    "launch_homogeneous_gvs_threadlike_actuation_matrix",
+    "homogeneous_gvs_threadlike_strain_kernel",
 ]
 
 

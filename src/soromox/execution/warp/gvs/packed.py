@@ -100,7 +100,11 @@ def packed_mixed_chain_kernel(
     work_items: wp.array(dtype=wp.vec3i),
     is_floating: wp.array(dtype=wp.int32),
 ):
-    """Evaluate mixed fixed-base and floating-base GVS chain dynamics.
+    """Evaluate mixed fixed-base and floating-base GVS chain dynamics using packed world data.
+
+    Each selected descriptor contains one world (E = 1). Structure and numerical
+    model parameters may differ between worlds. Descriptors may share allocations
+    when their values match.
 
     Launch with ``wp.launch_tiled(..., dim=len(work_items), block_dim=B)``.
     Each block cooperates on one work item; all lanes must participate.

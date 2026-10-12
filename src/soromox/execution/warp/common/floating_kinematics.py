@@ -27,6 +27,9 @@ def _compose_spatial_poses_at(
 ):
     """Compose batched spatial base poses and base-relative transforms.
 
+    Explicit indices address the supplied array views. Homogeneous wrappers pass the
+    full batch; packed wrappers pass one world's views and local indices.
+
     Args:
         environment: Batch row in the supplied arrays; use zero for a single-world view.
         sample: Sample index within the selected environment.
@@ -69,12 +72,20 @@ def _compose_spatial_poses_at(
 
 
 @wp.kernel(enable_backward=False)
-def _compose_spatial_poses_kernel(
+def homogeneous_compose_spatial_poses_kernel(
     base_pose: wp.array2d[wp.float64],
     relative_pose: wp.array4d[wp.float64],
     poses: wp.array4d[wp.float64],
 ):
-    """Compose batched spatial base poses and base-relative transforms.
+    """Compose floating-base poses for a homogeneous batch.
+
+    All worlds use the same structural dimensions and coordinate layout. Dimensions:
+    E = worlds, N = samples.
+
+    All array arguments carry a world axis and their values may differ by world.
+    Sample and coordinate counts are common to the batch.
+
+    Launch with ``dim=(E, N)``: one thread per world/sample pair.
 
     Args:
         base_pose: Scalar-last base poses with shape ``(E, 7)``.
@@ -112,7 +123,11 @@ def packed_compose_spatial_poses_kernel(
     world_data: wp.array(dtype=SpatialPoseCompositionData),
     work_items: wp.array(dtype=wp.vec3i),
 ):
-    """Compose batched spatial base poses and base-relative transforms.
+    """Compose batched spatial base poses and base-relative transforms using packed world data.
+
+    Each selected descriptor contains one world (E = 1). Structure and numerical
+    model parameters may differ between worlds. Descriptors may share allocations
+    when their values match.
 
     Launch with ``dim=len(work_items)``; each thread handles one work item.
 
@@ -143,6 +158,9 @@ def _compose_spatial_jacobians_at(
     jacobians: wp.array4d[wp.float64],
 ):
     """Compose spatial floating-base Jacobians on one thread per sample.
+
+    Explicit indices address the supplied array views. Homogeneous wrappers pass the
+    full batch; packed wrappers pass one world's views and local indices.
 
     Args:
         environment: Batch row in the supplied arrays; use zero for a single-world view.
@@ -215,13 +233,21 @@ def _compose_spatial_jacobians_at(
 
 
 @wp.kernel(enable_backward=False)
-def _compose_spatial_jacobians_kernel(
+def homogeneous_compose_spatial_jacobians_kernel(
     base_pose: wp.array2d[wp.float64],
     relative_pose: wp.array4d[wp.float64],
     jacobians_internal: wp.array4d[wp.float64],
     jacobians: wp.array4d[wp.float64],
 ):
-    """Compose spatial floating-base Jacobians on one thread per sample.
+    """Compose floating-base Jacobians for a homogeneous batch.
+
+    All worlds use the same structural dimensions and coordinate layout. Dimensions:
+    E = worlds, N = samples, D = coordinates.
+
+    All array arguments carry a world axis and their values may differ by world.
+    Sample and coordinate counts are common to the batch.
+
+    Launch with ``dim=(E, N)``: one thread per world/sample pair.
 
     Args:
         base_pose: Scalar-last base poses with shape ``(E, 7)``.
@@ -266,7 +292,11 @@ def packed_compose_spatial_jacobians_kernel(
     world_data: wp.array(dtype=SpatialJacobianCompositionData),
     work_items: wp.array(dtype=wp.vec3i),
 ):
-    """Compose spatial floating-base Jacobians on one thread per sample.
+    """Compose spatial floating-base Jacobians on one thread per sample using packed world data.
+
+    Each selected descriptor contains one world (E = 1). Structure and numerical
+    model parameters may differ between worlds. Descriptors may share allocations
+    when their values match.
 
     Launch with ``dim=len(work_items)``; each thread handles one work item.
 
@@ -302,6 +332,9 @@ def _compose_spatial_jacobians_tiled_at(
     jacobians: wp.array4d[wp.float64],
 ):
     """Compose one floating spatial Jacobian cooperatively per sample.
+
+    Explicit indices address the supplied array views. Homogeneous wrappers pass the
+    full batch; packed wrappers pass one world's views and local indices.
 
     Args:
         work_item: Flattened environment-sample index in the supplied arrays.
@@ -380,13 +413,22 @@ def _compose_spatial_jacobians_tiled_at(
 
 
 @wp.kernel(enable_backward=False)
-def _compose_spatial_jacobians_tiled_kernel(
+def homogeneous_compose_spatial_jacobians_tiled_kernel(
     base_pose: wp.array2d[wp.float64],
     relative_pose: wp.array4d[wp.float64],
     jacobians_internal: wp.array4d[wp.float64],
     jacobians: wp.array4d[wp.float64],
 ):
-    """Compose one floating spatial Jacobian cooperatively per sample.
+    """Compose homogeneous floating-base Jacobians cooperatively.
+
+    All worlds use the same structural dimensions and coordinate layout. Dimensions:
+    E = worlds, N = samples, D = coordinates, B = threads per block.
+
+    All array arguments carry a world axis and their values may differ by world.
+    Sample and coordinate counts are common to the batch.
+
+    Launch with ``wp.launch_tiled(..., dim=E*N, block_dim=B)``. Each block
+    cooperates on one flattened world/sample index.
 
     Args:
         base_pose: Batched scalar-last quaternion poses with shape ``(E, 7)``.
@@ -411,7 +453,11 @@ def packed_compose_spatial_jacobians_tiled_kernel(
     world_data: wp.array(dtype=SpatialJacobianCompositionData),
     work_items: wp.array(dtype=wp.vec3i),
 ):
-    """Compose one floating spatial Jacobian cooperatively per sample.
+    """Compose one floating spatial Jacobian cooperatively per sample using packed world data.
+
+    Each selected descriptor contains one world (E = 1). Structure and numerical
+    model parameters may differ between worlds. Descriptors may share allocations
+    when their values match.
 
     Launch with ``wp.launch_tiled(..., dim=len(work_items), block_dim=B)``.
     Each block cooperates on one work item; all lanes must participate.
@@ -452,6 +498,9 @@ def _compose_spatial_poses_and_twists_at(
     twists: wp.array3d[wp.float64],
 ):
     """Compose floating poses and one augmented Jacobian direction.
+
+    Explicit indices address the supplied array views. Homogeneous wrappers pass the
+    full batch; packed wrappers pass one world's views and local indices.
 
     Args:
         environment: Batch row in the supplied arrays; use zero for a single-world view.
@@ -536,7 +585,7 @@ def _compose_spatial_poses_and_twists_at(
 
 
 @wp.kernel(enable_backward=False)
-def _compose_spatial_poses_and_twists_kernel(
+def homogeneous_compose_spatial_poses_and_twists_kernel(
     base_pose: wp.array2d[wp.float64],
     qd: wp.array2d[wp.float64],
     relative_pose: wp.array4d[wp.float64],
@@ -544,7 +593,15 @@ def _compose_spatial_poses_and_twists_kernel(
     poses: wp.array4d[wp.float64],
     twists: wp.array3d[wp.float64],
 ):
-    """Compose floating poses and one augmented Jacobian direction.
+    """Compose floating-base poses and twists for a homogeneous batch.
+
+    All worlds use the same structural dimensions and coordinate layout. Dimensions:
+    E = worlds, N = samples.
+
+    All array arguments carry a world axis and their values may differ by world.
+    Sample and coordinate counts are common to the batch.
+
+    Launch with ``dim=(E, N)``: one thread per world/sample pair.
 
     Args:
         base_pose: Runtime scalar-last base poses ``(E, 7)``.
@@ -602,7 +659,11 @@ def packed_compose_spatial_poses_and_twists_kernel(
     world_data: wp.array(dtype=SpatialPoseTwistCompositionData),
     work_items: wp.array(dtype=wp.vec3i),
 ):
-    """Compose floating poses and one augmented Jacobian direction.
+    """Compose floating poses and one augmented Jacobian direction using packed world data.
+
+    Each selected descriptor contains one world (E = 1). Structure and numerical
+    model parameters may differ between worlds. Descriptors may share allocations
+    when their values match.
 
     Launch with ``dim=len(work_items)``; each thread handles one work item.
 
@@ -641,6 +702,9 @@ def _compose_spatial_wrench_vjp_at(
     base_generalized_force: wp.array2d[wp.float64],
 ):
     """Pull absolute sample wrenches through floating-base composition.
+
+    Explicit indices address the supplied array views. Homogeneous wrappers pass the
+    full batch; packed wrappers pass one world's views and local indices.
 
     Args:
         environment: Batch row in the supplied arrays; use zero for a single-world view.
@@ -696,14 +760,22 @@ def _compose_spatial_wrench_vjp_at(
 
 
 @wp.kernel(enable_backward=False)
-def _compose_spatial_wrench_vjp_kernel(
+def homogeneous_compose_spatial_wrench_vjp_kernel(
     base_pose: wp.array2d[wp.float64],
     relative_pose: wp.array4d[wp.float64],
     inertial_wrenches: wp.array3d[wp.float64],
     relative_wrenches: wp.array3d[wp.float64],
     base_generalized_force: wp.array2d[wp.float64],
 ):
-    """Pull absolute sample wrenches through floating-base composition.
+    """Project floating-base sample wrenches for a homogeneous batch.
+
+    All worlds use the same structural dimensions and coordinate layout. Dimensions:
+    E = worlds, N = samples.
+
+    All array arguments carry a world axis and their values may differ by world.
+    Sample and coordinate counts are common to the batch.
+
+    Launch with ``dim=(E, N)``: one thread per world/sample pair.
 
     Args:
         base_pose: Runtime scalar-last base poses ``(E, 7)``.
@@ -758,7 +830,11 @@ def packed_compose_spatial_wrench_vjp_kernel(
     world_data: wp.array(dtype=SpatialWrenchProjectionData),
     work_items: wp.array(dtype=wp.vec3i),
 ):
-    """Pull absolute sample wrenches through floating-base composition.
+    """Pull absolute sample wrenches through floating-base composition using packed world data.
+
+    Each selected descriptor contains one world (E = 1). Structure and numerical
+    model parameters may differ between worlds. Descriptors may share allocations
+    when their values match.
 
     Launch with ``dim=len(work_items)``; each thread handles one work item.
 
@@ -799,6 +875,9 @@ def _assemble_floating_vjp_at(
 ):
     """Assemble base and internal blocks of an augmented floating VJP.
 
+    Explicit indices address the supplied array views. Homogeneous wrappers pass the
+    full batch; packed wrappers pass one world's views and local indices.
+
     Args:
         environment: Batch row in the supplied arrays; use zero for a single-world view.
         column: Generalized-velocity column within the selected environment.
@@ -821,12 +900,21 @@ def _assemble_floating_vjp_at(
 
 
 @wp.kernel(enable_backward=False)
-def _assemble_floating_vjp_kernel(
+def homogeneous_assemble_floating_vjp_kernel(
     base_generalized_force: wp.array2d[wp.float64],
     internal_generalized_force: wp.array2d[wp.float64],
     generalized_force: wp.array2d[wp.float64],
 ):
-    """Assemble base and internal blocks of an augmented floating VJP.
+    """Assemble floating-base generalized forces for a homogeneous batch.
+
+    All worlds use the same structural dimensions and coordinate layout. Dimensions:
+    E = worlds, D = coordinates, B = threads per block.
+
+    All array arguments carry a world axis and their values may differ by world.
+    Sample and coordinate counts are common to the batch.
+
+    Launch with ``dim=(E, D + 6)``: one thread writes one world/augmented-coordinate
+    entry.
 
     Args:
         base_generalized_force: Base effort ``(E, B)``.
@@ -870,7 +958,11 @@ def packed_assemble_floating_vjp_kernel(
     world_data: wp.array(dtype=FloatingBaseForceData),
     work_items: wp.array(dtype=wp.vec3i),
 ):
-    """Assemble base and internal blocks of an augmented floating VJP.
+    """Assemble base and internal blocks of an augmented floating VJP using packed world data.
+
+    Each selected descriptor contains one world (E = 1). Structure and numerical
+    model parameters may differ between worlds. Descriptors may share allocations
+    when their values match.
 
     Launch with ``dim=len(work_items)``; each thread handles one work item.
 
@@ -1081,12 +1173,21 @@ def _compose_planar_jacobians_kernel(
         column += 1
 
 
-def launch_spatial_floating_pose_composition(
+def launch_homogeneous_spatial_floating_pose_composition(
     base_pose: wp.array2d[wp.float64],
     relative_pose: wp.array4d[wp.float64],
     poses: wp.array4d[wp.float64],
 ):
-    """Compose batched spatial runtime-base and relative poses.
+    """Compose batched spatial runtime-base and relative poses in a homogeneous batch.
+
+    All worlds use the same structural dimensions and coordinate layout. Dimensions:
+    E = worlds, N = samples.
+
+    All array arguments carry a world axis and their values may differ by world.
+    Sample and coordinate counts are common to the batch.
+
+    The launcher derives its work grid from these common dimensions and enqueues the
+    homogeneous kernels on the current Warp stream.
 
     Args:
         base_pose: Scalar-last base poses with shape ``(E, 7)``.
@@ -1098,21 +1199,32 @@ def launch_spatial_floating_pose_composition(
         None. The pose kernel is enqueued on the active Warp stream.
     """
     wp.launch(
-        _compose_spatial_poses_kernel,
+        homogeneous_compose_spatial_poses_kernel,
         dim=(relative_pose.shape[0], relative_pose.shape[1]),
         inputs=[base_pose, relative_pose],
         outputs=[poses],
     )
 
 
-def launch_spatial_floating_jacobian_composition(
+def launch_homogeneous_spatial_floating_jacobian_composition(
     base_pose: wp.array2d[wp.float64],
     relative_pose: wp.array4d[wp.float64],
     jacobians_internal: wp.array4d[wp.float64],
     block_dim: int,
     jacobians: wp.array4d[wp.float64],
 ):
-    """Build batched spatial base columns and rotate internal columns.
+    """Launch spatial floating jacobian composition for a homogeneous batch.
+
+    All worlds use the same structural dimensions and coordinate layout. Dimensions:
+    E = worlds, N = samples, D = coordinates.
+
+    Shared across worlds: ``block_dim``.
+
+    All array arguments carry a world axis and their values may differ by world.
+    Sample and coordinate counts are common to the batch.
+
+    The launcher derives its work grid from these common dimensions and enqueues the
+    homogeneous kernels on the current Warp stream.
 
     Args:
         base_pose: Batched scalar-last quaternion poses with shape ``(E, 7)``.
@@ -1128,7 +1240,7 @@ def launch_spatial_floating_jacobian_composition(
     """
     if base_pose.device.is_cuda:
         wp.launch_tiled(
-            _compose_spatial_jacobians_tiled_kernel,
+            homogeneous_compose_spatial_jacobians_tiled_kernel,
             dim=relative_pose.shape[0] * relative_pose.shape[1],
             inputs=[base_pose, relative_pose, jacobians_internal],
             outputs=[jacobians],
@@ -1136,14 +1248,14 @@ def launch_spatial_floating_jacobian_composition(
         )
     else:
         wp.launch(
-            _compose_spatial_jacobians_kernel,
+            homogeneous_compose_spatial_jacobians_kernel,
             dim=(relative_pose.shape[0], relative_pose.shape[1]),
             inputs=[base_pose, relative_pose, jacobians_internal],
             outputs=[jacobians],
         )
 
 
-def launch_spatial_floating_kinematics_composition(
+def launch_homogeneous_spatial_floating_kinematics_composition(
     base_pose: wp.array2d[wp.float64],
     relative_pose: wp.array4d[wp.float64],
     jacobians_internal: wp.array4d[wp.float64],
@@ -1151,7 +1263,18 @@ def launch_spatial_floating_kinematics_composition(
     poses: wp.array4d[wp.float64],
     jacobians: wp.array4d[wp.float64],
 ):
-    """Compose spatial poses and augmented Jacobians in one callable.
+    """Launch spatial floating kinematics composition for a homogeneous batch.
+
+    All worlds use the same structural dimensions and coordinate layout. Dimensions:
+    E = worlds, N = samples, D = coordinates.
+
+    Shared across worlds: ``block_dim``.
+
+    All array arguments carry a world axis and their values may differ by world.
+    Sample and coordinate counts are common to the batch.
+
+    The launcher derives its work grid from these common dimensions and enqueues the
+    homogeneous kernels on the current Warp stream.
 
     Args:
         base_pose: Scalar-last base poses with shape ``(E, 7)``.
@@ -1168,13 +1291,15 @@ def launch_spatial_floating_kinematics_composition(
         None. The pose and Jacobian kernels are enqueued on the active Warp
         stream.
     """
-    launch_spatial_floating_pose_composition(base_pose, relative_pose, poses)
-    launch_spatial_floating_jacobian_composition(
+    launch_homogeneous_spatial_floating_pose_composition(
+        base_pose, relative_pose, poses
+    )
+    launch_homogeneous_spatial_floating_jacobian_composition(
         base_pose, relative_pose, jacobians_internal, block_dim, jacobians
     )
 
 
-def launch_spatial_floating_kinematics_jvp_composition(
+def launch_homogeneous_spatial_floating_kinematics_jvp_composition(
     base_pose: wp.array2d[wp.float64],
     qd: wp.array2d[wp.float64],
     relative_pose: wp.array4d[wp.float64],
@@ -1182,7 +1307,16 @@ def launch_spatial_floating_kinematics_jvp_composition(
     poses: wp.array4d[wp.float64],
     twists: wp.array3d[wp.float64],
 ):
-    """Compose spatial poses and ``J @ qd`` without an augmented Jacobian.
+    """Launch spatial floating kinematics jvp composition for a homogeneous batch.
+
+    All worlds use the same structural dimensions and coordinate layout. Dimensions:
+    E = worlds, N = samples.
+
+    All array arguments carry a world axis and their values may differ by world.
+    Sample and coordinate counts are common to the batch.
+
+    The launcher derives its work grid from these common dimensions and enqueues the
+    homogeneous kernels on the current Warp stream.
 
     Args:
         base_pose: Runtime scalar-last base poses ``(E, 7)``.
@@ -1198,21 +1332,30 @@ def launch_spatial_floating_kinematics_jvp_composition(
     """
 
     wp.launch(
-        _compose_spatial_poses_and_twists_kernel,
+        homogeneous_compose_spatial_poses_and_twists_kernel,
         dim=(relative_pose.shape[0], relative_pose.shape[1]),
         inputs=[base_pose, qd, relative_pose, twists_internal],
         outputs=[poses, twists],
     )
 
 
-def launch_spatial_floating_vjp_composition(
+def launch_homogeneous_spatial_floating_vjp_composition(
     base_pose: wp.array2d[wp.float64],
     relative_pose: wp.array4d[wp.float64],
     inertial_wrenches: wp.array3d[wp.float64],
     relative_wrenches: wp.array3d[wp.float64],
     base_generalized_force: wp.array2d[wp.float64],
 ):
-    """Split an augmented floating-base VJP into base and internal seeds.
+    """Launch spatial floating vjp composition for a homogeneous batch.
+
+    All worlds use the same structural dimensions and coordinate layout. Dimensions:
+    E = worlds, N = samples.
+
+    All array arguments carry a world axis and their values may differ by world.
+    Sample and coordinate counts are common to the batch.
+
+    The launcher derives its work grid from these common dimensions and enqueues the
+    homogeneous kernels on the current Warp stream.
 
     Args:
         base_pose: Runtime scalar-last base poses ``(E, 7)``.
@@ -1228,19 +1371,28 @@ def launch_spatial_floating_vjp_composition(
 
     base_generalized_force.zero_()
     wp.launch(
-        _compose_spatial_wrench_vjp_kernel,
+        homogeneous_compose_spatial_wrench_vjp_kernel,
         dim=(relative_pose.shape[0], relative_pose.shape[1]),
         inputs=[base_pose, relative_pose, inertial_wrenches],
         outputs=[relative_wrenches, base_generalized_force],
     )
 
 
-def launch_spatial_floating_vjp_assembly(
+def launch_homogeneous_spatial_floating_vjp_assembly(
     base_generalized_force: wp.array2d[wp.float64],
     internal_generalized_force: wp.array2d[wp.float64],
     generalized_force: wp.array2d[wp.float64],
 ):
-    """Assemble a spatial floating-base VJP without host-side concatenation.
+    """Launch spatial floating vjp assembly for a homogeneous batch.
+
+    All worlds use the same structural dimensions and coordinate layout. Dimensions:
+    E = worlds, D = coordinates.
+
+    All array arguments carry a world axis and their values may differ by world.
+    Sample and coordinate counts are common to the batch.
+
+    The launcher derives its work grid from these common dimensions and enqueues the
+    homogeneous kernels on the current Warp stream.
 
     Args:
         base_generalized_force: Base effort in angular-linear order ``(E, 6)``.
@@ -1252,7 +1404,7 @@ def launch_spatial_floating_vjp_assembly(
     """
 
     wp.launch(
-        _assemble_floating_vjp_kernel,
+        homogeneous_assemble_floating_vjp_kernel,
         dim=generalized_force.shape,
         inputs=[base_generalized_force, internal_generalized_force],
         outputs=[generalized_force],
@@ -1337,7 +1489,7 @@ def launch_planar_floating_vjp_assembly(
     """
 
     wp.launch(
-        _assemble_floating_vjp_kernel,
+        homogeneous_assemble_floating_vjp_kernel,
         dim=generalized_force.shape,
         inputs=[base_generalized_force, internal_generalized_force],
         outputs=[generalized_force],
@@ -1423,13 +1575,13 @@ def launch_planar_floating_kinematics_composition(
 
 
 spatial_floating_pose_composition = wp.jax_callable(
-    launch_spatial_floating_pose_composition, num_outputs=1
+    launch_homogeneous_spatial_floating_pose_composition, num_outputs=1
 )
 spatial_floating_jacobian_composition = wp.jax_callable(
-    launch_spatial_floating_jacobian_composition, num_outputs=1
+    launch_homogeneous_spatial_floating_jacobian_composition, num_outputs=1
 )
 spatial_floating_kinematics_composition = wp.jax_callable(
-    launch_spatial_floating_kinematics_composition, num_outputs=2
+    launch_homogeneous_spatial_floating_kinematics_composition, num_outputs=2
 )
 planar_floating_pose_composition = wp.jax_callable(
     launch_planar_floating_pose_composition, num_outputs=1
@@ -1449,12 +1601,12 @@ __all__ = [
     "launch_planar_floating_pose_composition",
     "launch_planar_floating_vjp_assembly",
     "launch_planar_floating_vjp_composition",
-    "launch_spatial_floating_jacobian_composition",
-    "launch_spatial_floating_kinematics_composition",
-    "launch_spatial_floating_kinematics_jvp_composition",
-    "launch_spatial_floating_pose_composition",
-    "launch_spatial_floating_vjp_composition",
-    "launch_spatial_floating_vjp_assembly",
+    "launch_homogeneous_spatial_floating_jacobian_composition",
+    "launch_homogeneous_spatial_floating_kinematics_composition",
+    "launch_homogeneous_spatial_floating_kinematics_jvp_composition",
+    "launch_homogeneous_spatial_floating_pose_composition",
+    "launch_homogeneous_spatial_floating_vjp_composition",
+    "launch_homogeneous_spatial_floating_vjp_assembly",
     "planar_floating_jacobian_composition",
     "planar_floating_kinematics_composition",
     "planar_floating_pose_composition",
@@ -1476,4 +1628,13 @@ __all__ += [
     "packed_compose_spatial_wrench_vjp_kernel",
     "FloatingBaseForceData",
     "packed_assemble_floating_vjp_kernel",
+]
+
+__all__ += [
+    "homogeneous_compose_spatial_poses_kernel",
+    "homogeneous_compose_spatial_jacobians_kernel",
+    "homogeneous_compose_spatial_jacobians_tiled_kernel",
+    "homogeneous_compose_spatial_poses_and_twists_kernel",
+    "homogeneous_compose_spatial_wrench_vjp_kernel",
+    "homogeneous_assemble_floating_vjp_kernel",
 ]

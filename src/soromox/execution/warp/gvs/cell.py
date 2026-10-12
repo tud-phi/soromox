@@ -152,6 +152,9 @@ def cell_terms_at(
 ):
     """Compute general cell-local Lie data for one batched cell work item.
 
+    Explicit indices address the supplied array views. Homogeneous wrappers pass the
+    full batch; packed wrappers pass one world's views and local indices.
+
     Args:
         work_item: Flattened environment-segment-cell index in the supplied arrays.
         lane: Thread index within the cooperative work item.
@@ -286,7 +289,7 @@ def cell_terms_at(
 
 
 @wp.kernel(enable_backward=False)
-def cell_terms_kernel(
+def homogeneous_cell_terms_kernel(
     q_link: wp.array2d[wp.float64],
     qd_link: wp.array2d[wp.float64],
     basis_z1: wp.array2d[wp.float64],
@@ -304,7 +307,20 @@ def cell_terms_kernel(
     step_velocity: wp.array2d[wp.float64],
     tangent_velocity_dot: wp.array2d[wp.float64],
 ):
-    """Compute general cell-local Lie data for one batched cell work item.
+    """Compute Lie operators for a homogeneous batch of cells.
+
+    All worlds use the same structural dimensions and coordinate layout. Dimensions:
+    E = worlds, S = segments, C = cells per segment.
+
+    Shared across worlds: ``basis_z1``, ``basis_z2``, ``basis_rows``,
+    ``reference_z1``, ``reference_z2``, ``segment_lengths``, ``cell_widths``,
+    ``num_cells``, ``order_zero``.
+
+    State, computed operator, workspace and output arrays carry the world axis,
+    either explicitly or flattened as documented in Args. Their values may differ by
+    world.
+
+    Launch with ``dim=E*S*C``: one thread per flattened world/segment/cell index.
 
     Args:
         q_link: Batched padded segment-local coordinates.
@@ -352,7 +368,7 @@ def cell_terms_kernel(
 
 
 @wp.kernel(enable_backward=False)
-def cooperative_cell_terms_kernel(
+def homogeneous_cooperative_cell_terms_kernel(
     q_link: wp.array2d[wp.float64],
     qd_link: wp.array2d[wp.float64],
     basis_z1: wp.array2d[wp.float64],
@@ -370,7 +386,21 @@ def cooperative_cell_terms_kernel(
     step_velocity: wp.array2d[wp.float64],
     tangent_velocity_dot: wp.array2d[wp.float64],
 ):
-    """Evaluate cell Lie operators with two CUDA threads per cell.
+    """Compute homogeneous cell operators with two CUDA threads per cell.
+
+    All worlds use the same structural dimensions and coordinate layout. Dimensions:
+    E = worlds, S = segments, C = cells per segment.
+
+    Shared across worlds: ``basis_z1``, ``basis_z2``, ``basis_rows``,
+    ``reference_z1``, ``reference_z2``, ``segment_lengths``, ``cell_widths``,
+    ``num_cells``, ``order_zero``.
+
+    State, computed operator, workspace and output arrays carry the world axis,
+    either explicitly or flattened as documented in Args. Their values may differ by
+    world.
+
+    Launch with ``dim=2*E*S*C`` and ``block_dim=128``. Adjacent thread pairs handle
+    one flattened world/segment/cell index.
 
     Launch a one-dimensional grid of twice the number of cells. Threads
     share independent adjoint and tangent columns; no block barrier is required.
@@ -469,7 +499,11 @@ class GVSCellTermsData:
 def packed_cell_terms_kernel(
     world_data: wp.array(dtype=GVSCellTermsData), work_items: wp.array(dtype=wp.vec3i)
 ):
-    """Compute general cell-local Lie data for one batched cell work item.
+    """Compute general cell-local Lie data for one batched cell work item using packed world data.
+
+    Each selected descriptor contains one world (E = 1). Structure and numerical
+    model parameters may differ between worlds. Descriptors may share allocations
+    when their values match.
 
     Launch with ``dim=len(work_items)``; each thread handles one work item.
 
@@ -512,7 +546,11 @@ def packed_cell_terms_kernel(
 def packed_cooperative_cell_terms_kernel(
     world_data: wp.array(dtype=GVSCellTermsData), work_items: wp.array(dtype=wp.vec3i)
 ):
-    """Compute general cell-local Lie data for one batched cell work item.
+    """Compute general cell-local Lie data for one batched cell work item using packed world data.
+
+    Each selected descriptor contains one world (E = 1). Structure and numerical
+    model parameters may differ between worlds. Descriptors may share allocations
+    when their values match.
 
     Launch with ``dim=(len(work_items), 2)`` and ``block_dim=128``.
     Two threads share each cell without a block barrier.
@@ -552,7 +590,7 @@ def packed_cooperative_cell_terms_kernel(
     )
 
 
-def launch_cell_terms(
+def launch_homogeneous_cell_terms(
     q_link: wp.array2d[wp.float64],
     qd_link: wp.array2d[wp.float64],
     basis_z1: wp.array2d[wp.float64],
@@ -570,7 +608,20 @@ def launch_cell_terms(
     step_velocity: wp.array2d[wp.float64],
     tangent_velocity_dot: wp.array2d[wp.float64],
 ):
-    """Launch parallel GVS link-cell Lie-operator evaluation.
+    """Launch parallel GVS link-cell Lie-operator evaluation in a homogeneous batch.
+
+    All worlds use the same structural dimensions and coordinate layout.
+
+    Shared across worlds: ``basis_z1``, ``basis_z2``, ``basis_rows``,
+    ``reference_z1``, ``reference_z2``, ``segment_lengths``, ``cell_widths``,
+    ``num_cells``, ``order_zero``.
+
+    State, computed operator, workspace and output arrays carry the world axis,
+    either explicitly or flattened as documented in Args. Their values may differ by
+    world.
+
+    The launcher derives its work grid from these common dimensions and enqueues the
+    homogeneous kernels on the current Warp stream.
 
     Args:
         q_link: Padded FP64 link coordinates with shape
@@ -598,7 +649,9 @@ def launch_cell_terms(
     work_items = q_link.shape[0] * reference_z1.shape[0] // segment_lengths.shape[0]
     cooperative = q_link.device.is_cuda
     wp.launch(
-        cooperative_cell_terms_kernel if cooperative else cell_terms_kernel,
+        homogeneous_cooperative_cell_terms_kernel
+        if cooperative
+        else homogeneous_cell_terms_kernel,
         dim=work_items * 2 if cooperative else work_items,
         inputs=[
             q_link,
@@ -624,12 +677,12 @@ def launch_cell_terms(
     )
 
 
-scalable_cell_terms = wp.jax_callable(launch_cell_terms, num_outputs=5)
-__all__ = ["cell_terms_kernel", "launch_cell_terms"]
+scalable_cell_terms = wp.jax_callable(launch_homogeneous_cell_terms, num_outputs=5)
+__all__ = ["homogeneous_cell_terms_kernel", "launch_homogeneous_cell_terms"]
 
 
 __all__ += [
-    "cooperative_cell_terms_kernel",
+    "homogeneous_cooperative_cell_terms_kernel",
     "GVSCellTermsData",
     "packed_cell_terms_kernel",
     "packed_cooperative_cell_terms_kernel",

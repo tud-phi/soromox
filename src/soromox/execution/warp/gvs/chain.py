@@ -58,6 +58,9 @@ def persistent_chain_at(
 ):
     """Traverse one full serial GVS chain per cooperative block.
 
+    Explicit indices address the supplied array views. Homogeneous wrappers pass the
+    full batch; packed wrappers pass one world's views and local indices.
+
     Args:
         environment: Batch row in the supplied arrays; use zero for a single-world view.
         lane: Thread index within the cooperative work item.
@@ -553,7 +556,7 @@ def persistent_chain_at(
 
 
 @wp.kernel(enable_backward=False)
-def persistent_chain_kernel(
+def homogeneous_persistent_chain_kernel(
     joint_adjoint: wp.array2d[wp.float64],
     joint_adjoint_dot: wp.array2d[wp.float64],
     joint_tangent: wp.array2d[wp.float64],
@@ -586,7 +589,22 @@ def persistent_chain_kernel(
     coriolis_qd: wp.array2d[wp.float64],
     gravity_force: wp.array2d[wp.float64],
 ):
-    """Traverse one full serial GVS chain per cooperative block.
+    """Assemble dynamics for a homogeneous batch of fixed-base chains.
+
+    All worlds use the same structural dimensions and coordinate layout. Dimensions:
+    E = worlds, B = threads per block.
+
+    Shared across worlds: ``global_to_local``, ``active_dofs``,
+    ``inertia_upper_rows``, ``inertia_upper_columns``, ``weighted_masses``,
+    ``gravity_base``, ``num_cells_array``, ``num_quadrature_array``,
+    ``lanes_per_block``.
+
+    State, computed operator, workspace and output arrays carry the world axis,
+    either explicitly or flattened as documented in Args. Their values may differ by
+    world.
+
+    Launch with ``wp.launch_tiled(..., dim=E, block_dim=B)``. Set
+    ``lanes_per_block[0] = B``; all lanes cooperate on one world.
 
     Args:
         joint_adjoint: Flattened joint inverse adjoints.
@@ -741,7 +759,11 @@ class GVSChainData:
 def packed_persistent_chain_kernel(
     world_data: wp.array(dtype=GVSChainData), work_items: wp.array(dtype=wp.vec3i)
 ):
-    """Traverse one full serial GVS chain per cooperative block.
+    """Traverse one full serial GVS chain per cooperative block using packed world data.
+
+    Each selected descriptor contains one world (E = 1). Structure and numerical
+    model parameters may differ between worlds. Descriptors may share allocations
+    when their values match.
 
     Launch with ``wp.launch_tiled(..., dim=len(work_items), block_dim=B)``.
     Each block cooperates on one work item; all lanes must participate.
@@ -796,7 +818,7 @@ def packed_persistent_chain_kernel(
     )
 
 
-def launch_persistent_chain(
+def launch_homogeneous_persistent_chain(
     joint_adjoint: wp.array2d[wp.float64],
     joint_adjoint_dot: wp.array2d[wp.float64],
     joint_tangent: wp.array2d[wp.float64],
@@ -830,11 +852,25 @@ def launch_persistent_chain(
     coriolis_qd: wp.array2d[wp.float64],
     gravity_force: wp.array2d[wp.float64],
 ):
-    """Launch one persistent cooperative GVS chain block per environment.
+    """Launch persistent chain for a homogeneous batch.
+
+    All worlds use the same structural dimensions and coordinate layout.
+
+    Shared across worlds: ``global_to_local``, ``active_dofs``,
+    ``inertia_upper_rows``, ``inertia_upper_columns``, ``weighted_masses``,
+    ``gravity_base``, ``num_cells``, ``num_quadrature``, ``lanes_per_block``,
+    ``block_dim``.
+
+    State, computed operator, workspace and output arrays carry the world axis,
+    either explicitly or flattened as documented in Args. Their values may differ by
+    world.
+
+    The launcher derives its work grid from these common dimensions and enqueues the
+    homogeneous kernels on the current Warp stream.
 
     The caller must first populate the joint and cell operator buffers using
-    :func:`launch_cooperative_joint_terms` (or :func:`launch_joint_terms`) and
-    :func:`launch_cell_terms`. All inputs and outputs are Warp arrays and all
+    :func:`launch_homogeneous_cooperative_joint_terms` (or :func:`launch_homogeneous_joint_terms`) and
+    :func:`launch_homogeneous_cell_terms`. All inputs and outputs are Warp arrays and all
     scratch/output buffers are caller-owned, so repeated launches can be
     captured in a larger CUDA graph without allocation.
 
@@ -878,7 +914,7 @@ def launch_persistent_chain(
     """
 
     wp.launch_tiled(
-        persistent_chain_kernel,
+        homogeneous_persistent_chain_kernel,
         dim=qd.shape[0],
         inputs=[
             joint_adjoint,
@@ -919,10 +955,12 @@ def launch_persistent_chain(
     )
 
 
-scalable_persistent_chain = wp.jax_callable(launch_persistent_chain, num_outputs=11)
+scalable_persistent_chain = wp.jax_callable(
+    launch_homogeneous_persistent_chain, num_outputs=11
+)
 
 
-__all__ = ["launch_persistent_chain", "persistent_chain_kernel"]
+__all__ = ["launch_homogeneous_persistent_chain", "homogeneous_persistent_chain_kernel"]
 
 
 __all__ += ["GVSChainData", "packed_persistent_chain_kernel"]

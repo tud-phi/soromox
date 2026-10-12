@@ -352,7 +352,7 @@ def test_packed_joint_and_chain_stages(stage_worlds: list[dict]) -> None:
     )
     _compare(
         worlds,
-        joints.joint_terms_kernel,
+        joints.homogeneous_joint_terms_kernel,
         joints.packed_joint_terms_kernel,
         joints.JointTermsData,
         [w["segments"] for w in worlds],
@@ -361,7 +361,7 @@ def test_packed_joint_and_chain_stages(stage_worlds: list[dict]) -> None:
     if device.is_cuda:
         _compare(
             worlds,
-            joints_cooperative.cooperative_joint_terms_kernel,
+            joints_cooperative.homogeneous_cooperative_joint_terms_kernel,
             joints_cooperative.packed_cooperative_joint_terms_kernel,
             joints.JointTermsData,
             [w["segments"] for w in worlds],
@@ -382,7 +382,7 @@ def test_packed_joint_and_chain_stages(stage_worlds: list[dict]) -> None:
         selected = [w for w in worlds if w["floating"] == floating]
         _compare(
             selected,
-            getattr(module, name + "_kernel"),
+            getattr(module, "homogeneous_" + name + "_kernel"),
             getattr(module, "packed_" + name + "_kernel"),
             data_type,
             [1] * 2,
@@ -495,7 +495,7 @@ def test_packed_kinematics_stages(stage_worlds: list[dict]) -> None:
         counts = [w["samples"] if samples else 1 for w in worlds]
         _compare(
             worlds,
-            getattr(module, name + "_kernel"),
+            getattr(module, "homogeneous_" + name + "_kernel"),
             getattr(module, "packed_" + name + "_kernel"),
             data_type,
             counts,
@@ -506,7 +506,7 @@ def test_packed_kinematics_stages(stage_worlds: list[dict]) -> None:
         if grouped is not None:
             _compare(
                 worlds,
-                getattr(module, name + "_kernel"),
+                getattr(module, "homogeneous_" + name + "_kernel"),
                 grouped,
                 data_type,
                 counts,
@@ -531,7 +531,7 @@ def test_packed_kinematics_stages(stage_worlds: list[dict]) -> None:
         ):
             _compare(
                 worlds,
-                getattr(module, name + "_kernel"),
+                getattr(module, "homogeneous_" + name + "_kernel"),
                 getattr(module, "packed_" + name + "_kernel"),
                 data_type,
                 [1] * 4,
@@ -553,7 +553,7 @@ def test_packed_floating_composition_stages(stage_worlds: list[dict]) -> None:
     for w in worlds:
         _compare(
             [w],
-            kinematics.gvs_node_states_kernel,
+            kinematics.homogeneous_gvs_node_states_kernel,
             kinematics.packed_gvs_node_states_kernel,
             kinematics.GVSNodeStatesData,
             [1],
@@ -561,7 +561,7 @@ def test_packed_floating_composition_stages(stage_worlds: list[dict]) -> None:
         )
         _compare(
             [w],
-            kinematics.gvs_samples_kernel,
+            kinematics.homogeneous_gvs_samples_kernel,
             kinematics.packed_gvs_samples_kernel,
             kinematics.GVSSamplesData,
             [w["samples"]],
@@ -618,7 +618,7 @@ def test_packed_floating_composition_stages(stage_worlds: list[dict]) -> None:
         ]
         _compare(
             worlds,
-            getattr(composition, "_" + name + "_kernel"),
+            getattr(composition, "homogeneous_" + name + "_kernel"),
             getattr(composition, "packed_" + name + "_kernel"),
             data_type,
             counts,
@@ -628,7 +628,7 @@ def test_packed_floating_composition_stages(stage_worlds: list[dict]) -> None:
     if worlds[0]["device"].is_cuda:
         _compare(
             worlds,
-            composition._compose_spatial_jacobians_tiled_kernel,
+            composition.homogeneous_compose_spatial_jacobians_tiled_kernel,
             composition.packed_compose_spatial_jacobians_tiled_kernel,
             composition.SpatialJacobianCompositionData,
             [w["samples"] for w in worlds],
@@ -649,7 +649,7 @@ def test_packed_threadlike_stages(stage_worlds: list[dict]) -> None:
     worlds = [dict(w) for w in stage_worlds]
     _compare(
         worlds,
-        threadlike.prepare_gvs_threadlike_strain_kernel,
+        threadlike.homogeneous_gvs_threadlike_strain_kernel,
         threadlike.packed_prepare_gvs_threadlike_strain_kernel,
         threadlike.GVSThreadlikeStrainData,
         [int(np.prod(w["strain_workspace"].shape[:-1])) for w in worlds],
@@ -659,7 +659,7 @@ def test_packed_threadlike_stages(stage_worlds: list[dict]) -> None:
         w["output"] = wp.zeros((1, w["dofs"], 2), dtype=wp.float64, device=w["device"])
     _compare(
         worlds,
-        threadlike.gvs_threadlike_matrix_kernel,
+        threadlike.homogeneous_gvs_threadlike_matrix_kernel,
         threadlike.packed_gvs_threadlike_matrix_kernel,
         threadlike.GVSThreadlikeMatrixData,
         [w["dofs"] * 2 for w in worlds],
@@ -669,7 +669,7 @@ def test_packed_threadlike_stages(stage_worlds: list[dict]) -> None:
         w["output"] = wp.zeros((1, w["dofs"]), dtype=wp.float64, device=w["device"])
     _compare(
         worlds,
-        threadlike.gvs_threadlike_force_kernel,
+        threadlike.homogeneous_gvs_threadlike_force_kernel,
         threadlike.packed_gvs_threadlike_force_kernel,
         threadlike.GVSThreadlikeForceData,
         [w["dofs"] for w in worlds],
@@ -678,7 +678,7 @@ def test_packed_threadlike_stages(stage_worlds: list[dict]) -> None:
     if worlds[0]["device"].is_cuda:
         _compare(
             worlds,
-            threadlike.gvs_threadlike_force_block_kernel,
+            threadlike.homogeneous_gvs_threadlike_force_block_kernel,
             threadlike.packed_gvs_threadlike_force_block_kernel,
             threadlike.GVSThreadlikeForceBlockData,
             [w["segments"] for w in worlds],

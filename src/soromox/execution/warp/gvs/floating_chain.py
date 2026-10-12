@@ -66,6 +66,9 @@ def floating_persistent_chain_at(
 ):
     """Traverse one augmented floating GVS chain per cooperative block.
 
+    Explicit indices address the supplied array views. Homogeneous wrappers pass the
+    full batch; packed wrappers pass one world's views and local indices.
+
     Joint and cell Lie operators are shared with the fixed pipeline. The
     floating entry specializes root initialization, shifted internal columns,
     augmented causal widths, and full dynamics accumulation.
@@ -613,7 +616,7 @@ def floating_persistent_chain_at(
 
 
 @wp.kernel(enable_backward=False)
-def floating_persistent_chain_kernel(
+def homogeneous_floating_persistent_chain_kernel(
     joint_adjoint: wp.array2d[wp.float64],
     joint_adjoint_dot: wp.array2d[wp.float64],
     joint_tangent: wp.array2d[wp.float64],
@@ -647,7 +650,22 @@ def floating_persistent_chain_kernel(
     coriolis_qd: wp.array2d[wp.float64],
     gravity_force: wp.array2d[wp.float64],
 ):
-    """Traverse one augmented floating GVS chain per cooperative block.
+    """Assemble dynamics for a homogeneous batch of floating-base chains.
+
+    All worlds use the same structural dimensions and coordinate layout. Dimensions:
+    E = worlds, B = threads per block.
+
+    Shared across worlds: ``global_to_local``, ``active_dofs``,
+    ``inertia_upper_rows``, ``inertia_upper_columns``, ``weighted_masses``,
+    ``gravity_world``, ``num_cells_array``, ``num_quadrature_array``,
+    ``lanes_per_block``.
+
+    State, computed operator, workspace and output arrays carry the world axis,
+    either explicitly or flattened as documented in Args. Their values may differ by
+    world.
+
+    Launch with ``wp.launch_tiled(..., dim=E, block_dim=B)``. Set
+    ``lanes_per_block[0] = B``; all lanes cooperate on one world.
 
     Joint and cell Lie operators are shared with the fixed pipeline. The
     floating entry specializes root initialization, shifted internal columns,
@@ -811,7 +829,11 @@ def packed_floating_persistent_chain_kernel(
     world_data: wp.array(dtype=GVSFloatingChainData),
     work_items: wp.array(dtype=wp.vec3i),
 ):
-    """Traverse one augmented floating GVS chain per cooperative block.
+    """Traverse one augmented floating GVS chain per cooperative block using packed world data.
+
+    Each selected descriptor contains one world (E = 1). Structure and numerical
+    model parameters may differ between worlds. Descriptors may share allocations
+    when their values match.
 
     Launch with ``wp.launch_tiled(..., dim=len(work_items), block_dim=B)``.
     Each block cooperates on one work item; all lanes must participate.
@@ -867,7 +889,7 @@ def packed_floating_persistent_chain_kernel(
     )
 
 
-def launch_floating_persistent_chain(
+def launch_homogeneous_floating_persistent_chain(
     joint_adjoint: wp.array2d[wp.float64],
     joint_adjoint_dot: wp.array2d[wp.float64],
     joint_tangent: wp.array2d[wp.float64],
@@ -902,7 +924,21 @@ def launch_floating_persistent_chain(
     coriolis_qd: wp.array2d[wp.float64],
     gravity_force: wp.array2d[wp.float64],
 ):
-    """Launch one persistent augmented GVS chain block per environment.
+    """Launch floating persistent chain for a homogeneous batch.
+
+    All worlds use the same structural dimensions and coordinate layout.
+
+    Shared across worlds: ``global_to_local``, ``active_dofs``,
+    ``inertia_upper_rows``, ``inertia_upper_columns``, ``weighted_masses``,
+    ``gravity_world``, ``num_cells``, ``num_quadrature``, ``lanes_per_block``,
+    ``block_dim``.
+
+    State, computed operator, workspace and output arrays carry the world axis,
+    either explicitly or flattened as documented in Args. Their values may differ by
+    world.
+
+    The launcher derives its work grid from these common dimensions and enqueues the
+    homogeneous kernels on the current Warp stream.
 
     Args:
         joint_adjoint: Flattened joint inverse adjoints.
@@ -943,7 +979,7 @@ def launch_floating_persistent_chain(
         None. Workspaces and outputs are updated in place.
     """
     wp.launch_tiled(
-        floating_persistent_chain_kernel,
+        homogeneous_floating_persistent_chain_kernel,
         dim=velocity.shape[0],
         inputs=[
             joint_adjoint,
@@ -986,12 +1022,12 @@ def launch_floating_persistent_chain(
 
 
 scalable_floating_persistent_chain = wp.jax_callable(
-    launch_floating_persistent_chain, num_outputs=11
+    launch_homogeneous_floating_persistent_chain, num_outputs=11
 )
 
 __all__ = [
-    "floating_persistent_chain_kernel",
-    "launch_floating_persistent_chain",
+    "homogeneous_floating_persistent_chain_kernel",
+    "launch_homogeneous_floating_persistent_chain",
 ]
 
 

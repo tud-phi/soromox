@@ -9,7 +9,7 @@ import warp as wp
 
 from soromox.execution.warp.gvs.cell import (
     GVSCellTermsData,
-    cell_terms_kernel,
+    homogeneous_cell_terms_kernel,
     packed_cell_terms_kernel,
     packed_cooperative_cell_terms_kernel,
 )
@@ -78,7 +78,7 @@ def test_packed_cells() -> None:
             )
             for a in arrays
         ]
-        wp.launch(cell_terms_kernel, dim=nc, inputs=arrays, device=device())
+        wp.launch(homogeneous_cell_terms_kernel, dim=nc, inputs=arrays, device=device())
         references.append([a.numpy() for a in arrays[11:]])
         d = GVSCellTermsData()
         for name, a in zip(fields, arrays, strict=True):
@@ -115,7 +115,9 @@ def test_cooperative_cholesky(n: int, column_factor: bool) -> None:
     Returns:
         None. Asserts solution accuracy, residuals and unfloored pivots.
     """
-    from soromox.execution.warp.common.linear_solve import cooperative_cholesky_kernel
+    from soromox.execution.warp.common.linear_solve import (
+        homogeneous_cooperative_cholesky_kernel,
+    )
 
     rng = np.random.default_rng(n)
     a = rng.normal(size=(3, n, n))
@@ -129,7 +131,7 @@ def test_cooperative_cholesky(n: int, column_factor: bool) -> None:
     x, workspace = wp.zeros_like(rhs), wp.zeros_like(rhs)
     status = wp.zeros(3, dtype=wp.int32, device=device())
     wp.launch_tiled(
-        cooperative_cholesky_kernel,
+        homogeneous_cooperative_cholesky_kernel,
         dim=3,
         inputs=[matrix, rhs, wp.float64(1e-12)],
         outputs=[factor, workspace, x, status],

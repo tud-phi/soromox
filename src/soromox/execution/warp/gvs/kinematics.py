@@ -279,6 +279,9 @@ def gvs_node_poses_at(
 ):
     """Build GVS cell-boundary poses without Jacobian propagation.
 
+    Explicit indices address the supplied array views. Homogeneous wrappers pass the
+    full batch; packed wrappers pass one world's views and local indices.
+
     Args:
         environment: Batch row in the supplied arrays; use zero for a single-world view.
         joint_adjoint: Flattened inverse adjoints for every joint.
@@ -323,7 +326,7 @@ def gvs_node_poses_at(
 
 
 @wp.kernel(enable_backward=False)
-def gvs_node_poses_kernel(
+def homogeneous_gvs_node_poses_kernel(
     joint_adjoint: wp.array2d[wp.float64],
     cell_adjoint: wp.array2d[wp.float64],
     base_transform: wp.array2d[wp.float64],
@@ -331,7 +334,19 @@ def gvs_node_poses_kernel(
     num_cells_array: wp.array[wp.int32],
     node_pose: wp.array2d[wp.float64],
 ):
-    """Build GVS cell-boundary poses without Jacobian propagation.
+    """Propagate boundary poses for a homogeneous batch.
+
+    All worlds use the same structural dimensions and coordinate layout. Dimensions:
+    E = worlds.
+
+    Shared across worlds: ``base_transform``, ``segment_lengths``,
+    ``num_cells_array``.
+
+    State, computed operator, workspace and output arrays carry the world axis,
+    either explicitly or flattened as documented in Args. Their values may differ by
+    world.
+
+    Launch with ``dim=E``: one thread traverses each world.
 
     Args:
         joint_adjoint: Flattened inverse adjoints for every joint.
@@ -385,7 +400,11 @@ class GVSNodePosesData:
 def packed_gvs_node_poses_kernel(
     world_data: wp.array(dtype=GVSNodePosesData), work_items: wp.array(dtype=wp.vec3i)
 ):
-    """Build GVS cell-boundary poses without Jacobian propagation.
+    """Build GVS cell-boundary poses without Jacobian propagation using packed world data.
+
+    Each selected descriptor contains one world (E = 1). Structure and numerical
+    model parameters may differ between worlds. Descriptors may share allocations
+    when their values match.
 
     Launch with ``dim=len(work_items)``; each thread handles one work item.
 
@@ -426,6 +445,9 @@ def gvs_node_states_at(
     node_jacobian: wp.array2d[wp.float64],
 ):
     """Build reusable GVS cell-boundary pose and body-Jacobian states.
+
+    Explicit indices address the supplied array views. Homogeneous wrappers pass the
+    full batch; packed wrappers pass one world's views and local indices.
 
     Args:
         environment: Batch row in the supplied arrays; use zero for a single-world view.
@@ -520,7 +542,7 @@ def gvs_node_states_at(
 
 
 @wp.kernel(enable_backward=False)
-def gvs_node_states_kernel(
+def homogeneous_gvs_node_states_kernel(
     joint_adjoint: wp.array2d[wp.float64],
     joint_tangent: wp.array2d[wp.float64],
     cell_adjoint: wp.array2d[wp.float64],
@@ -531,7 +553,19 @@ def gvs_node_states_kernel(
     node_pose: wp.array2d[wp.float64],
     node_jacobian: wp.array2d[wp.float64],
 ):
-    """Build reusable GVS cell-boundary pose and body-Jacobian states.
+    """Propagate boundary poses and Jacobians for a homogeneous batch.
+
+    All worlds use the same structural dimensions and coordinate layout. Dimensions:
+    E = worlds.
+
+    Shared across worlds: ``link_global_to_local``, ``base_transform``,
+    ``num_cells_array``.
+
+    State, computed operator, workspace and output arrays carry the world axis,
+    either explicitly or flattened as documented in Args. Their values may differ by
+    world.
+
+    Launch with ``dim=E``: one thread traverses each world.
 
     Args:
         joint_adjoint: Flattened inverse adjoints for every joint.
@@ -597,7 +631,11 @@ class GVSNodeStatesData:
 def packed_gvs_node_states_kernel(
     world_data: wp.array(dtype=GVSNodeStatesData), work_items: wp.array(dtype=wp.vec3i)
 ):
-    """Build reusable GVS cell-boundary pose and body-Jacobian states.
+    """Build reusable GVS cell-boundary pose and body-Jacobian states using packed world data.
+
+    Each selected descriptor contains one world (E = 1). Structure and numerical
+    model parameters may differ between worlds. Descriptors may share allocations
+    when their values match.
 
     Launch with ``dim=len(work_items)``; each thread handles one work item.
 
@@ -643,10 +681,13 @@ def gvs_cooperative_node_states_at(
 ):
     """Build GVS boundary states cooperatively on CUDA.
 
+    Explicit indices address the supplied array views. Homogeneous wrappers pass the
+    full batch; packed wrappers pass one world's views and local indices.
+
     One persistent block owns an environment. Joint and cell traversal remains
     serial, while the six-by-DOF Jacobian propagation is distributed across
     lanes. This is the CUDA schedule for the same recurrence implemented by
-    :func:`gvs_node_states_kernel`.
+    :func:`homogeneous_gvs_node_states_kernel`.
 
     Args:
         environment: Batch row in the supplied arrays; use zero for a single-world view.
@@ -747,7 +788,7 @@ def gvs_cooperative_node_states_at(
 
 
 @wp.kernel(enable_backward=False)
-def gvs_cooperative_node_states_kernel(
+def homogeneous_gvs_cooperative_node_states_kernel(
     joint_adjoint: wp.array2d[wp.float64],
     joint_tangent: wp.array2d[wp.float64],
     cell_adjoint: wp.array2d[wp.float64],
@@ -758,12 +799,25 @@ def gvs_cooperative_node_states_kernel(
     node_pose: wp.array2d[wp.float64],
     node_jacobian: wp.array2d[wp.float64],
 ):
-    """Build GVS boundary states cooperatively on CUDA.
+    """Propagate homogeneous boundary poses and Jacobians cooperatively.
+
+    All worlds use the same structural dimensions and coordinate layout. Dimensions:
+    E = worlds, B = threads per block.
+
+    Shared across worlds: ``link_global_to_local``, ``base_transform``,
+    ``num_cells_array``.
+
+    State, computed operator, workspace and output arrays carry the world axis,
+    either explicitly or flattened as documented in Args. Their values may differ by
+    world.
+
+    Launch with ``wp.launch_tiled(..., dim=E, block_dim=B)`` with at least 32 CUDA
+    threads per block; all lanes cooperate on one world.
 
     One persistent block owns an environment. Joint and cell traversal remains
     serial, while the six-by-DOF Jacobian propagation is distributed across
     lanes. This is the CUDA schedule for the same recurrence implemented by
-    :func:`gvs_node_states_kernel`.
+    :func:`homogeneous_gvs_node_states_kernel`.
 
     Args:
         joint_adjoint: Flattened inverse adjoints for every joint.
@@ -800,7 +854,11 @@ def packed_gvs_cooperative_node_states_kernel(
     world_data: wp.array(dtype=GVSNodeStatesData),
     work_items: wp.array(dtype=wp.vec3i),
 ):
-    """Build GVS boundary states cooperatively on CUDA.
+    """Build GVS boundary states cooperatively on CUDA using packed world data.
+
+    Each selected descriptor contains one world (E = 1). Structure and numerical
+    model parameters may differ between worlds. Descriptors may share allocations
+    when their values match.
 
     Launch with ``wp.launch_tiled(..., dim=len(work_items), block_dim=B)``.
     Each block cooperates on one work item; all lanes must participate.
@@ -857,6 +915,9 @@ def gvs_pose_samples_at(
     poses: wp.array4d[wp.float64],
 ):
     """Evaluate GVS poses without Jacobian recurrence or output work.
+
+    Explicit indices address the supplied array views. Homogeneous wrappers pass the
+    full batch; packed wrappers pass one world's views and local indices.
 
     Args:
         environment: Batch row in the supplied arrays; use zero for a single-world view.
@@ -973,7 +1034,7 @@ def gvs_pose_samples_at(
 
 
 @wp.kernel(enable_backward=False)
-def gvs_pose_samples_kernel(
+def homogeneous_gvs_pose_samples_kernel(
     q: wp.array2d[wp.float64],
     s: wp.array2d[wp.float64],
     link_local_to_global: wp.array2d[wp.int32],
@@ -993,7 +1054,22 @@ def gvs_pose_samples_kernel(
     node_pose: wp.array2d[wp.float64],
     poses: wp.array4d[wp.float64],
 ):
-    """Evaluate GVS poses without Jacobian recurrence or output work.
+    """Evaluate sampled poses for a homogeneous batch.
+
+    All worlds use the same structural dimensions and coordinate layout. Dimensions:
+    E = worlds, N = samples, D = coordinates.
+
+    Shared across worlds: ``link_local_to_global``, ``link_basis_rows``,
+    ``link_reference_z1``, ``link_reference_z2``, ``segment_lengths``,
+    ``segment_starts``, ``integration_points``, ``basis_type_index``,
+    ``basis_active_params``, ``basis_order_params``, ``magnus_points``,
+    ``scale_rotations_array``, ``epsilons``, ``num_cells_array``.
+
+    State, computed operator, workspace and output arrays carry the world axis,
+    either explicitly or flattened as documented in Args. Their values may differ by
+    world.
+
+    Launch with ``dim=(E, N)``: one thread per world/sample pair.
 
     Args:
         q: Batched active configurations ``(E, D)``.
@@ -1096,7 +1172,11 @@ class GVSPoseSamplesData:
 def packed_gvs_pose_samples_kernel(
     world_data: wp.array(dtype=GVSPoseSamplesData), work_items: wp.array(dtype=wp.vec3i)
 ):
-    """Evaluate GVS poses without Jacobian recurrence or output work.
+    """Evaluate GVS poses without Jacobian recurrence or output work using packed world data.
+
+    Each selected descriptor contains one world (E = 1). Structure and numerical
+    model parameters may differ between worlds. Descriptors may share allocations
+    when their values match.
 
     Launch with ``dim=len(work_items)``; each thread handles one work item.
 
@@ -1290,6 +1370,9 @@ def gvs_jacobian_samples_at(
 ):
     """Evaluate GVS inertial Jacobians without pose output writes.
 
+    Explicit indices address the supplied array views. Homogeneous wrappers pass the
+    full batch; packed wrappers pass one world's views and local indices.
+
     Args:
         environment: Batch row in the supplied arrays; use zero for a single-world view.
         sample: Sample index within the selected environment.
@@ -1423,7 +1506,7 @@ def gvs_jacobian_samples_at(
 
 
 @wp.kernel(enable_backward=False)
-def gvs_jacobian_samples_kernel(
+def homogeneous_gvs_jacobian_samples_kernel(
     q: wp.array2d[wp.float64],
     s: wp.array2d[wp.float64],
     link_local_to_global: wp.array2d[wp.int32],
@@ -1445,7 +1528,22 @@ def gvs_jacobian_samples_kernel(
     node_jacobian: wp.array2d[wp.float64],
     jacobians: wp.array4d[wp.float64],
 ):
-    """Evaluate GVS inertial Jacobians without pose output writes.
+    """Evaluate sampled Jacobians for a homogeneous batch.
+
+    All worlds use the same structural dimensions and coordinate layout. Dimensions:
+    E = worlds, N = samples, D = coordinates.
+
+    Shared across worlds: ``link_local_to_global``, ``link_global_to_local``,
+    ``link_basis_rows``, ``link_reference_z1``, ``link_reference_z2``,
+    ``segment_lengths``, ``segment_starts``, ``integration_points``,
+    ``basis_type_index``, ``basis_active_params``, ``basis_order_params``,
+    ``magnus_points``, ``scale_rotations_array``, ``epsilons``, ``num_cells_array``.
+
+    State, computed operator, workspace and output arrays carry the world axis,
+    either explicitly or flattened as documented in Args. Their values may differ by
+    world.
+
+    Launch with ``dim=(E, N)``: one thread per world/sample pair.
 
     Args:
         q: Batched active configurations ``(E, D)``.
@@ -1557,7 +1655,11 @@ def packed_gvs_jacobian_samples_kernel(
     world_data: wp.array(dtype=GVSJacobianSamplesData),
     work_items: wp.array(dtype=wp.vec3i),
 ):
-    """Evaluate GVS inertial Jacobians without pose output writes.
+    """Evaluate GVS inertial Jacobians without pose output writes using packed world data.
+
+    Each selected descriptor contains one world (E = 1). Structure and numerical
+    model parameters may differ between worlds. Descriptors may share allocations
+    when their values match.
 
     Launch with ``dim=len(work_items)``; each thread handles one work item.
 
@@ -1626,6 +1728,9 @@ def gvs_samples_at(
     jacobians: wp.array4d[wp.float64],
 ):
     """Evaluate fused GVS poses and inertial Jacobians at runtime samples.
+
+    Explicit indices address the supplied array views. Homogeneous wrappers pass the
+    full batch; packed wrappers pass one world's views and local indices.
 
     Args:
         environment: Batch row in the supplied arrays; use zero for a single-world view.
@@ -1768,7 +1873,7 @@ def gvs_samples_at(
 
 
 @wp.kernel(enable_backward=False)
-def gvs_samples_kernel(
+def homogeneous_gvs_samples_kernel(
     q: wp.array2d[wp.float64],
     s: wp.array2d[wp.float64],
     link_local_to_global: wp.array2d[wp.int32],
@@ -1791,7 +1896,22 @@ def gvs_samples_kernel(
     poses: wp.array4d[wp.float64],
     jacobians: wp.array4d[wp.float64],
 ):
-    """Evaluate fused GVS poses and inertial Jacobians at runtime samples.
+    """Evaluate sampled poses and Jacobians for a homogeneous batch.
+
+    All worlds use the same structural dimensions and coordinate layout. Dimensions:
+    E = worlds, N = samples, D = coordinates.
+
+    Shared across worlds: ``link_local_to_global``, ``link_global_to_local``,
+    ``link_basis_rows``, ``link_reference_z1``, ``link_reference_z2``,
+    ``segment_lengths``, ``segment_starts``, ``integration_points``,
+    ``basis_type_index``, ``basis_active_params``, ``basis_order_params``,
+    ``magnus_points``, ``scale_rotations_array``, ``epsilons``, ``num_cells_array``.
+
+    State, computed operator, workspace and output arrays carry the world axis,
+    either explicitly or flattened as documented in Args. Their values may differ by
+    world.
+
+    Launch with ``dim=(E, N)``: one thread per world/sample pair.
 
     Args:
         q: Batched active configurations ``(E, D)``.
@@ -1906,7 +2026,11 @@ class GVSSamplesData:
 def packed_gvs_samples_kernel(
     world_data: wp.array(dtype=GVSSamplesData), work_items: wp.array(dtype=wp.vec3i)
 ):
-    """Evaluate fused GVS poses and inertial Jacobians at runtime samples.
+    """Evaluate fused GVS poses and inertial Jacobians at runtime samples using packed world data.
+
+    Each selected descriptor contains one world (E = 1). Structure and numerical
+    model parameters may differ between worlds. Descriptors may share allocations
+    when their values match.
 
     Launch with ``dim=len(work_items)``; each thread handles one work item.
 
@@ -1949,7 +2073,7 @@ def packed_gvs_samples_kernel(
     )
 
 
-def launch_gvs_forward_kinematics(
+def launch_homogeneous_gvs_forward_kinematics(
     q: wp.array2d[wp.float64],
     s: wp.array2d[wp.float64],
     joint_adjoint: wp.array2d[wp.float64],
@@ -1972,7 +2096,23 @@ def launch_gvs_forward_kinematics(
     node_pose: wp.array2d[wp.float64],
     poses: wp.array4d[wp.float64],
 ):
-    """Launch the reduced-work allocation-free GVS pose pipeline.
+    """Launch the GVS pose pipeline in a homogeneous batch.
+
+    All worlds use the same structural dimensions and coordinate layout. Dimensions:
+    E = worlds, N = samples, D = coordinates.
+
+    Shared across worlds: ``base_transform``, ``link_local_to_global``,
+    ``link_basis_rows``, ``link_reference_z1``, ``link_reference_z2``,
+    ``segment_lengths``, ``segment_starts``, ``integration_points``,
+    ``basis_type_index``, ``basis_active_params``, ``basis_order_params``,
+    ``magnus_points``, ``scale_rotations``, ``epsilons``, ``num_cells``.
+
+    State, computed operator, workspace and output arrays carry the world axis,
+    either explicitly or flattened as documented in Args. Their values may differ by
+    world.
+
+    The launcher derives its work grid from these common dimensions and enqueues the
+    homogeneous kernels on the current Warp stream.
 
     Args:
         q: Batched active configurations ``(E, D)``.
@@ -2002,7 +2142,7 @@ def launch_gvs_forward_kinematics(
     """
 
     wp.launch(
-        gvs_node_poses_kernel,
+        homogeneous_gvs_node_poses_kernel,
         dim=q.shape[0],
         inputs=[
             joint_adjoint,
@@ -2014,7 +2154,7 @@ def launch_gvs_forward_kinematics(
         outputs=[node_pose],
     )
     wp.launch(
-        gvs_pose_samples_kernel,
+        homogeneous_gvs_pose_samples_kernel,
         dim=(q.shape[0], s.shape[1]),
         inputs=[
             q,
@@ -2084,7 +2224,7 @@ def _launch_gvs_node_states(
     outputs = [node_pose, node_jacobian]
     if q.device.is_cuda:
         wp.launch_tiled(
-            gvs_cooperative_node_states_kernel,
+            homogeneous_gvs_cooperative_node_states_kernel,
             dim=q.shape[0],
             inputs=inputs,
             outputs=outputs,
@@ -2092,14 +2232,14 @@ def _launch_gvs_node_states(
         )
     else:
         wp.launch(
-            gvs_node_states_kernel,
+            homogeneous_gvs_node_states_kernel,
             dim=q.shape[0],
             inputs=inputs,
             outputs=outputs,
         )
 
 
-def launch_gvs_inertial_jacobians(
+def launch_homogeneous_gvs_inertial_jacobians(
     q: wp.array2d[wp.float64],
     s: wp.array2d[wp.float64],
     joint_adjoint: wp.array2d[wp.float64],
@@ -2127,7 +2267,24 @@ def launch_gvs_inertial_jacobians(
     node_jacobian: wp.array2d[wp.float64],
     jacobians: wp.array4d[wp.float64],
 ):
-    """Launch GVS inertial Jacobians without pose output writes.
+    """Launch GVS inertial Jacobians without pose output writes in a homogeneous batch.
+
+    All worlds use the same structural dimensions and coordinate layout. Dimensions:
+    E = worlds, N = samples, D = coordinates.
+
+    Shared across worlds: ``base_transform``, ``link_local_to_global``,
+    ``link_global_to_local``, ``link_basis_rows``, ``link_reference_z1``,
+    ``link_reference_z2``, ``segment_lengths``, ``segment_starts``,
+    ``integration_points``, ``basis_type_index``, ``basis_active_params``,
+    ``basis_order_params``, ``magnus_points``, ``scale_rotations``, ``epsilons``,
+    ``num_cells``, ``block_dim``.
+
+    State, computed operator, workspace and output arrays carry the world axis,
+    either explicitly or flattened as documented in Args. Their values may differ by
+    world.
+
+    The launcher derives its work grid from these common dimensions and enqueues the
+    homogeneous kernels on the current Warp stream.
 
     Args:
         q: Batched active configurations ``(E, D)``.
@@ -2175,7 +2332,7 @@ def launch_gvs_inertial_jacobians(
         node_jacobian,
     )
     wp.launch(
-        gvs_jacobian_samples_kernel,
+        homogeneous_gvs_jacobian_samples_kernel,
         dim=(q.shape[0], s.shape[1]),
         inputs=[
             q,
@@ -2203,7 +2360,7 @@ def launch_gvs_inertial_jacobians(
     )
 
 
-def launch_gvs_kinematics(
+def launch_homogeneous_gvs_kinematics(
     q: wp.array2d[wp.float64],
     s: wp.array2d[wp.float64],
     joint_adjoint: wp.array2d[wp.float64],
@@ -2232,7 +2389,24 @@ def launch_gvs_kinematics(
     poses: wp.array4d[wp.float64],
     jacobians: wp.array4d[wp.float64],
 ):
-    """Launch the allocation-free GVS node recurrence and sample stage.
+    """Launch the GVS node recurrence and sample stage in a homogeneous batch.
+
+    All worlds use the same structural dimensions and coordinate layout. Dimensions:
+    E = worlds, N = samples, D = coordinates.
+
+    Shared across worlds: ``base_transform``, ``link_local_to_global``,
+    ``link_global_to_local``, ``link_basis_rows``, ``link_reference_z1``,
+    ``link_reference_z2``, ``segment_lengths``, ``segment_starts``,
+    ``integration_points``, ``basis_type_index``, ``basis_active_params``,
+    ``basis_order_params``, ``magnus_points``, ``scale_rotations``, ``epsilons``,
+    ``num_cells``, ``block_dim``.
+
+    State, computed operator, workspace and output arrays carry the world axis,
+    either explicitly or flattened as documented in Args. Their values may differ by
+    world.
+
+    The launcher derives its work grid from these common dimensions and enqueues the
+    homogeneous kernels on the current Warp stream.
 
     Args:
         q: Batched active configurations ``(E, D)``.
@@ -2281,7 +2455,7 @@ def launch_gvs_kinematics(
         node_jacobian,
     )
     wp.launch(
-        gvs_samples_kernel,
+        homogeneous_gvs_samples_kernel,
         dim=(q.shape[0], s.shape[1]),
         inputs=[
             q,
@@ -2309,27 +2483,25 @@ def launch_gvs_kinematics(
     )
 
 
-gvs_forward_kinematics = wp.jax_callable(launch_gvs_forward_kinematics, num_outputs=2)
-gvs_inertial_jacobians = wp.jax_callable(launch_gvs_inertial_jacobians, num_outputs=3)
-gvs_kinematics = wp.jax_callable(launch_gvs_kinematics, num_outputs=4)
-launch_forward_kinematics = launch_gvs_forward_kinematics
-launch_inertial_jacobians = launch_gvs_inertial_jacobians
-launch_forward_kinematics_and_jacobians = launch_gvs_kinematics
+gvs_forward_kinematics = wp.jax_callable(
+    launch_homogeneous_gvs_forward_kinematics, num_outputs=2
+)
+gvs_inertial_jacobians = wp.jax_callable(
+    launch_homogeneous_gvs_inertial_jacobians, num_outputs=3
+)
+gvs_kinematics = wp.jax_callable(launch_homogeneous_gvs_kinematics, num_outputs=4)
 
 
 __all__ = [
-    "gvs_cooperative_node_states_kernel",
-    "gvs_jacobian_samples_kernel",
-    "gvs_node_poses_kernel",
-    "gvs_node_states_kernel",
-    "gvs_pose_samples_kernel",
-    "gvs_samples_kernel",
-    "launch_forward_kinematics",
-    "launch_forward_kinematics_and_jacobians",
-    "launch_gvs_kinematics",
-    "launch_gvs_forward_kinematics",
-    "launch_gvs_inertial_jacobians",
-    "launch_inertial_jacobians",
+    "homogeneous_gvs_cooperative_node_states_kernel",
+    "homogeneous_gvs_jacobian_samples_kernel",
+    "homogeneous_gvs_node_poses_kernel",
+    "homogeneous_gvs_node_states_kernel",
+    "homogeneous_gvs_pose_samples_kernel",
+    "homogeneous_gvs_samples_kernel",
+    "launch_homogeneous_gvs_kinematics",
+    "launch_homogeneous_gvs_forward_kinematics",
+    "launch_homogeneous_gvs_inertial_jacobians",
 ]
 
 
@@ -2352,7 +2524,11 @@ __all__ += [
 def packed_gvs_pose_samples_warp_kernel(
     world_data: wp.array(dtype=GVSPoseSamplesData), work_items: wp.array(dtype=wp.vec3i)
 ):
-    """Evaluate GVS poses without Jacobian recurrence or output work.
+    """Evaluate GVS poses without Jacobian recurrence or output work using packed world data.
+
+    Each selected descriptor contains one world (E = 1). Structure and numerical
+    model parameters may differ between worlds. Descriptors may share allocations
+    when their values match.
 
     Launch with ``dim=(len(work_items), 32)`` and ``block_dim=128``.
     Each entry starts a group of 32 independent samples; a bounds check
@@ -2400,7 +2576,11 @@ def packed_gvs_pose_samples_warp_kernel(
 def packed_gvs_samples_warp_kernel(
     world_data: wp.array(dtype=GVSSamplesData), work_items: wp.array(dtype=wp.vec3i)
 ):
-    """Evaluate fused GVS poses and inertial Jacobians at runtime samples.
+    """Evaluate fused GVS poses and inertial Jacobians at runtime samples using packed world data.
+
+    Each selected descriptor contains one world (E = 1). Structure and numerical
+    model parameters may differ between worlds. Descriptors may share allocations
+    when their values match.
 
     Launch with ``dim=(len(work_items), 32)`` and ``block_dim=128``.
     Each entry starts a group of 32 independent samples; a bounds check

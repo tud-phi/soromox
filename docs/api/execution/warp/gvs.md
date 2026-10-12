@@ -6,13 +6,19 @@
     kinematics, dynamics, or actuation pipelines with preallocated Warp
     buffers.
 
-## Heterogeneous worlds
+## Batch layouts and naming
 
-The `packed_*_kernel` entry points accept per-world `*Data` structs and an
-INT32 work map `(world_index, local_index, 0)`. Worlds may have different joints,
-strain bases, coordinate counts and quadrature sizes. Callers allocate and retain
-the FP64 input, workspace and output arrays referenced by each struct. Each
-kernel's docstring specifies its local-index meaning and required launch shape.
+| Entry points | Input layout |
+| --- | --- |
+| `homogeneous_*_kernel`, `launch_homogeneous_*` | A rectangular batch with common structural dimensions and coordinate layout. |
+| `packed_*_kernel` | Per-world `*Data` structs and an INT32 work map `(world_index, local_index, 0)`; each world may have its own structure and parameters. |
+| `*_at` | Shared numerical functions with explicit indices into the supplied array views. |
+
+Values can vary by world when their arrays carry a world axis. Other inputs
+are shared: for example, homogeneous cell kernels share bases and geometry,
+and homogeneous chain kernels share weighted masses and gravity. Each symbol
+documents its sharing rules, indexing and launch dimensions. Callers retain
+all referenced FP64 buffers. Packed descriptors may share matching model arrays.
 
 ## Linear-threadlike actuation
 
@@ -25,9 +31,9 @@ weights, segment spans, and link-local/global coordinate maps.
 
 The exact launch sequences are:
 
-1. `launch_gvs_threadlike_actuation_matrix(...)` prepares every quadrature
+1. `launch_homogeneous_gvs_threadlike_actuation_matrix(...)` prepares every quadrature
    strain once in `(E, S, Q, 6)`, then integrates and writes every matrix entry.
-2. `launch_gvs_threadlike_actuation_force(...)` prepares the same workspace,
+2. `launch_homogeneous_gvs_threadlike_actuation_force(...)` prepares the same workspace,
    applies `coordinate_scale[path] * controls[e, path]`, and reduces paths
    directly into `(E, D)`. CUDA uses one 128-lane block per environment and
    segment; Warp CPU uses a scalar-coordinate kernel.

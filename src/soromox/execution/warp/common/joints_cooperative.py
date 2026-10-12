@@ -44,6 +44,9 @@ def cooperative_joint_terms_at(
 ):
     """Evaluate one general joint cooperatively per warp-sized block.
 
+    Explicit indices address the supplied array views. Homogeneous wrappers pass the
+    full batch; packed wrappers pass one world's views and local indices.
+
     Args:
         work_item: Flattened environment-segment index in the supplied arrays.
         lane: Thread index within the cooperative work item.
@@ -241,7 +244,7 @@ def cooperative_joint_terms_at(
 
 
 @wp.kernel(enable_backward=False)
-def cooperative_joint_terms_kernel(
+def homogeneous_cooperative_joint_terms_kernel(
     q: wp.array2d[wp.float64],
     qd: wp.array2d[wp.float64],
     basis: wp.array2d[wp.float64],
@@ -253,7 +256,19 @@ def cooperative_joint_terms_kernel(
     tangent_dot_qd: wp.array2d[wp.float64],
     joint_velocity: wp.array2d[wp.float64],
 ):
-    """Evaluate one general joint cooperatively per warp-sized block.
+    """Evaluate homogeneous joint operators with 32 threads per joint.
+
+    All worlds use the same structural dimensions and coordinate layout. Dimensions:
+    E = worlds, S = segments.
+
+    Shared across worlds: ``basis``, ``reference``, ``local_to_global``.
+
+    State, computed operator, workspace and output arrays carry the world axis,
+    either explicitly or flattened as documented in Args. Their values may differ by
+    world.
+
+    Launch with ``wp.launch_tiled(..., dim=E*S, block_dim=32)``. Exactly 32 threads
+    cooperate on each world/segment index.
 
     Args:
         q: Batched active generalized coordinates.
@@ -291,7 +306,11 @@ def cooperative_joint_terms_kernel(
 def packed_cooperative_joint_terms_kernel(
     world_data: wp.array(dtype=JointTermsData), work_items: wp.array(dtype=wp.vec3i)
 ):
-    """Evaluate one general joint cooperatively per warp-sized block.
+    """Evaluate one general joint cooperatively per warp-sized block using packed world data.
+
+    Each selected descriptor contains one world (E = 1). Structure and numerical
+    model parameters may differ between worlds. Descriptors may share allocations
+    when their values match.
 
     Launch with ``wp.launch_tiled(..., dim=len(work_items), block_dim=32)``.
     Each block cooperates on one work item; all lanes must participate.
@@ -324,7 +343,7 @@ def packed_cooperative_joint_terms_kernel(
     )
 
 
-def launch_cooperative_joint_terms(
+def launch_homogeneous_cooperative_joint_terms(
     q: wp.array2d[wp.float64],
     qd: wp.array2d[wp.float64],
     basis: wp.array2d[wp.float64],
@@ -336,7 +355,18 @@ def launch_cooperative_joint_terms(
     tangent_dot_qd: wp.array2d[wp.float64],
     joint_velocity: wp.array2d[wp.float64],
 ):
-    """Launch cooperative spatial-joint evaluation on a CUDA device.
+    """Launch cooperative joint terms for a homogeneous batch.
+
+    All worlds use the same structural dimensions and coordinate layout.
+
+    Shared across worlds: ``basis``, ``reference``, ``local_to_global``.
+
+    State, computed operator, workspace and output arrays carry the world axis,
+    either explicitly or flattened as documented in Args. Their values may differ by
+    world.
+
+    The launcher derives its work grid from these common dimensions and enqueues the
+    homogeneous kernels on the current Warp stream.
 
     One CUDA block processes each ``(environment, segment)`` pair. Threads
     cooperatively evaluate active local basis columns while sharing the joint
@@ -360,7 +390,7 @@ def launch_cooperative_joint_terms(
     """
 
     wp.launch_tiled(
-        cooperative_joint_terms_kernel,
+        homogeneous_cooperative_joint_terms_kernel,
         dim=q.shape[0] * reference.shape[0],
         inputs=[q, qd, basis, reference, local_to_global],
         outputs=[
@@ -374,12 +404,14 @@ def launch_cooperative_joint_terms(
     )
 
 
-cooperative_joint_terms = wp.jax_callable(launch_cooperative_joint_terms, num_outputs=5)
+cooperative_joint_terms = wp.jax_callable(
+    launch_homogeneous_cooperative_joint_terms, num_outputs=5
+)
 
 
 __all__ = [
-    "cooperative_joint_terms_kernel",
-    "launch_cooperative_joint_terms",
+    "homogeneous_cooperative_joint_terms_kernel",
+    "launch_homogeneous_cooperative_joint_terms",
 ]
 
 

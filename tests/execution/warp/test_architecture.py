@@ -21,7 +21,7 @@ def test_gvs_public_names_are_discoverable_without_loading_warp() -> None:
         "GVSCellTermsData",
         "packed_cell_terms_kernel",
         "packed_cooperative_cell_terms_kernel",
-        "cooperative_cell_terms_kernel",
+        "homogeneous_cooperative_cell_terms_kernel",
         "GVSOperandSource",
         "GVSKinematicsOperands",
         "GVSKinematicsShapes",
@@ -31,45 +31,40 @@ def test_gvs_public_names_are_discoverable_without_loading_warp() -> None:
         "GVSPipelineShapes",
         "GVSThreadlikeOperands",
         "GVSThreadlikeShapes",
-        "cell_terms_kernel",
-        "cooperative_joint_terms_kernel",
-        "gvs_cooperative_node_states_kernel",
-        "gvs_cooperative_node_vjp_kernel",
+        "homogeneous_cell_terms_kernel",
+        "homogeneous_cooperative_joint_terms_kernel",
+        "homogeneous_gvs_cooperative_node_states_kernel",
+        "homogeneous_gvs_cooperative_node_vjp_kernel",
         "gvs_dynamics_and_threadlike_actuation_force",
-        "joint_terms_kernel",
-        "gvs_jacobian_samples_kernel",
-        "gvs_node_pose_twist_kernel",
-        "gvs_node_poses_kernel",
-        "gvs_node_states_kernel",
-        "gvs_node_vjp_kernel",
-        "gvs_pose_samples_kernel",
-        "gvs_pose_twist_samples_kernel",
-        "gvs_sample_vjp_kernel",
-        "gvs_samples_kernel",
-        "gvs_threadlike_force_kernel",
-        "gvs_threadlike_force_block_kernel",
-        "gvs_threadlike_matrix_kernel",
-        "floating_persistent_chain_kernel",
-        "launch_cell_terms",
-        "launch_cooperative_joint_terms",
-        "launch_joint_terms",
-        "launch_forward_kinematics",
-        "launch_forward_kinematics_and_jvp",
-        "launch_forward_kinematics_and_jacobians",
-        "launch_floating_persistent_chain",
-        "launch_gvs_forward_kinematics",
-        "launch_gvs_forward_kinematics_and_jvp",
-        "launch_gvs_dynamics_and_threadlike_actuation_force",
-        "launch_gvs_inertial_jacobians",
-        "launch_gvs_inertial_jacobian_vjp",
-        "launch_gvs_kinematics",
-        "launch_gvs_threadlike_actuation_force",
-        "launch_gvs_threadlike_actuation_matrix",
-        "launch_inertial_jacobians",
-        "launch_inertial_jacobian_vjp",
-        "launch_persistent_chain",
-        "persistent_chain_kernel",
-        "prepare_gvs_threadlike_strain_kernel",
+        "homogeneous_joint_terms_kernel",
+        "homogeneous_gvs_jacobian_samples_kernel",
+        "homogeneous_gvs_node_pose_twist_kernel",
+        "homogeneous_gvs_node_poses_kernel",
+        "homogeneous_gvs_node_states_kernel",
+        "homogeneous_gvs_node_vjp_kernel",
+        "homogeneous_gvs_pose_samples_kernel",
+        "homogeneous_gvs_pose_twist_samples_kernel",
+        "homogeneous_gvs_sample_vjp_kernel",
+        "homogeneous_gvs_samples_kernel",
+        "homogeneous_gvs_threadlike_force_kernel",
+        "homogeneous_gvs_threadlike_force_block_kernel",
+        "homogeneous_gvs_threadlike_matrix_kernel",
+        "homogeneous_floating_persistent_chain_kernel",
+        "launch_homogeneous_cell_terms",
+        "launch_homogeneous_cooperative_joint_terms",
+        "launch_homogeneous_joint_terms",
+        "launch_homogeneous_floating_persistent_chain",
+        "launch_homogeneous_gvs_forward_kinematics",
+        "launch_homogeneous_gvs_forward_kinematics_and_jvp",
+        "launch_homogeneous_gvs_dynamics_and_threadlike_actuation_force",
+        "launch_homogeneous_gvs_inertial_jacobians",
+        "launch_homogeneous_gvs_inertial_jacobian_vjp",
+        "launch_homogeneous_gvs_kinematics",
+        "launch_homogeneous_gvs_threadlike_actuation_force",
+        "launch_homogeneous_gvs_threadlike_actuation_matrix",
+        "launch_homogeneous_persistent_chain",
+        "homogeneous_persistent_chain_kernel",
+        "homogeneous_gvs_threadlike_strain_kernel",
     }
     assert expected == set(gvs.__all__)
     assert expected <= set(dir(gvs))
@@ -80,81 +75,71 @@ def test_public_gvs_launch_functions_have_documented_warp_contracts() -> None:
 
     pytest.importorskip("warp")
     from soromox.execution.warp.gvs import (
-        cell_terms_kernel,
-        cooperative_joint_terms_kernel,
-        gvs_cooperative_node_states_kernel,
-        gvs_cooperative_node_vjp_kernel,
-        gvs_jacobian_samples_kernel,
-        gvs_node_pose_twist_kernel,
-        gvs_node_poses_kernel,
-        gvs_node_states_kernel,
-        gvs_node_vjp_kernel,
-        gvs_pose_samples_kernel,
-        gvs_pose_twist_samples_kernel,
-        gvs_sample_vjp_kernel,
-        gvs_samples_kernel,
-        gvs_threadlike_force_block_kernel,
-        gvs_threadlike_force_kernel,
-        gvs_threadlike_matrix_kernel,
-        joint_terms_kernel,
-        launch_cell_terms,
-        launch_cooperative_joint_terms,
-        launch_forward_kinematics,
-        launch_forward_kinematics_and_jacobians,
-        launch_forward_kinematics_and_jvp,
-        launch_gvs_forward_kinematics,
-        launch_gvs_forward_kinematics_and_jvp,
-        launch_gvs_inertial_jacobian_vjp,
-        launch_gvs_inertial_jacobians,
-        launch_gvs_kinematics,
-        launch_gvs_threadlike_actuation_force,
-        launch_gvs_threadlike_actuation_matrix,
-        launch_inertial_jacobian_vjp,
-        launch_inertial_jacobians,
-        launch_joint_terms,
-        launch_persistent_chain,
-        persistent_chain_kernel,
-        prepare_gvs_threadlike_strain_kernel,
+        homogeneous_cell_terms_kernel,
+        homogeneous_cooperative_joint_terms_kernel,
+        homogeneous_gvs_cooperative_node_states_kernel,
+        homogeneous_gvs_cooperative_node_vjp_kernel,
+        homogeneous_gvs_jacobian_samples_kernel,
+        homogeneous_gvs_node_pose_twist_kernel,
+        homogeneous_gvs_node_poses_kernel,
+        homogeneous_gvs_node_states_kernel,
+        homogeneous_gvs_node_vjp_kernel,
+        homogeneous_gvs_pose_samples_kernel,
+        homogeneous_gvs_pose_twist_samples_kernel,
+        homogeneous_gvs_sample_vjp_kernel,
+        homogeneous_gvs_samples_kernel,
+        homogeneous_gvs_threadlike_force_block_kernel,
+        homogeneous_gvs_threadlike_force_kernel,
+        homogeneous_gvs_threadlike_matrix_kernel,
+        homogeneous_gvs_threadlike_strain_kernel,
+        homogeneous_joint_terms_kernel,
+        homogeneous_persistent_chain_kernel,
+        launch_homogeneous_cell_terms,
+        launch_homogeneous_cooperative_joint_terms,
+        launch_homogeneous_gvs_forward_kinematics,
+        launch_homogeneous_gvs_forward_kinematics_and_jvp,
+        launch_homogeneous_gvs_inertial_jacobian_vjp,
+        launch_homogeneous_gvs_inertial_jacobians,
+        launch_homogeneous_gvs_kinematics,
+        launch_homogeneous_gvs_threadlike_actuation_force,
+        launch_homogeneous_gvs_threadlike_actuation_matrix,
+        launch_homogeneous_joint_terms,
+        launch_homogeneous_persistent_chain,
     )
 
     launchers = (
-        launch_forward_kinematics,
-        launch_forward_kinematics_and_jvp,
-        launch_forward_kinematics_and_jacobians,
-        launch_gvs_forward_kinematics,
-        launch_gvs_forward_kinematics_and_jvp,
-        launch_gvs_inertial_jacobian_vjp,
-        launch_gvs_inertial_jacobians,
-        launch_gvs_kinematics,
-        launch_inertial_jacobians,
-        launch_inertial_jacobian_vjp,
-        launch_joint_terms,
-        launch_cooperative_joint_terms,
-        launch_cell_terms,
-        launch_persistent_chain,
-        launch_gvs_threadlike_actuation_matrix,
-        launch_gvs_threadlike_actuation_force,
+        launch_homogeneous_gvs_forward_kinematics,
+        launch_homogeneous_gvs_forward_kinematics_and_jvp,
+        launch_homogeneous_gvs_inertial_jacobian_vjp,
+        launch_homogeneous_gvs_inertial_jacobians,
+        launch_homogeneous_gvs_kinematics,
+        launch_homogeneous_joint_terms,
+        launch_homogeneous_cooperative_joint_terms,
+        launch_homogeneous_cell_terms,
+        launch_homogeneous_persistent_chain,
+        launch_homogeneous_gvs_threadlike_actuation_matrix,
+        launch_homogeneous_gvs_threadlike_actuation_force,
     )
     kernels = (
-        gvs_cooperative_node_states_kernel,
-        gvs_cooperative_node_vjp_kernel,
-        gvs_jacobian_samples_kernel,
-        gvs_node_pose_twist_kernel,
-        gvs_node_poses_kernel,
-        gvs_node_states_kernel,
-        gvs_node_vjp_kernel,
-        gvs_pose_samples_kernel,
-        gvs_pose_twist_samples_kernel,
-        gvs_sample_vjp_kernel,
-        gvs_samples_kernel,
-        joint_terms_kernel,
-        cooperative_joint_terms_kernel,
-        cell_terms_kernel,
-        persistent_chain_kernel,
-        prepare_gvs_threadlike_strain_kernel,
-        gvs_threadlike_matrix_kernel,
-        gvs_threadlike_force_kernel,
-        gvs_threadlike_force_block_kernel,
+        homogeneous_gvs_cooperative_node_states_kernel,
+        homogeneous_gvs_cooperative_node_vjp_kernel,
+        homogeneous_gvs_jacobian_samples_kernel,
+        homogeneous_gvs_node_pose_twist_kernel,
+        homogeneous_gvs_node_poses_kernel,
+        homogeneous_gvs_node_states_kernel,
+        homogeneous_gvs_node_vjp_kernel,
+        homogeneous_gvs_pose_samples_kernel,
+        homogeneous_gvs_pose_twist_samples_kernel,
+        homogeneous_gvs_sample_vjp_kernel,
+        homogeneous_gvs_samples_kernel,
+        homogeneous_joint_terms_kernel,
+        homogeneous_cooperative_joint_terms_kernel,
+        homogeneous_cell_terms_kernel,
+        homogeneous_persistent_chain_kernel,
+        homogeneous_gvs_threadlike_strain_kernel,
+        homogeneous_gvs_threadlike_matrix_kernel,
+        homogeneous_gvs_threadlike_force_kernel,
+        homogeneous_gvs_threadlike_force_block_kernel,
     )
 
     for launcher in launchers:
@@ -162,31 +147,28 @@ def test_public_gvs_launch_functions_have_documented_warp_contracts() -> None:
         assert documentation is not None
         assert "Args:" in documentation
         assert "Returns:" in documentation
-    assert launch_forward_kinematics is launch_gvs_forward_kinematics
-    assert launch_forward_kinematics_and_jvp is launch_gvs_forward_kinematics_and_jvp
-    assert launch_inertial_jacobians is launch_gvs_inertial_jacobians
-    assert launch_inertial_jacobian_vjp is launch_gvs_inertial_jacobian_vjp
-    assert launch_forward_kinematics_and_jacobians is launch_gvs_kinematics
     specialized = (
-        launch_gvs_forward_kinematics,
-        launch_gvs_forward_kinematics_and_jvp,
-        launch_gvs_inertial_jacobian_vjp,
-        launch_gvs_inertial_jacobians,
-        launch_gvs_kinematics,
-        launch_joint_terms,
-        launch_cooperative_joint_terms,
-        launch_cell_terms,
-        launch_persistent_chain,
+        launch_homogeneous_gvs_forward_kinematics,
+        launch_homogeneous_gvs_forward_kinematics_and_jvp,
+        launch_homogeneous_gvs_inertial_jacobian_vjp,
+        launch_homogeneous_gvs_inertial_jacobians,
+        launch_homogeneous_gvs_kinematics,
+        launch_homogeneous_joint_terms,
+        launch_homogeneous_cooperative_joint_terms,
+        launch_homogeneous_cell_terms,
+        launch_homogeneous_persistent_chain,
     )
     for launcher in specialized:
         assert len(inspect.signature(launcher).parameters) >= 10
-    assert tuple(inspect.signature(launch_gvs_forward_kinematics_and_jvp).parameters)[
-        :3
-    ] == ("q", "qd", "s")
-    assert tuple(inspect.signature(launch_gvs_inertial_jacobian_vjp).parameters)[
-        :3
-    ] == ("q", "s", "inertial_wrenches")
-    assert tuple(inspect.signature(launch_gvs_forward_kinematics).parameters)[:5] == (
+    assert tuple(
+        inspect.signature(launch_homogeneous_gvs_forward_kinematics_and_jvp).parameters
+    )[:3] == ("q", "qd", "s")
+    assert tuple(
+        inspect.signature(launch_homogeneous_gvs_inertial_jacobian_vjp).parameters
+    )[:3] == ("q", "s", "inertial_wrenches")
+    assert tuple(
+        inspect.signature(launch_homogeneous_gvs_forward_kinematics).parameters
+    )[:5] == (
         "q",
         "s",
         "joint_adjoint",
@@ -205,20 +187,23 @@ def test_public_gvs_launch_functions_have_documented_warp_contracts() -> None:
         "link_global_to_local",
     )
     assert (
-        tuple(inspect.signature(launch_gvs_inertial_jacobians).parameters)[:9]
+        tuple(inspect.signature(launch_homogeneous_gvs_inertial_jacobians).parameters)[
+            :9
+        ]
         == state_prefix
     )
     assert (
-        tuple(inspect.signature(launch_gvs_kinematics).parameters)[:9] == state_prefix
+        tuple(inspect.signature(launch_homogeneous_gvs_kinematics).parameters)[:9]
+        == state_prefix
     )
     for kernel in kernels:
         assert kernel is not None
     for kernel in (
-        gvs_cooperative_node_vjp_kernel,
-        gvs_node_pose_twist_kernel,
-        gvs_node_vjp_kernel,
-        gvs_pose_twist_samples_kernel,
-        gvs_sample_vjp_kernel,
+        homogeneous_gvs_cooperative_node_vjp_kernel,
+        homogeneous_gvs_node_pose_twist_kernel,
+        homogeneous_gvs_node_vjp_kernel,
+        homogeneous_gvs_pose_twist_samples_kernel,
+        homogeneous_gvs_sample_vjp_kernel,
     ):
         documentation = inspect.getdoc(kernel)
         assert documentation is not None

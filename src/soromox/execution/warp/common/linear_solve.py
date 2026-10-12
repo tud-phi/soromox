@@ -25,6 +25,9 @@ def cholesky_solve_at(
 ):
     """Solve FP64 symmetric positive-definite systems with cooperative Cholesky.
 
+    Explicit indices address the supplied array views. Homogeneous wrappers pass the
+    full batch; packed wrappers pass one world's views and local indices.
+
     Use 32 threads per system. Inputs, outputs and workspaces must not alias.
 
     Args:
@@ -113,7 +116,7 @@ def cholesky_solve_at(
 
 
 @wp.kernel(enable_backward=False)
-def cooperative_cholesky_kernel(
+def homogeneous_cooperative_cholesky_kernel(
     matrix: wp.array3d[wp.float64],
     rhs: wp.array2d[wp.float64],
     diagonal_regularization: wp.float64,
@@ -122,7 +125,18 @@ def cooperative_cholesky_kernel(
     solution: wp.array2d[wp.float64],
     status: wp.array[wp.int32],
 ):
-    """Solve FP64 symmetric positive-definite systems with cooperative Cholesky.
+    """Solve a homogeneous batch of equally sized linear systems.
+
+    All worlds use the same structural dimensions and coordinate layout. Dimensions:
+    E = worlds, D = coordinates.
+
+    Shared across worlds: ``diagonal_regularization``.
+
+    Matrix and right-hand-side values may differ for every world; every system has
+    dimension D. Workspaces and outputs retain the world axis.
+
+    Launch with ``wp.launch_tiled(..., dim=E, block_dim=32)``. Exactly 32 threads
+    cooperate on each linear system.
 
     Use 32 threads per system. Inputs, outputs and workspaces must not alias.
     Launch with ``wp.launch_tiled(..., dim=E, block_dim=32)`` on CUDA.
@@ -189,7 +203,11 @@ def packed_cholesky_kernel(
     work_items: wp.array(dtype=wp.vec3i),
     diagonal_regularization: wp.float64,
 ):
-    """Solve FP64 symmetric positive-definite systems with cooperative Cholesky.
+    """Solve FP64 symmetric positive-definite systems with cooperative Cholesky using packed world data.
+
+    Each selected descriptor contains one world (E = 1). Structure and numerical
+    model parameters may differ between worlds. Descriptors may share allocations
+    when their values match.
 
     Launch with ``wp.launch_tiled(..., dim=len(work_items), block_dim=32)``.
     Each block cooperates on one work item; all lanes must participate.

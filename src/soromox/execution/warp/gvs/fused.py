@@ -12,14 +12,14 @@ from __future__ import annotations
 import warp as wp
 
 from soromox.execution.warp.gvs.actuation.threadlike import (
-    launch_gvs_threadlike_actuation_force,
+    launch_homogeneous_gvs_threadlike_actuation_force,
 )
-from soromox.execution.warp.gvs.chain import launch_persistent_chain
+from soromox.execution.warp.gvs.chain import launch_homogeneous_persistent_chain
 
 wp.set_module_options({"enable_backward": False})
 
 
-def launch_gvs_dynamics_and_threadlike_actuation_force(
+def launch_homogeneous_gvs_dynamics_and_threadlike_actuation_force(
     joint_adjoint: wp.array2d[wp.float64],
     joint_adjoint_dot: wp.array2d[wp.float64],
     joint_tangent: wp.array2d[wp.float64],
@@ -68,7 +68,25 @@ def launch_gvs_dynamics_and_threadlike_actuation_force(
     strain_workspace: wp.array4d[wp.float64],
     actuation_force: wp.array2d[wp.float64],
 ):
-    """Enqueue GVS chain assembly followed by threadlike direct effort.
+    """Launch gvs dynamics and threadlike actuation force for a homogeneous batch.
+
+    All worlds use the same structural dimensions and coordinate layout. Dimensions:
+    E = worlds, S = segments, Q = quadrature points, D = coordinates.
+
+    Shared across worlds: ``link_global_to_local``, ``active_dofs``,
+    ``inertia_upper_rows``, ``inertia_upper_columns``, ``weighted_masses``,
+    ``gravity_base``, ``num_cells``, ``num_quadrature``, ``lanes_per_block``,
+    ``block_dim``, ``link_local_to_global``, ``link_basis``, ``reference_strain``,
+    ``physical_points``, ``integration_weights``, ``routing_intercepts``,
+    ``routing_slopes``, ``path_start_segments``, ``path_end_segments``,
+    ``coordinate_scales``, ``epsilons``.
+
+    State, computed operator, workspace and output arrays carry the world axis,
+    either explicitly or flattened as documented in Args. Their values may differ by
+    world.
+
+    The launcher derives its work grid from these common dimensions and enqueues the
+    homogeneous kernels on the current Warp stream.
 
     All arrays follow the public GVS dynamics and threadlike operand/shape
     contracts. The first eleven outputs are the persistent-chain workspaces and
@@ -80,7 +98,7 @@ def launch_gvs_dynamics_and_threadlike_actuation_force(
         synchronization, JAX calls, or device transfers.
     """
 
-    launch_persistent_chain(
+    launch_homogeneous_persistent_chain(
         joint_adjoint,
         joint_adjoint_dot,
         joint_tangent,
@@ -114,7 +132,7 @@ def launch_gvs_dynamics_and_threadlike_actuation_force(
         coriolis_qd,
         gravity_force,
     )
-    launch_gvs_threadlike_actuation_force(
+    launch_homogeneous_gvs_threadlike_actuation_force(
         q,
         controls,
         link_local_to_global,
@@ -135,12 +153,12 @@ def launch_gvs_dynamics_and_threadlike_actuation_force(
 
 
 gvs_dynamics_and_threadlike_actuation_force = wp.jax_callable(
-    launch_gvs_dynamics_and_threadlike_actuation_force,
+    launch_homogeneous_gvs_dynamics_and_threadlike_actuation_force,
     num_outputs=13,
 )
 
 
 __all__ = [
     "gvs_dynamics_and_threadlike_actuation_force",
-    "launch_gvs_dynamics_and_threadlike_actuation_force",
+    "launch_homogeneous_gvs_dynamics_and_threadlike_actuation_force",
 ]

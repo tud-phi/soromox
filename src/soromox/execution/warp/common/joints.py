@@ -149,6 +149,9 @@ def joint_terms_at(
 ):
     """Evaluate one joint per ``(environment, segment)`` work item.
 
+    Explicit indices address the supplied array views. Homogeneous wrappers pass the
+    full batch; packed wrappers pass one world's views and local indices.
+
     Args:
         work_item: Flattened environment-segment index in the supplied arrays.
         q: Batched active generalized coordinates.
@@ -224,7 +227,7 @@ def joint_terms_at(
 
 
 @wp.kernel(enable_backward=False)
-def joint_terms_kernel(
+def homogeneous_joint_terms_kernel(
     q: wp.array2d[wp.float64],
     qd: wp.array2d[wp.float64],
     basis: wp.array2d[wp.float64],
@@ -236,7 +239,18 @@ def joint_terms_kernel(
     tangent_dot_qd: wp.array2d[wp.float64],
     joint_velocity: wp.array2d[wp.float64],
 ):
-    """Evaluate one joint per ``(environment, segment)`` work item.
+    """Evaluate joint operators for a homogeneous batch.
+
+    All worlds use the same structural dimensions and coordinate layout. Dimensions:
+    E = worlds, S = segments.
+
+    Shared across worlds: ``basis``, ``reference``, ``local_to_global``.
+
+    State, computed operator, workspace and output arrays carry the world axis,
+    either explicitly or flattened as documented in Args. Their values may differ by
+    world.
+
+    Launch with ``dim=E*S``: one thread per flattened world/segment index.
 
     Args:
         q: Batched active generalized coordinates.
@@ -306,7 +320,11 @@ class JointTermsData:
 def packed_joint_terms_kernel(
     world_data: wp.array(dtype=JointTermsData), work_items: wp.array(dtype=wp.vec3i)
 ):
-    """Evaluate one joint per ``(environment, segment)`` work item.
+    """Evaluate one joint per ``(environment, segment)`` work item using packed world data.
+
+    Each selected descriptor contains one world (E = 1). Structure and numerical
+    model parameters may differ between worlds. Descriptors may share allocations
+    when their values match.
 
     Launch with ``dim=len(work_items)``; each thread handles one work item.
 
@@ -337,7 +355,7 @@ def packed_joint_terms_kernel(
     )
 
 
-def launch_joint_terms(
+def launch_homogeneous_joint_terms(
     q: wp.array2d[wp.float64],
     qd: wp.array2d[wp.float64],
     basis: wp.array2d[wp.float64],
@@ -349,11 +367,22 @@ def launch_joint_terms(
     tangent_dot_qd: wp.array2d[wp.float64],
     joint_velocity: wp.array2d[wp.float64],
 ):
-    """Launch one shape-generic joint work item per segment and environment.
+    """Launch joint terms for a homogeneous batch.
+
+    All worlds use the same structural dimensions and coordinate layout.
+
+    Shared across worlds: ``basis``, ``reference``, ``local_to_global``.
+
+    State, computed operator, workspace and output arrays carry the world axis,
+    either explicitly or flattened as documented in Args. Their values may differ by
+    world.
+
+    The launcher derives its work grid from these common dimensions and enqueues the
+    homogeneous kernels on the current Warp stream.
 
     This direct Warp entry point is intended for CPU execution and diagnostic
     use. GPU integrations should normally use
-    :func:`launch_cooperative_joint_terms`, which distributes the local basis
+    :func:`launch_homogeneous_cooperative_joint_terms`, which distributes the local basis
     columns across a CUDA block.
 
     Args:
@@ -379,7 +408,7 @@ def launch_joint_terms(
     """
 
     wp.launch(
-        joint_terms_kernel,
+        homogeneous_joint_terms_kernel,
         dim=q.shape[0] * reference.shape[0],
         inputs=[q, qd, basis, reference, local_to_global],
         outputs=[
@@ -393,10 +422,10 @@ def launch_joint_terms(
     )
 
 
-scalable_joint_terms = wp.jax_callable(launch_joint_terms, num_outputs=5)
+scalable_joint_terms = wp.jax_callable(launch_homogeneous_joint_terms, num_outputs=5)
 
 
-__all__ = ["joint_terms_kernel", "launch_joint_terms"]
+__all__ = ["homogeneous_joint_terms_kernel", "launch_homogeneous_joint_terms"]
 
 
 __all__ += ["JointTermsData", "packed_joint_terms_kernel"]
