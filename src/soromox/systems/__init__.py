@@ -54,6 +54,9 @@ from .articulated import ArticulatedSoftRobot, McKibbenActuatedUMArm
 from .gvs import (
     GVS,
     GVSSegment,
+    Helicoidal,
+    HelicoidalParams,
+    HelicoidalSectionParams,
     StrainBasisSpec,
 )
 from .pcs import (
@@ -93,6 +96,9 @@ __all__ = [
     "McKibbenActuatedUMArm",
     "McKibbenActuatedUMArmParams",
     # gvs systems
+    "Helicoidal",
+    "HelicoidalParams",
+    "HelicoidalSectionParams",
     "GVS",
     "GVSParams",
     "GVSStructure",
