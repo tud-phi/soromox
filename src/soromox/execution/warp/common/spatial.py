@@ -6,7 +6,7 @@ from __future__ import annotations
 import warp as wp
 
 from soromox.execution.warp.common.se3 import Vec6d
-from soromox.execution.warp.common.storage import _vector_value
+from soromox.execution.warp.common.storage import _matrix_value, _vector_value
 
 wp.set_module_options({"enable_backward": False})
 
@@ -61,9 +61,7 @@ def _load_spatial_vector3d(
 
 
 @wp.func
-def _store_spatial_vector(
-    values: wp.array2d[wp.float64], item: int, value: Vec6d
-):
+def _store_spatial_vector(values: wp.array2d[wp.float64], item: int, value: Vec6d):
     """Store one six-vector in item-major storage.
 
     Args:
@@ -166,6 +164,53 @@ def _rotate_spatial_from_inertial(pose: wp.mat44d, value: Vec6d) -> Vec6d:
 
 
 @wp.func
+def _mass_vector_action(
+    masses: wp.array2d[wp.float64],
+    item: int,
+    row: int,
+    first: wp.array2d[wp.float64],
+    second: wp.array2d[wp.float64],
+    use_first: bool,
+    base_row: int,
+) -> wp.float64:
+    """Apply diagonal or row-major full spatial inertia to a stored vector."""
+    if masses.shape[1] == SPATIAL_DIM:
+        return masses[item, row] * _vector_value(
+            first, second, use_first, base_row, row
+        )
+    value = wp.float64(0.0)
+    for column in range(SPATIAL_DIM):
+        value += masses[item, row * SPATIAL_DIM + column] * _vector_value(
+            first, second, use_first, base_row, column
+        )
+    return value
+
+
+@wp.func
+def _mass_jacobian_action(
+    masses: wp.array2d[wp.float64],
+    item: int,
+    row: int,
+    first: wp.array2d[wp.float64],
+    second: wp.array2d[wp.float64],
+    use_first: bool,
+    base_row: int,
+    column: int,
+) -> wp.float64:
+    """Apply diagonal or full spatial inertia to one Jacobian column."""
+    if masses.shape[1] == SPATIAL_DIM:
+        return masses[item, row] * _matrix_value(
+            first, second, use_first, base_row, row, column
+        )
+    value = wp.float64(0.0)
+    for k in range(SPATIAL_DIM):
+        value += masses[item, row * SPATIAL_DIM + k] * _matrix_value(
+            first, second, use_first, base_row, k, column
+        )
+    return value
+
+
+@wp.func
 def _coadjoint_wrench(
     velocity_first: wp.array2d[wp.float64],
     velocity_second: wp.array2d[wp.float64],
@@ -201,35 +246,31 @@ def _coadjoint_wrench(
         _vector_value(velocity_first, velocity_second, use_first, base_row, 4),
         _vector_value(velocity_first, velocity_second, use_first, base_row, 5),
     )
-    moment = wp.vec3d(
-        masses[quadrature, 0] * omega[0],
-        masses[quadrature, 1] * omega[1],
-        masses[quadrature, 2] * omega[2],
-    )
-    force = wp.vec3d(
-        masses[quadrature, 3] * linear_velocity[0],
-        masses[quadrature, 4] * linear_velocity[1],
-        masses[quadrature, 5] * linear_velocity[2],
-    )
+    momentum = Vec6d()
+    acceleration = Vec6d()
+    for row in range(SPATIAL_DIM):
+        momentum[row] = _mass_vector_action(
+            masses,
+            quadrature,
+            row,
+            velocity_first,
+            velocity_second,
+            use_first,
+            base_row,
+        )
+        acceleration[row] = _mass_vector_action(
+            masses,
+            quadrature,
+            row,
+            derivative_first,
+            derivative_second,
+            use_first,
+            base_row,
+        )
+    moment = wp.vec3d(momentum[0], momentum[1], momentum[2])
+    force = wp.vec3d(momentum[3], momentum[4], momentum[5])
     angular = wp.cross(omega, moment) + wp.cross(linear_velocity, force)
     linear = wp.cross(omega, force)
-    return Vec6d(
-        masses[quadrature, 0]
-        * _vector_value(derivative_first, derivative_second, use_first, base_row, 0)
-        + angular[0],
-        masses[quadrature, 1]
-        * _vector_value(derivative_first, derivative_second, use_first, base_row, 1)
-        + angular[1],
-        masses[quadrature, 2]
-        * _vector_value(derivative_first, derivative_second, use_first, base_row, 2)
-        + angular[2],
-        masses[quadrature, 3]
-        * _vector_value(derivative_first, derivative_second, use_first, base_row, 3)
-        + linear[0],
-        masses[quadrature, 4]
-        * _vector_value(derivative_first, derivative_second, use_first, base_row, 4)
-        + linear[1],
-        masses[quadrature, 5]
-        * _vector_value(derivative_first, derivative_second, use_first, base_row, 5)
-        + linear[2],
+    return acceleration + Vec6d(
+        angular[0], angular[1], angular[2], linear[0], linear[1], linear[2]
     )

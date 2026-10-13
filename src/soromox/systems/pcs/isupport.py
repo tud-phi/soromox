@@ -267,6 +267,7 @@ def _expand_isupport_layout(
     expanded_lengths: list[float] = []
     expanded_radius: list[Array] = []
     expanded_density: list[Array] = []
+    expanded_sources: list[int] = []
     expanded_reference_strain: list[Array] = []
     expanded_stiffness: list[Array] = []
     expanded_damping_blocks: list[Array] = []
@@ -288,6 +289,7 @@ def _expand_isupport_layout(
         expanded_lengths.append(jnp.asarray(length, dtype=jnp.float64))
         expanded_radius.append(radius[source_index])
         expanded_density.append(density[source_index])
+        expanded_sources.append(source_index)
         chamber_index = 0 if pneumatic_index is None else pneumatic_index
         expanded_chamber_inner_radius.append(r_chamber_in[chamber_index])
         expanded_chamber_outer_radius.append(r_chamber_out[chamber_index])
@@ -344,6 +346,28 @@ def _expand_isupport_layout(
             strain_selector
         )
 
+    # A physical link's attached body belongs to its final PCS subdivision.
+    sources = jnp.asarray(expanded_sources, dtype=jnp.int32)
+    sectional_inertia = params.link.sectional_inertia
+    if sectional_inertia is not None:
+        if (
+            sectional_inertia.ndim == 4
+            and sectional_inertia.shape[1] > 1
+            and len(expanded_sources) != len(physical_lengths)
+        ):
+            raise ValueError(
+                "Subdivided I-Support links require constant sectional_inertia "
+                "per physical link; quadrature samples cannot be reassigned "
+                "to a different discretization."
+            )
+        sectional_inertia = sectional_inertia[sources]
+    tip_inertia = params.link.tip_inertia
+    if tip_inertia is not None:
+        final_child = jnp.asarray(
+            [a != b for a, b in zip(expanded_sources, expanded_sources[1:] + [-1])]
+        )
+        tip_inertia = tip_inertia[sources] * final_child[:, None, None]
+
     expanded_params = ISupportParams(
         gravity=params.gravity,
         link=ContinuumLinkParams(
@@ -355,6 +379,8 @@ def _expand_isupport_layout(
             ),
             stiffness=jnp.stack(expanded_stiffness),
             damping=jnp.stack(expanded_damping_blocks),
+            sectional_inertia=sectional_inertia,
+            tip_inertia=tip_inertia,
         ),
         chamber_inner_radius=jnp.stack(expanded_chamber_inner_radius),
         chamber_outer_radius=jnp.stack(expanded_chamber_outer_radius),

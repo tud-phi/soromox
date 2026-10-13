@@ -3,7 +3,7 @@
 Run from the checkout with ``JAX_PLATFORMS=cpu python
 examples/simulation/gvs/simulate_helicoidal.py --duration 0.02``.
 Use ``--duration 0`` to inspect the model without a rollout. Tension is in newtons.
-The fixture is illustrative, not the paper's experimental arm.
+The fixture describes the toolkit's illustrative cylindrical arm.
 """
 
 import argparse
@@ -59,10 +59,23 @@ def build_robot(num_gauss_points: int = 8) -> Helicoidal:
             )
         )
     law = HelicoidalSectionParams(
-        bending_compliance=jnp.array([link["bending_compliance"] for link in links]),
-        torsional_stiffness=jnp.array([link["torsional_stiffness"] for link in links]),
-        axial_stiffness=jnp.array([link["axial_stiffness"] for link in links]),
-        shear_stiffness=jnp.array([link["shear_stiffness"] for link in links]),
+        compliance=jnp.array(
+            [
+                [
+                    1 / link["torsional_stiffness"],
+                    *([link["bending_compliance"][0]] * 2),
+                    1 / link["axial_stiffness"],
+                    *([1 / link["shear_stiffness"]] * 2),
+                ]
+                for link in links
+            ]
+        ),
+        compliance_gradient=jnp.array(
+            [
+                [0.0, *([link["bending_compliance"][1]] * 2), 0.0, 0.0, 0.0]
+                for link in links
+            ]
+        ),
         damping_time_constant=jnp.full(len(links), data["damping_time_constant"]),
     )
     routing = ThreadlikeRouting.linear(
@@ -88,6 +101,36 @@ def build_robot(num_gauss_points: int = 8) -> Helicoidal:
     )
 
 
+def build_renderer(robot: Helicoidal, **kwargs):
+    """Build the cylindrical example's Viser lattice with three helical modules."""
+    from soromox.rendering import (
+        CameraConfig,
+        GroundPlaneConfig,
+        HelicoidalModuleVisual,
+        HelicoidalViserRenderer,
+        RendererConfig,
+        SceneConfig,
+    )
+
+    config = kwargs.pop(
+        "config",
+        RendererConfig(
+            camera=CameraConfig(
+                position=(0.75, -1.0, 0.30),
+                look_at=(0.0, 0.0, 0.32),
+                up=(0.0, 0.0, -1.0),
+            ),
+            scene=SceneConfig(ground=GroundPlaneConfig(visible=False)),
+        ),
+    )
+    return HelicoidalViserRenderer(
+        robot,
+        modules=tuple(HelicoidalModuleVisual(index) for index in (1, 4, 7)),
+        config=config,
+        **kwargs,
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--duration", type=float, default=0.02)
@@ -96,6 +139,9 @@ def main() -> None:
         "--tension", type=float, default=0.1, help="Distal tendon tension [N]."
     )
     parser.add_argument("--output", type=Path, help="Optional trajectory .npz output.")
+    parser.add_argument(
+        "--viser", action="store_true", help="Display the helicoidal lattice in Viser."
+    )
     args = parser.parse_args()
     if args.duration < 0 or args.dt <= 0 or args.tension < 0:
         parser.error("duration and tension must be nonnegative; dt must be positive")
@@ -109,6 +155,8 @@ def main() -> None:
     print("Undeformed tip [m]:", robot.forward_kinematics_tips(q0)[-1, :3, 3])
     print("Contiguous tendon lengths [m]:", robot.actuators[0].path_lengths(robot, q0))
     if args.duration == 0:
+        if args.viser:
+            build_renderer(robot).show(q0)
         return
     # Large effective shear stiffness calls for an implicit integrator.
     trajectory = robot.rollout_to(
@@ -129,6 +177,11 @@ def main() -> None:
     if args.output:
         np.savez(args.output, t=trajectory.t, y=trajectory.y, tension=tension)
         print("Saved:", args.output)
+    if args.viser:
+        build_renderer(robot).render_sequence(
+            trajectory.t,
+            trajectory.y[:, : robot.num_coordinates],
+        )
 
 
 if __name__ == "__main__":

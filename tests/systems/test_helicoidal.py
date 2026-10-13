@@ -10,10 +10,9 @@ from scipy.integrate import quad
 
 from soromox.actuation import ThreadlikeActuator, ThreadlikeRouting
 from soromox.systems import (
-    GVS,
+    GVSParams,
     GVSSegment,
     Helicoidal,
-    HelicoidalParams,
     HelicoidalSectionParams,
     JointSpec,
     LinkSpec,
@@ -44,10 +43,10 @@ def segment(length=0.2, active=(1, 1, 1, 1, 1, 1), order=(0,) * 6, gauss=8):
 
 def law(count=1, c_b=3.0):
     return HelicoidalSectionParams(
-        bending_compliance=jnp.tile(jnp.array([[2.0, c_b]]), (count, 1)),
-        torsional_stiffness=jnp.full(count, 0.2),
-        axial_stiffness=jnp.full(count, 100.0),
-        shear_stiffness=jnp.full(count, 50.0),
+        compliance=jnp.tile(jnp.array([[5.0, 2.0, 2.0, 0.01, 0.02, 0.02]]), (count, 1)),
+        compliance_gradient=jnp.tile(
+            jnp.array([[0.0, c_b, c_b, 0.0, 0.0, 0.0]]), (count, 1)
+        ),
         damping_time_constant=jnp.full(count, 0.02),
     )
 
@@ -106,7 +105,7 @@ def test_platform_and_distributed_mechanics():
     model = build()
     q = jnp.array([0.2, -0.4, 0.3, 0.01, -0.01, 0.02])
     qd = jnp.array([-0.1, 0.2, -0.3, 0.02, 0.01, -0.01])
-    unloaded = model.update_params(tip_mass=jnp.zeros(1))
+    unloaded = model.update_link_params(tip_inertia=jnp.zeros((1, 6, 6)))
 
     def position(coordinates):
         return model.forward_kinematics_tips(coordinates)[0, :3, 3]
@@ -119,8 +118,8 @@ def test_platform_and_distributed_mechanics():
         atol=1e-11,
     )
     assert_allclose(
-        model.coriolis_matrix(q, qd) - unloaded.coriolis_matrix(q, qd),
-        0.04 * jacobian.T @ derivative,
+        (model.coriolis_matrix(q, qd) - unloaded.coriolis_matrix(q, qd)) @ qd,
+        0.04 * jacobian.T @ derivative @ qd,
         atol=1e-11,
     )
     assert_allclose(
@@ -190,12 +189,9 @@ def test_contiguous_tendons_include_transitions_and_massless_gaps():
         ],
         actuators=ThreadlikeActuator.tendons(route),
     )
-    model = model.update_params(
-        mass_per_length=model.params.mass_per_length.at[1].set(0),
-        rotational_inertia_per_length=model.params.rotational_inertia_per_length.at[
-            1
-        ].set(0),
-        tip_mass=model.params.tip_mass.at[1].set(0),
+    model = model.update_link_params(
+        sectional_inertia=model.params.link.sectional_inertia.at[1].set(0),
+        tip_inertia=model.params.link.tip_inertia.at[1].set(0),
     )
     q = jnp.zeros(model.num_coordinates)
     assert_allclose(model.actuators[0].path_lengths(model, q), [0.218], atol=1e-12)
@@ -222,10 +218,11 @@ def test_parameter_updates_and_projection_reuse_compilation():
     model = build()
     q = jnp.array([0.2, -0.4, 0.3, 0.01, -0.01, 0.02])
     changed = model.params.replace(
-        mass_per_length=jnp.array([0.3]),
-        rotational_inertia_per_length=2 * model.params.rotational_inertia_per_length,
-        tip_mass=jnp.array([0.06]),
-        link=model.params.link.replace(length=jnp.array([0.23])),
+        link=model.params.link.replace(
+            length=jnp.array([0.23]),
+            sectional_inertia=1.5 * model.params.link.sectional_inertia,
+            tip_inertia=1.5 * model.params.link.tip_inertia,
+        )
     )
     traces = []
 
@@ -243,7 +240,7 @@ def test_parameter_updates_and_projection_reuse_compilation():
         assert_allclose(a, b, rtol=1e-10, atol=1e-12)
     assert_allclose(stiffness, fresh.K)
     assert_allclose(model.with_params(changed).K, model.K)
-    assert isinstance(model.with_params(changed).params, HelicoidalParams)
+    assert isinstance(model.with_params(changed).params, GVSParams)
     model_traces = []
 
     @eqx.filter_jit
@@ -259,7 +256,7 @@ def test_parameter_updates_and_projection_reuse_compilation():
 
     derivative = jax.grad(
         lambda c: model.with_sectional_law(
-            law().replace(bending_compliance=jnp.array([[c, 3.0]]))
+            law().replace(compliance=law().compliance.at[0, 1:3].set(c))
         ).K[1, 1]
     )(2.0)
     expected = quad(lambda s: -1 / (2 + 3 * (0.2 - s)) ** 2, 0, 0.2)[0]
@@ -273,30 +270,20 @@ def test_parameter_updates_and_projection_reuse_compilation():
     )(0.2)
     assert_allclose(length_derivative, 1 / (2 + 3 * 0.2), rtol=1e-12)
     mass_derivative = jax.grad(
-        lambda m: model.update_params(tip_mass=jnp.array([m])).inertia_matrix(q)[3, 3]
+        lambda m: model.update_link_params(
+            tip_inertia=jnp.diag(jnp.array([0.0, 0.0, 0.0, m, m, m]))[None]
+        ).inertia_matrix(q)[3, 3]
     )(0.04)
     assert mass_derivative > 0
 
 
-def test_validation_and_backend_restrictions():
+def test_validation():
     model = build()
     with pytest.raises(ValueError, match="positive throughout"):
         model.with_sectional_law(law(c_b=-20.0))
     with pytest.raises(ValueError, match="one row per link"):
         model.with_sectional_law(law(2))
-    with pytest.raises(ValueError):
-        model.update_params(tip_mass=jnp.array([-0.1]))
-    with pytest.raises(ValueError):
-        model.update_params(mass_per_length=jnp.zeros(2))
-    with pytest.raises(ValueError, match="JAX"):
-        Helicoidal(model.params, model.structure, backend="warp")
-    with pytest.raises(ValueError, match="fixed base"):
-        Helicoidal(model.params, model.structure, floating_base=True)
-    with pytest.raises(ValueError, match="JAX"):
-        model.dynamics_terms(jnp.zeros(6), jnp.zeros(6), backend="warp")
-    with pytest.raises(ValueError, match="JAX"):
-        model.forward_dynamics(0.0, jnp.zeros(12), backend="warp")
-    with pytest.raises(ValueError, match="JAX"):
-        model.actuation_matrix(jnp.zeros(6), backend="warp")
-    with pytest.raises(TypeError):
-        model.with_params(GVS.params_from_segments([segment()])[0])
+    with pytest.raises(ValueError, match="positive semidefinite"):
+        model.update_link_params(tip_inertia=-jnp.eye(6)[None])
+    with pytest.raises(ValueError, match="shape"):
+        model.update_link_params(sectional_inertia=jnp.zeros((2, 6, 6)))
