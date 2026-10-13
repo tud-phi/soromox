@@ -322,7 +322,7 @@ def test_coadjoint_se2_matches_closed_form():
     ang = vec[0]
     expected = jnp.array(
         [
-            [0.0, v2, -v1],
+            [0.0, -v2, v1],
             [0.0, 0.0, -ang],
             [0.0, ang, 0.0],
         ]
@@ -340,6 +340,8 @@ def test_coadjoint_action_se2_matches_matrix_product():
     result = se2.coadjoint_action(xi, dual)
 
     assert_allclose(result, se2.coadjoint(xi) @ dual, rtol=RTOL, atol=ATOL)
+    assert_allclose(se2.coadjoint(xi), -se2.small_adjoint(xi).T, atol=ATOL)
+    assert_allclose(xi @ result, 0.0, atol=ATOL)
 
 
 def test_adjoint_g_se2_matches_manual_construction():

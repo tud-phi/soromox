@@ -88,7 +88,7 @@ def test_gvs_operands_are_views_over_precomputed_model_data(
     assert operands.block_dim == 128
     assert operands.joint_basis is model.B_joint
     assert operands.link_basis_z1_values is model.scaled_B_Z1_values
-    assert operands.weighted_mass_diagonals is model.inner_weighted_mass_diagonals
+    assert operands.weighted_inertias is model.weighted_inertias
     assert_allclose(operands.gravity_base, model.gravity_base, rtol=0.0, atol=0.0)
 
 

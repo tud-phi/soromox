@@ -1610,6 +1610,7 @@ def test_cached_constant_matrices_refresh_after_update_params():
             updated.inertia_upper_rows,
             updated.inertia_upper_columns,
             updated.gravity_base,
+            updated.weighted_inertias,
         ),
         expected_runtime_arrays,
         strict=True,

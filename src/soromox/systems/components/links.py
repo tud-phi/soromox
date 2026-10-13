@@ -56,6 +56,15 @@ class ContinuumLinkParams(BaseSystemParams):
             ``(num_links, generalized_dimension, generalized_dimension)``.
         damping: Canonical generalized link damping matrices with the same
             shape as ``stiffness``.
+        sectional_inertia: Optional angular-first spatial inertia per unit length
+            in local material frames, shape ``(num_links, d, d)`` or
+            ``(num_links, num_gauss_points, d, d)`` at interior quadrature nodes,
+            with ``d=3`` for planar models and ``d=6`` for spatial models.
+            Omitting it derives inertia from density and cross-section geometry.
+        tip_inertia: Optional attached-body spatial inertia about each link tip,
+            shape ``(num_links, d, d)``. Use :func:`spatial_inertia` for masses
+            with an offset center of mass and rotational inertia. Zero matrices
+            allow numeric attachment updates with fixed array shapes.
     """
 
     length: Array
@@ -64,16 +73,25 @@ class ContinuumLinkParams(BaseSystemParams):
     cross_section: CrossSectionParams
     stiffness: Array
     damping: Array
+    sectional_inertia: Array | None = None
+    tip_inertia: Array | None = None
 
     def __check_init__(self) -> None:
         for name in ("length", "density", "reference_strain", "stiffness", "damping"):
             object.__setattr__(self, name, jnp.asarray(getattr(self, name)))
+        for name in ("sectional_inertia", "tip_inertia"):
+            if getattr(self, name) is not None:
+                value = jnp.asarray(getattr(self, name))
+                object.__setattr__(self, name, jnp.asarray(value, dtype=value.dtype))
         self.validate_for_update()
 
     def _normalize_replacement(self, name: str, value: object) -> object:
         """Normalize replacement link-array values to JAX arrays."""
         if name in ("length", "density", "reference_strain", "stiffness", "damping"):
             return jnp.asarray(value)
+        if name in ("sectional_inertia", "tip_inertia") and value is not None:
+            array = jnp.asarray(value)
+            return jnp.asarray(array, dtype=array.dtype)
         return value
 
     def validate_structure(self) -> None:
@@ -122,6 +140,30 @@ class ContinuumLinkParams(BaseSystemParams):
                 f"damping must have shape {stiffness.shape}, got {damping.shape}."
             )
 
+        for name in ("sectional_inertia", "tip_inertia"):
+            value = getattr(self, name)
+            if value is None:
+                continue
+            allowed_ndims = (3, 4) if name == "sectional_inertia" else (3,)
+            if (
+                value.ndim not in allowed_ndims
+                or value.shape[0] != num_links
+                or value.shape[-2:]
+                != (reference_strain.shape[1], reference_strain.shape[1])
+            ):
+                raise ValueError(
+                    f"{name} must have shape (num_links, {reference_strain.shape[1]}, {reference_strain.shape[1]})"
+                    + (
+                        f" or (num_links, num_gauss_points, {reference_strain.shape[1]}, {reference_strain.shape[1]})."
+                        if name == "sectional_inertia"
+                        else "."
+                    )
+                )
+            if reference_strain.shape[1] not in (3, 6):
+                raise ValueError(
+                    "Custom inertia requires three or six strain components."
+                )
+
     def validate_values(self) -> None:
         """Validate eager link values and canonical matrix properties."""
         _validate_finite_domain("length", self.length, strictly_positive=True)
@@ -130,6 +172,35 @@ class ContinuumLinkParams(BaseSystemParams):
         self.cross_section.validate_values()
         _validate_symmetric("stiffness", self.stiffness)
         _validate_symmetric("damping", self.damping)
+        for name in ("sectional_inertia", "tip_inertia"):
+            value = getattr(self, name)
+            if value is None:
+                continue
+            _validate_symmetric(name, value)
+            scale = jnp.maximum(1.0, jnp.max(jnp.abs(value), axis=(-2, -1)))
+            if not bool(
+                jnp.all(jnp.linalg.eigvalsh(value) >= -1e-10 * scale[..., None])
+            ):
+                raise ValueError(f"{name} must be positive semidefinite.")
+            angular = 1 if value.shape[-1] == 3 else 3
+            linear = value.shape[-1] - angular
+            mass = (
+                jnp.trace(value[..., angular:, angular:], axis1=-2, axis2=-1) / linear
+            )
+            if not bool(
+                jnp.allclose(
+                    value[..., angular:, angular:],
+                    mass[..., None, None] * jnp.eye(linear),
+                )
+            ):
+                raise ValueError(
+                    f"{name} must have an isotropic translational mass block."
+                )
+            coupling = value[..., :3, 3:]
+            if value.shape[-1] == 6 and not bool(
+                jnp.allclose(coupling, -jnp.swapaxes(coupling, -1, -2))
+            ):
+                raise ValueError(f"{name} must have skew-symmetric COM coupling.")
 
 
 def _profile(

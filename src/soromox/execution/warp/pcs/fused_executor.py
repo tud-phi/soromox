@@ -73,10 +73,7 @@ def execute_dynamics_and_threadlike_actuation_force(
         dynamics.active_dof_ends,
         dynamics.inertia_upper_rows,
         dynamics.inertia_upper_columns,
-        dynamics.weighted_mass_diagonals.reshape(
-            num_segments * dynamics.num_gauss_points,
-            3 if dynamics.is_planar else 6,
-        ),
+        dynamics.weighted_inertias.reshape(-1, dynamics.weighted_inertias.shape[-1]),
     )
     trailing = (
         actuation.physical_points,

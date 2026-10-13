@@ -2,33 +2,52 @@
 
 `Helicoidal` specializes GVS for effective helicoidal lattice mechanics. It uses
 native segment specifications, strain bases, quadrature, and contiguous tendon
-routing. The initial implementation supports fixed-base JAX dynamics with
-independent distributed lattice inertia and platform point masses.
+routing. Shared GVS mechanics support fixed and floating bases in JAX and Warp,
+with distributed lattice inertia and attached bodies.
 
 ## Construction and mechanics
 
-Use `Helicoidal.from_segments(...)` with ordinary `GVSSegment` specifications,
+Use `Helicoidal.from_segments(...)` with `GVSSegment` specifications,
 `mass_per_length`, and `rotational_inertia_per_length`. Supply one entry per link
 for the line mass [kg/m], three principal rotational inertias [kg m], and optional
 `tip_mass` [kg]. Zero inertia is supported for geometric connector links with
-inactive strain bases. Rendering radii and `link.density` do not determine the
-lattice inertia. Tip masses have translational inertia only.
+inactive strain bases. The line mass and rotational inertias specify lattice inertia. Tip masses have translational inertia only.
 
 Supply a `HelicoidalSectionParams` object through `sectional_law=` or
 `with_sectional_law(...)`. The local x-axis is tangent to the backbone, with
 sectional order `[twist, bend_y, bend_z, extension, shear_y, shear_z]`:
 
 ```text
-EI(s) = 1 / (cA + cB * (L - s))
-K_section(s) = diag(GJ, EI(s), EI(s), EA, GA, GA)
+C(s) = compliance + (L - s) * compliance_gradient
+K_section(s) = diag(1 / C(s))
 K_link = integral B(s).T @ K_section(s) @ B(s) ds
 D_link = tau * K_link
 ```
 
-The analytic law is evaluated directly at existing GVS Gauss nodes, using the
-configured basis and optional rotational length scaling. No sampled stiffness
-profile or interpolation is required. `cA` and `cB` have units 1/(N m²) and
-1/(N m³), respectively. Bending compliance must be positive across the link.
+The analytic law is evaluated directly at GVS Gauss nodes, using the
+configured basis and optional rotational length scaling. Both coefficient arrays
+have shape `(num_links, 6)` in native strain order. Rotational compliance has
+units 1/(N m²); translational compliance has units 1/N. Gradient coefficients
+carry one additional inverse metre. All six compliances must be positive
+throughout each link.
+
+## Shared inertia representation
+
+`robot.params.link.sectional_inertia` overrides geometric inertia with a constant
+`(num_links, 6, 6)` distribution or values at interior Gauss nodes shaped
+`(num_links, num_gauss_points, 6, 6)`. Values are per unit reference length.
+`tip_inertia` stores `(num_links, 6, 6)` attached-body matrices about the link tip.
+The helper `soromox.systems.spatial_inertia` prepares these matrices from mass,
+center of mass, and rotational inertia about that center. They include gravity
+and inertial effects of offset centers of mass. Planar PCS accepts the analogous
+3×3 representation; PlanarHSA prepares its rod, platform, and payload reductions
+from its physical parameters and uses the shared JAX inertia assembly.
+
+Omitting both overrides uses the existing diagonal geometric inertia path.
+Selecting full inertia adds dense matrix actions and a contribution from the
+already computed link-tip kinematics. Allocating zero tip matrices allows later
+attachment changes without changing the compiled structure. Switching between
+`None` and arrays, or changing quadrature counts, changes that structure.
 
 ## Parameter updates
 
@@ -39,15 +58,15 @@ when changing lengths or constitutive coefficients:
 ```python
 robot = robot.update_link_params(length=1.05 * robot.params.link.length)
 robot = robot.with_sectional_law(sectional_law)
-robot = robot.update_params(tip_mass=1.1 * robot.params.tip_mass)
+robot = robot.update_link_params(tip_inertia=1.1 * robot.params.link.tip_inertia)
 ```
 
 These operations support JAX differentiation. Passing updated models into the
 same compiled function, or updating parameters within a compiled function,
-reuses compilation when topology, array shapes, and dtypes remain fixed. All
-links have an allocated tip-mass entry, so changing zero to a positive mass is
-an ordinary numeric update. Basis choices, link counts, quadrature counts, and
-tendon spans remain static. As with other system parameters, physical value
+reuses compilation when topology, array shapes, and dtypes are fixed. All
+links created by `Helicoidal.from_segments` have allocated tip inertia matrices,
+so changing zero to a positive mass is a numeric update. Basis choices, link counts, quadrature counts, and
+tendon spans are static. As with other system parameters, physical value
 validation occurs for eager inputs; transformed code must preserve their domains.
 
 ## Cylindrical example
@@ -68,16 +87,44 @@ gravity along +z, and a base rotation mapping native local x to world z.
 The analytic law is derived from the pinned toolkit's interface compliance.
 The fixture README at `assets/robot_parameters/helicoidal/README.md` records its
 provenance, coordinate conversion, and shear fallback. Tendons include every
-transition and connector in their contiguous spans. This discretization and
-routing differ from the upstream example; its saved solutions are not exact
-regression targets. The fixture is illustrative and does not reproduce the
-paper's experimental arm.
+transition and connector in their contiguous spans. Comparisons with upstream saved solutions should account for the discretization
+and routing differences. The fixture describes the toolkit's illustrative
+cylindrical arm.
 
-Platform inertia, gravity, and velocity bias are included in both individual
-mechanics methods and `dynamics_terms()` / `forward_dynamics()`. The initial bias
-calculation uses a JAX directional derivative of the tip Jacobians. Warp and
-floating-base execution, helix geometry generation, friction, length constraints,
-and contact saturation are outside this implementation.
+## Viser visualization
+
+Display the lattice interactively:
+
+```bash
+JAX_PLATFORMS=cpu python examples/simulation/gvs/simulate_helicoidal.py --duration 0 --viser
+```
+
+Use `--viser` with a positive duration to play a simulated trajectory. The
+renderer displays two winding families of solid helices, module end rings,
+transition and connector surfaces, and tendon routes. Strand geometry follows
+the GVS material frames through bending, twist, shear, and extension.
+
+```python
+from soromox.rendering import HelicoidalModuleVisual, HelicoidalViserRenderer
+
+renderer = HelicoidalViserRenderer(
+    robot,
+    modules=tuple(HelicoidalModuleVisual(i, turns=3, strand_radius=0.002)
+                  for i in (1, 4, 7)),
+)
+renderer.show(q)
+```
+
+Each module selects one link. Its circular cross-section radius gives the helix
+centerline radius; `strand_radius`, `turns`, `strands_per_family`, `phase`, and
+`family_phase` describe the strands. Links outside the module selection use
+swept cross-section surfaces. `HelicoidalVisualConfig` controls strand colors
+and mesh resolution. These visual dimensions describe the deformed lattice
+geometry; the effective constitutive parameters determine its mechanics.
+
+The renderer supports batched configurations, `render_sequence`, `render_frame`,
+and `start_live_mode`. Trajectory and live updates reuse mesh handles. Image
+and video capture use a connected Viser browser client.
 
 ## API reference
 
@@ -89,14 +136,23 @@ and contact saturation are outside this implementation.
       inherited_members: false
       members_order: source
 
-::: soromox.systems.gvs.params.HelicoidalParams
+::: soromox.systems.gvs.params.HelicoidalSectionParams
     options:
       show_root_heading: true
       show_source: false
       heading_level: 3
 
-::: soromox.systems.gvs.params.HelicoidalSectionParams
+::: soromox.rendering.helicoidal.HelicoidalViserRenderer
     options:
       show_root_heading: true
       show_source: false
+      heading_level: 3
+      inherited_members: false
+
+::: soromox.rendering.helicoidal.HelicoidalModuleVisual
+    options:
+      heading_level: 3
+
+::: soromox.rendering.helicoidal.HelicoidalVisualConfig
+    options:
       heading_level: 3

@@ -85,6 +85,8 @@ circular, rectangular, and elliptical cross-sections.
 | `cross_section.coefficients` | `(N, max_coefficients)` | Packed geometry profiles |
 | `stiffness` | `(N, generalized_dimension, generalized_dimension)` | Generalized link stiffness |
 | `damping` | same as `stiffness` | Generalized link damping |
+| `sectional_inertia` | `(N, d, d)` or `(N, Q, d, d)`, optional | Angular-first inertia per reference length |
+| `tip_inertia` | `(N, d, d)`, optional | Attached-body inertia about each link tip |
 
 Stiffness and damping are finite symmetric matrices. They are not required to
 be diagonal or positive definite, which permits anisotropic, coupled, fitted,
@@ -100,6 +102,46 @@ The generalized dimension depends on the system:
 | GVS | `(N, max_dof, max_dof)` |
 
 GVS matrices are zero-padded beyond each link's active basis coordinates.
+
+## Distributed and attached-body inertia
+
+PCS and GVS accept full inertia matrices in each local material frame. Use
+`d=3` for planar mechanics and `d=6` for spatial mechanics. A constant sectional
+matrix is broadcast to the link's Gauss nodes; sampled matrices use their
+interior quadrature order (including padded entries for GVS). The samples must
+match the constructed quadrature grid. Tip matrices have unit integration weight.
+
+```python
+from soromox.systems import spatial_inertia
+
+# One offset attached body per spatial link; arrays may have a link batch axis.
+tip = spatial_inertia(masses, centers_of_mass, inertias_about_centers)
+robot = robot.update_link_params(tip_inertia=tip)
+```
+
+For spatial mechanics, centers have three components and rotational inertias
+are 3×3 matrices. For planar mechanics, centers have two components and
+rotational inertias are scalars. The helper includes the parallel-axis and
+angular/linear coupling terms. All inputs use the same material frame. Matrices
+must be finite, symmetric, positive semidefinite, and have an isotropic
+translational mass block.
+
+JAX and Warp consume precomputed weighted matrices, including rotational inertia
+and gravity moments from offset centers. Omitting the overrides derives diagonal
+inertia from cross-section geometry and density. Numeric updates reuse compiled
+methods when array shapes and optional-field presence are fixed. Allocate zero
+`tip_inertia` matrices before compilation to enable later attachment changes.
+
+I-Support applies constant distributions to its PCS subdivisions and attaches a
+physical tip body to the final subdivision. Quadrature-sampled overrides require
+an unsplit physical link. PlanarHSA prepares equivalent backbone and tip matrices
+from its rods, platforms, and payload and uses the shared JAX inertia reduction.
+Its motor-dependent stiffness continues to use the HSA constitutive law.
+
+::: soromox.systems.components.inertia.spatial_inertia
+    options:
+      heading_level: 3
+      show_source: false
 
 ## Isotropic material model
 

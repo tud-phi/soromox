@@ -399,8 +399,8 @@ def coadjoint(xi: Array) -> Array:
     Vectors are angular-first, so dual quantities are ordered as
     ``[moment_z, force_x, force_y]``. With ``xi = [theta, v_x, v_y]`` this
     function returns the package's planar coadjoint convention:
-    ``[[0, v_y, -v_x], [0, 0, -theta], [0, theta, 0]]``. This matches the
-    existing dynamics convention for planar mass and force terms.
+    ``[[0, -v_y, v_x], [0, 0, -theta], [0, theta, 0]]``, equal to
+    ``-small_adjoint(xi).T``. This dual action preserves instantaneous power.
 
     Args:
         xi: Planar twist with shape ``(3,)`` or ``(3, 1)`` in
@@ -418,7 +418,7 @@ def coadjoint(xi: Array) -> Array:
     return jnp.concatenate(
         [
             jnp.zeros((3, 1), dtype=xi.dtype),
-            jnp.concatenate([v.T @ J, omega * J], axis=0),
+            jnp.concatenate([-v.T @ J, omega * J], axis=0),
         ],
         axis=1,
     )
@@ -442,7 +442,7 @@ def coadjoint_action(xi: Array, dual: Array) -> Array:
     _, force_x, force_y = dual
     return jnp.stack(
         [
-            velocity_y * force_x - velocity_x * force_y,
+            velocity_x * force_y - velocity_y * force_x,
             -omega * force_y,
             omega * force_x,
         ]

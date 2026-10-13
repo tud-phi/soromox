@@ -63,8 +63,8 @@ def test_cylindrical_fixture_geometry_routing_and_constitutive_reduction():
             length**2 / compliance[2, 2],
             rtol=1e-12,
         )
-    assert_allclose(robot.params.mass_per_length[np.array([2, 5])], 0.0)
+    assert_allclose(robot.params.link.sectional_inertia[np.array([2, 5])], 0.0)
     assert_allclose(
-        robot.params.tip_mass[np.array([1, 4, 7])],
+        robot.params.link.tip_inertia[np.array([1, 4, 7]), 3, 3],
         [0.04226477771961455, 0.04226477771961455, 0.01613238885980728],
     )

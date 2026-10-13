@@ -184,9 +184,7 @@ def execute_dynamics_terms(
     trailing = (
         operands.inertia_upper_rows,
         operands.inertia_upper_columns,
-        operands.weighted_mass_diagonals.reshape(
-            num_segments * num_quadrature, SPATIAL_DIM
-        ),
+        operands.weighted_inertias.reshape(-1, operands.weighted_inertias.shape[-1]),
     )
     launch_sizes = (
         jnp.asarray([num_cells], dtype=jnp.int32),
