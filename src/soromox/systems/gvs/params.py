@@ -5,14 +5,15 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, ClassVar
 
 import jax.numpy as jnp
+from jax import Array
 
 from soromox.systems.components import ContinuumLinkParams, JointParams
-from soromox.systems.params import BaseSoftRobotParams
+from soromox.systems.params import BaseSoftRobotParams, BaseSystemParams
 
 if TYPE_CHECKING:
     from soromox.systems.gvs.structures import GVSStructure
 
-__all__ = ["GVSParams"]
+__all__ = ["GVSParams", "HelicoidalParams", "HelicoidalSectionParams"]
 
 
 class GVSParams(BaseSoftRobotParams):
@@ -166,3 +167,121 @@ class GVSParams(BaseSoftRobotParams):
                     "Active cross-section coefficients must be strictly positive "
                     f"for GVS segment {index}."
                 )
+
+
+def _as_strong_array(value: object) -> Array:
+    """Keep dtype while removing weak typing that could retrace numeric updates."""
+    array = jnp.asarray(value)
+    return jnp.asarray(array, dtype=array.dtype)
+
+
+class HelicoidalParams(GVSParams):
+    """GVS parameters with independent lattice inertia and platform masses.
+
+    ``link.stiffness`` and ``link.damping`` remain canonical generalized
+    matrices. Cross-section geometry describes the rendering envelope;
+    ``link.density`` is not used to infer lattice inertia in this system.
+
+    Attributes:
+        mass_per_length: Constant line mass per link, shape ``(N,)`` [kg/m].
+        rotational_inertia_per_length: Principal rotational inertia about the
+            backbone in local x/y/z order, shape ``(N, 3)`` [kg m].
+        tip_mass: Point mass at each link tip, shape ``(N,)`` [kg]. Use zero
+            for unloaded tips. Geometric connector links may have zero
+            distributed inertia, with platform mass accounted for here.
+    """
+
+    mass_per_length: Array
+    rotational_inertia_per_length: Array
+    tip_mass: Array
+
+    def __check_init__(self) -> None:
+        for name in ("mass_per_length", "rotational_inertia_per_length", "tip_mass"):
+            object.__setattr__(self, name, _as_strong_array(getattr(self, name)))
+        self.validate_for_update()
+
+    def _normalize_replacement(self, name: str, value: object) -> object:
+        if name in ("mass_per_length", "rotational_inertia_per_length", "tip_mass"):
+            return _as_strong_array(value)
+        return super()._normalize_replacement(name, value)
+
+    def validate_structure(self) -> None:
+        super().validate_structure()
+        count = self.link.length.shape[0]
+        for name, shape in (
+            ("mass_per_length", (count,)),
+            ("rotational_inertia_per_length", (count, 3)),
+            ("tip_mass", (count,)),
+        ):
+            if jnp.shape(getattr(self, name)) != shape:
+                raise ValueError(f"{name} must have shape {shape}.")
+
+    def validate_values(self) -> None:
+        super().validate_values()
+        for name in ("mass_per_length", "rotational_inertia_per_length", "tip_mass"):
+            value = _as_strong_array(getattr(self, name))
+            if not bool(jnp.all(jnp.isfinite(value) & (value >= 0))):
+                raise ValueError(f"{name} must be finite and nonnegative.")
+
+
+class HelicoidalSectionParams(BaseSystemParams):
+    """Analytic effective sectional law for GVS projection.
+
+    These are effective coefficients, not solid-rod material moduli. Every
+    array has one row per GVS link, including transitions and rigid connectors.
+    This object is input to ``with_sectional_law`` and is not stored as a second
+    source of the model's canonical generalized matrices.
+
+    Attributes:
+        bending_compliance: ``(cA, cB)`` per link, shape ``(N, 2)``, defining
+            ``EI(s) = 1 / (cA + cB * (L - s))``. Units are reciprocal N m²
+            and reciprocal N m³. Set ``cB=0`` for constant EI.
+        torsional_stiffness: GJ per link, shape ``(N,)`` [N m²].
+        axial_stiffness: EA per link, shape ``(N,)`` [N].
+        shear_stiffness: GA for both transverse axes, shape ``(N,)`` [N].
+        damping_time_constant: Kelvin-Voigt time constant per link,
+            shape ``(N,)`` [s]; zero disables material damping.
+    """
+
+    bending_compliance: Array
+    torsional_stiffness: Array
+    axial_stiffness: Array
+    shear_stiffness: Array
+    damping_time_constant: Array
+
+    def __check_init__(self) -> None:
+        for name in HelicoidalSectionParams.__annotations__:
+            object.__setattr__(self, name, _as_strong_array(getattr(self, name)))
+        self.validate_for_update()
+
+    def _normalize_replacement(self, name: str, value: object) -> object:
+        return _as_strong_array(value)
+
+    def validate_structure(self) -> None:
+        compliance = jnp.asarray(self.bending_compliance)
+        if compliance.ndim != 2 or compliance.shape[1] != 2 or not compliance.shape[0]:
+            raise ValueError("bending_compliance must have shape (num_links, 2).")
+        for name in (
+            "torsional_stiffness",
+            "axial_stiffness",
+            "shear_stiffness",
+            "damping_time_constant",
+        ):
+            if jnp.shape(getattr(self, name)) != (compliance.shape[0],):
+                raise ValueError(f"{name} must have one value per link.")
+
+    def validate_values(self) -> None:
+        if not bool(jnp.all(jnp.isfinite(self.bending_compliance))):
+            raise ValueError("bending_compliance must be finite.")
+        if not bool(jnp.all(self.bending_compliance[:, 0] > 0)):
+            raise ValueError("bending_compliance cA must be positive.")
+        for name in (
+            "torsional_stiffness",
+            "axial_stiffness",
+            "shear_stiffness",
+            "damping_time_constant",
+        ):
+            value = _as_strong_array(getattr(self, name))
+            positive = value >= 0 if name == "damping_time_constant" else value > 0
+            if not bool(jnp.all(jnp.isfinite(value) & positive)):
+                raise ValueError(f"{name} must be finite and in its physical domain.")

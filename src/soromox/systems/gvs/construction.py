@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from jax import Array, vmap
 from jax import numpy as jnp
 
@@ -32,7 +34,11 @@ from soromox.systems.gvs.structures import (
 )
 from soromox.utils.integration import gauss_quadrature
 
-__all__ = ["material_operators_from_params", "params_and_structure_from_segments"]
+__all__ = [
+    "material_operators_from_params",
+    "params_and_structure_from_segments",
+    "project_sectional_matrices",
+]
 
 _BASIS_FUNCTIONS = {
     "monomial": B_Monomial,
@@ -101,6 +107,42 @@ def _dimensions_at_points(
         )
         start = stop
     return jnp.stack(dimensions, axis=1)
+
+
+def project_sectional_matrices(
+    params: GVSParams,
+    structure: GVSStructure,
+    sectional_matrix: Callable[[int, Array], Array],
+) -> Array:
+    """Integrate a sectional law through the configured GVS bases.
+
+    Args:
+        params: Canonical GVS parameters, including lengths and padded size.
+        structure: Static basis and quadrature choices.
+        sectional_matrix: Function of link index and physical arc positions
+            within that link, returning shape ``(points, 6, 6)``.
+
+    Returns:
+        Generalized matrices with shape ``(links, max_dof, max_dof)``, using
+        GVS's Gauss rule and rotational length scaling. Numeric inputs may
+        be JAX tracers.
+    """
+    params.validate_for_update_against_structure(structure)
+    matrices = []
+    max_dof = params.link.stiffness.shape[-1]
+    for index, segment in enumerate(structure.segments):
+        points, weights, _ = gauss_quadrature(segment.num_gauss_points)
+        length = params.link.length[index]
+        basis = _basis_at_points(segment, points, max_dof)
+        if structure.scale_rotational_basis_by_length:
+            basis = basis.at[:, :3, :].divide(length)
+        local = sectional_matrix(index, length * points)
+        if local.shape != (points.size, 6, 6):
+            raise ValueError("sectional_matrix must return shape (points, 6, 6).")
+        matrices.append(
+            length * jnp.einsum("p,pai,pab,pbj->ij", weights, basis, local, basis)
+        )
+    return jnp.stack(matrices)
 
 
 def material_operators_from_params(
