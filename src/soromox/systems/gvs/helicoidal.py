@@ -33,6 +33,12 @@ class Helicoidal(GVS):
     and dtypes. Supports JAX and Warp dynamics through GVS.
 
     References:
+        Guan, Qinghua, Francesco Stella, Cosimo Della Santina, Jinsong Leng,
+        and Josie Hughes (2023). Trimmed helicoids: an architectured soft
+        structure yielding soft robots with high precision, large workspace,
+        and compliant interactions. npj Robotics, 1, Article 4.
+        https://doi.org/10.1038/s44182-023-00004-7
+
         Qin, Zhihang, Linxin Hou, Zeyu Zhong, Yuchen Sun, Wenci Xin, Yueheng Zhang,
         Ji Qi, Jie Wang, Peiyi Wang, Muhammad Sunny Nazeer, Yu Jun Tan,
         Federico Renda, and Cecilia Laschi (2026). Cosserat Modeling of Trimmed
