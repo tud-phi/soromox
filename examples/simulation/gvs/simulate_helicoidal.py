@@ -32,6 +32,7 @@ from soromox.systems import (
     LinkSpec,
     StrainBasisSpec,
     SystemState,
+    spatial_inertia,
 )
 
 FIXTURE = (
@@ -43,13 +44,44 @@ FIXTURE = (
 MODULE_BASIS_ORDER = (2, 2, 2, 1, 1, 1)
 
 
+def _merge_rigid_interfaces(source_links):
+    """Merge each massless connector gap with its following rigid end ring.
+
+    The ring's distributed inertia is integrated into an attached-body matrix
+    at the merged link tip, preserving its mass, center of mass, and rotational
+    inertia. The fixture's module-tip masses retain their attachment locations.
+    """
+    links, source_to_link, attached_inertia = [], [], []
+    for source in source_links:
+        if (
+            source["role"] == "transition"
+            and links
+            and links[-1]["role"] == "connector"
+        ):
+            length = source["length"]
+            mass = length * source["mass_per_length"]
+            inertia_at_center = jnp.diag(
+                length * jnp.array(source["rotational_inertia_per_length"])
+                + mass * length**2 / 12 * jnp.array([0.0, 1.0, 1.0])
+            )
+            attached_inertia[-1] = spatial_inertia(
+                mass, jnp.array([-length / 2, 0.0, 0.0]), inertia_at_center
+            )
+            links[-1]["length"] += length
+        else:
+            links.append(dict(source))
+            attached_inertia.append(jnp.zeros((6, 6)))
+        source_to_link.append(len(links) - 1)
+    return links, source_to_link, jnp.stack(attached_inertia)
+
+
 def build_robot(num_gauss_points: int = 16) -> Helicoidal:
-    """Build the arm, constraining module shear when its fit is inadmissible."""
+    """Build three deformable modules with rigid base and inter-module rings."""
     data = json.loads(FIXTURE.read_text())
-    links = data["links"]
+    links, source_to_link, attached_inertia = _merge_rigid_interfaces(data["links"])
     segments = []
     for link in links:
-        active = link["role"] != "connector"
+        active = link["role"] == "module"
         shear_active = active and link["shear_stiffness"] is not None
         strain_selector = [active] * 4 + [shear_active] * 2
         basis_order = MODULE_BASIS_ORDER if link["role"] == "module" else (0,) * 6
@@ -112,10 +144,10 @@ def build_robot(num_gauss_points: int = 16) -> Helicoidal:
         slope=jnp.zeros((len(data["tendons"]), 3)),
         start_segment_index=0,
         end_segment_index=tuple(
-            tendon["end_segment_index"] for tendon in data["tendons"]
+            source_to_link[tendon["end_segment_index"]] for tendon in data["tendons"]
         ),
     )
-    return Helicoidal.from_segments(
+    robot = Helicoidal.from_segments(
         segments,
         mass_per_length=jnp.array([link["mass_per_length"] for link in links]),
         rotational_inertia_per_length=jnp.array(
@@ -127,6 +159,9 @@ def build_robot(num_gauss_points: int = 16) -> Helicoidal:
         base_pose=jnp.array(data["base_pose"]),
         actuators=ThreadlikeActuator.tendons(routing),
         backend="jax",
+    )
+    return robot.update_link_params(
+        tip_inertia=robot.params.link.tip_inertia + attached_inertia
     )
 
 
@@ -145,7 +180,7 @@ def build_renderer(robot: Helicoidal, **kwargs):
     )
     return HelicoidalViserRenderer(
         robot,
-        modules=tuple(HelicoidalModuleVisual(index) for index in (1, 4, 7)),
+        modules=tuple(HelicoidalModuleVisual(index) for index in (1, 3, 5)),
         config=config,
         **kwargs,
     )

@@ -15,8 +15,8 @@ jax.config.update("jax_enable_x64", True)
 def test_cylindrical_fixture_geometry_routing_and_constitutive_reduction():
     robot = build_robot()
     data = json.loads(FIXTURE.read_text())
-    assert robot.num_coordinates == 51
-    assert robot.num_segments == 8
+    assert robot.num_coordinates == 33
+    assert robot.num_segments == 6
     assert robot.num_actuators == 9
     q = jnp.zeros(robot.num_coordinates)
     tips = robot.forward_kinematics_tips(q)
@@ -25,9 +25,9 @@ def test_cylindrical_fixture_geometry_routing_and_constitutive_reduction():
         tips[:, :3, 3],
         np.column_stack(
             (
-                np.zeros(8),
-                np.zeros(8),
-                [0.008, 0.208, 0.2183, 0.2263, 0.4263, 0.4366, 0.4446, 0.6446],
+                np.zeros(6),
+                np.zeros(6),
+                [0.008, 0.208, 0.2263, 0.4263, 0.4446, 0.6446],
             )
         ),
         atol=1e-12,
@@ -37,8 +37,10 @@ def test_cylindrical_fixture_geometry_routing_and_constitutive_reduction():
         np.repeat([0.208, 0.4263, 0.6446], 3),
         atol=1e-12,
     )
-    for index, diagnostic in zip([1, 4, 7], data["compliance_diagnostics"]):
-        link = data["links"][index]
+    for index, source_index, diagnostic in zip(
+        [1, 3, 5], [1, 4, 7], data["compliance_diagnostics"], strict=True
+    ):
+        link = data["links"][source_index]
         c_a, c_b = link["bending_compliance"]
         length = link["length"]
         compliance = np.array(diagnostic["interface_compliance"])
@@ -72,10 +74,47 @@ def test_cylindrical_fixture_geometry_routing_and_constitutive_reduction():
             length**2 / compliance[2, 2],
             rtol=1e-12,
         )
-    assert_allclose(robot.params.link.sectional_inertia[np.array([2, 5])], 0.0)
-    for index in (0, 3, 6):
-        assert all(robot.structure.segments[index].basis.strain_selector)
+    assert_allclose(robot.params.link.sectional_inertia[np.array([2, 4])], 0.0)
+    for index in (0, 2, 4):
+        assert not any(robot.structure.segments[index].basis.strain_selector)
+        assert_allclose(robot.params.link.stiffness[index], 0.0)
     assert_allclose(
-        robot.params.link.tip_inertia[np.array([1, 4, 7]), 3, 3],
+        robot.params.link.tip_inertia[np.array([1, 3, 5]), 3, 3],
         [0.04226477771961455, 0.04226477771961455, 0.01613238885980728],
     )
+
+
+def test_merged_rigid_interfaces_preserve_mass_and_ring_inertia():
+    robot = build_robot()
+    data = json.loads(FIXTURE.read_text())
+    assert_allclose(robot.segment_lengths[np.array([2, 4])], 0.0183, atol=1e-15)
+    expected_mass = sum(
+        link["length"] * link["mass_per_length"] + link["tip_mass"]
+        for link in data["links"]
+    )
+    actual_mass = (
+        np.asarray(robot.params.link.sectional_inertia)[:, 3, 3]
+        @ np.asarray(robot.segment_lengths)
+        + np.asarray(robot.params.link.tip_inertia)[:, 3, 3].sum()
+    )
+    assert_allclose(actual_mass, expected_mass, rtol=1e-13)
+    nodes, weights = np.polynomial.legendre.leggauss(3)
+    for index, source_index in ((2, 3), (4, 6)):
+        source = data["links"][source_index]
+        length = source["length"]
+        sectional = np.diag(
+            source["rotational_inertia_per_length"] + [source["mass_per_length"]] * 3
+        )
+        integrated = np.zeros((6, 6))
+        for node, weight in zip(nodes, weights):
+            # A rigid body's point velocity is v_tip + omega cross r.
+            r_x = length * (node - 1) / 2
+            velocity_map = np.eye(6)
+            velocity_map[4, 2] = r_x
+            velocity_map[5, 1] = -r_x
+            integrated += (
+                length * weight / 2 * velocity_map.T @ sectional @ velocity_map
+            )
+        assert_allclose(
+            robot.params.link.tip_inertia[index], integrated, rtol=1e-13, atol=1e-16
+        )

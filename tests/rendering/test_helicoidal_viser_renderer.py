@@ -53,7 +53,7 @@ def robot():
 def renderer_for(robot):
     return HelicoidalViserRenderer(
         robot,
-        modules=tuple(HelicoidalModuleVisual(i) for i in (1, 4, 7)),
+        modules=tuple(HelicoidalModuleVisual(i) for i in (1, 3, 5)),
         auto_start=False,
         open_browser=False,
     )
@@ -103,7 +103,7 @@ def test_helix_radius_turns_tube_thickness_and_mesh_indices(robot):
     )
     curve, frame = np.asarray(curves[0]), np.asarray(frames[0])
     meshes = list(renderer._meshes(curve, frame))
-    assert len(meshes) == 3 * (6 + 2) + 5
+    assert len(meshes) == 3 * (6 + 2) + 3
     starts, ends = renderer._segment_bounds(renderer.num_points)
     for module in renderer.modules:
         start, end = starts[module.segment_index], ends[module.segment_index]
@@ -164,7 +164,7 @@ def test_batched_deformation_updates_handles_and_rebuild_removes_old_meshes(robo
         np.asarray, renderer.compute_backbone_curves_and_frames_batched(q_next, offsets)
     )
     renderer._update_robot_geometry(curves_next, frames_next)
-    assert len(renderer._server.meshes) == 58
+    assert len(renderer._server.meshes) == 54
     assert renderer._server.atomic_calls == 1
     assert any(not np.allclose(h.vertices, v) for h, v in zip(handles[0], old_vertices))
     for handle, expected in zip(
