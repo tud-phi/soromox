@@ -25,8 +25,9 @@ stores `shear_stiffness: null`, and the example deactivates both module shear
 strains. They remain exactly at their zero reference values, with no penalty
 stiffness or damping. This is a shear-free approximation; it does not recover
 the source interface compliance's remaining transverse response.
-Transitions have constant EI and GJ equal to 50 times the module's distal values;
-EA and GA both equal 50 times the module EA. The damping time constant is 0.02 s.
+The fixture retains the upstream transition coefficients for provenance, but the
+example constrains all transition strains to zero. The damping time constant
+for the deformable modules is 0.02 s.
 
 Native local x is the backbone tangent. Local vectors are converted by
 `P = [[0,0,1], [1,0,0], [0,1,0]]`; the base orientation is `P.T` to preserve the
@@ -35,19 +36,26 @@ gravity is `[0,0,9.81] m/s²`. Both angular and linear strain blocks use P.
 Rotational inertia is reordered from source x/y/z to native z/x/y.
 
 The example uses quadratic twist/bending and linear extension in each module,
-with module shear inactive. Transitions use constant strains in all six channels,
-giving 51 coordinates in total. Modules use 16 Gauss points and other links use
-eight. Two 10.3 mm connectors have inactive strain bases and zero distributed
-inertia. Platform point masses attach to the module tips before their following
-gaps. Inactive law rows use finite positive padding that contributes nothing
-to the projected stiffness or damping because their basis rows are zero.
+with module shear inactive, giving 33 coordinates in total. The base ring is
+8 mm long and fully rigid. Each internal junction combines two 8 mm end rings
+and a 2.3 mm connector plate into one fully rigid 18.3 mm link. The example thus
+builds six links from the fixture's eight source links. Modules use 16 Gauss
+points and other links use eight.
+
+Merging preserves the fixture's mass distribution: each absorbed transition's
+distributed inertia becomes a full attached-body inertia at the merged link tip,
+including its center-of-mass offset. Platform point masses remain attached to
+the module tips before their following gaps. This preserves the source mass
+approximation; it does not infer new cylinder dimensions or mass properties.
+Inactive law rows use finite positive padding that contributes nothing to the
+projected stiffness or damping because their basis rows are zero.
 
 Each tendon runs continuously from the base to its anchor, including transitions
 and connectors. There are nine independent tension inputs in newtons. Their
 undeformed lengths are 0.208 m, 0.4263 m, and 0.6446 m (three of each). Upstream
-uses higher-order module strains with penalized shear and omits transitions and
-gaps from tendon lengths. Comparisons with its saved solutions should account
-for these modeling differences.
+uses higher-order module strains with penalized shear, compliant transitions,
+and omits transitions and gaps from tendon lengths. Comparisons with its saved
+solutions should account for these modeling differences.
 
 ## Running and visualizing the example
 

@@ -104,7 +104,7 @@ from soromox.rendering import HelicoidalModuleVisual, HelicoidalViserRenderer
 renderer = HelicoidalViserRenderer(
     robot,
     modules=tuple(HelicoidalModuleVisual(i, turns=3, strand_radius=0.002)
-                  for i in (1, 4, 7)),
+                  for i in (1, 3, 5)),
 )
 renderer.show(q)
 ```
