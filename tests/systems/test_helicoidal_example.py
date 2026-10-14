@@ -74,6 +74,26 @@ def test_cylindrical_fixture_geometry_routing_and_constitutive_reduction():
             length**2 / compliance[2, 2],
             rtol=1e-12,
         )
+        # Integrate tau * sqrt(GJ / C_b(s)) analytically for constant twist.
+        # This distinguishes sectional scaling from sqrt of projected stiffness.
+        tau = data["damping_time_constant"]
+        expected_twist_damping = (
+            tau
+            * np.sqrt(link["torsional_stiffness"])
+            * 2
+            * length
+            / (np.sqrt(c_a + c_b * length) + np.sqrt(c_a))
+        )
+        damping = np.asarray(robot.params.link.damping[index])
+        assert_allclose(damping[0, 0], expected_twist_damping, rtol=5e-12)
+        # Bending and extension keep the fixture's original damping exactly.
+        assert_allclose(
+            damping[3:, 3:],
+            tau * robot.params.link.stiffness[index, 3:, 3:],
+            rtol=1e-12,
+            atol=1e-16,
+        )
+        assert np.linalg.eigvalsh(damping[:11, :11]).min() > 0
     for index in (0, 2, 4):
         assert not any(robot.structure.segments[index].basis.strain_selector)
         assert_allclose(robot.params.link.stiffness[index], 0.0)

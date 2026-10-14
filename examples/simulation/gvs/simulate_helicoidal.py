@@ -4,6 +4,10 @@ Run from the checkout with ``JAX_PLATFORMS=cpu python
 examples/simulation/gvs/simulate_helicoidal.py --duration 0.02``.
 Use ``--duration 0`` to inspect the model without a rollout. Tension is in newtons.
 The fixture describes the toolkit's illustrative cylindrical arm.
+This example uses normalized square-root sectional damping and fixed-step Tsit5
+at 250 microseconds. The damping is an illustrative choice, not an identified
+material law: it preserves the fixture's bending/extension damping and reduces
+torsional damping to permit explicit integration.
 """
 
 import argparse
@@ -13,8 +17,7 @@ from pathlib import Path
 import jax
 import jax.numpy as jnp
 import numpy as np
-import optimistix as optx
-from diffrax import ImplicitEuler
+from diffrax import Tsit5
 
 from soromox.actuation import ThreadlikeActuator, ThreadlikeRouting
 from soromox.rendering import (
@@ -34,6 +37,7 @@ from soromox.systems import (
     SystemState,
     spatial_inertia,
 )
+from soromox.systems.gvs.construction import project_sectional_matrices
 
 FIXTURE = (
     Path(__file__).resolve().parents[3]
@@ -81,7 +85,7 @@ def _merge_rigid_interfaces(source_links):
 
 
 def build_robot(num_gauss_points: int = 16) -> Helicoidal:
-    """Build three deformable modules with rigid base and inter-module rings."""
+    """Build three modules with rigid rings and square-root sectional damping."""
     data = json.loads(FIXTURE.read_text())
     links, source_to_link = _merge_rigid_interfaces(data["links"])
     segments = []
@@ -177,8 +181,40 @@ def build_robot(num_gauss_points: int = 16) -> Helicoidal:
         jnp.diag(jnp.array([axial, transverse, transverse])),
     )
     return robot.update_link_params(
-        tip_inertia=robot.params.link.tip_inertia.at[-1].set(tip_inertia)
+        tip_inertia=robot.params.link.tip_inertia.at[-1].set(tip_inertia),
+        damping=_square_root_damping(robot, links, data["damping_time_constant"]),
     )
+
+
+def _square_root_damping(robot, links, time_constant):
+    """Project ``D_i(s) = tau * sqrt(K_ref,i(s) * K_i(s))`` in the backbone frame.
+
+    The fixed fixture reference is bending rigidity for rotational strains and
+    axial rigidity for translational strains, which have different units. A
+    common ``tau`` in seconds therefore preserves bending and extension damping
+    while reducing torsional damping. Apply the square root to sectional
+    rigidities before Gauss projection, not to the generalized stiffness matrix.
+    This does not impose equal modal damping ratios. Subsequent constitutive-law
+    updates replace these prepared damping matrices with that law's damping.
+    """
+
+    def sectional(index, s):
+        link = links[index]
+        if link["role"] != "module":
+            return jnp.zeros((len(s), 6, 6))
+        c_a, c_b = link["bending_compliance"]
+        bending = 1 / (c_a + c_b * (link["length"] - s))
+        axial = jnp.full_like(s, link["axial_stiffness"])
+        torsion = jnp.full_like(s, link["torsional_stiffness"])
+        # Finite padding for inactive shear is ignored by the strain basis.
+        shear = jnp.full_like(
+            s, 1.0 if link["shear_stiffness"] is None else link["shear_stiffness"]
+        )
+        stiffness = jnp.stack((torsion, bending, bending, axial, shear, shear), axis=-1)
+        reference = jnp.stack((bending, bending, bending, axial, axial, axial), axis=-1)
+        return jax.vmap(jnp.diag)(time_constant * jnp.sqrt(reference * stiffness))
+
+    return project_sectional_matrices(robot.params, robot.structure, sectional)
 
 
 def build_renderer(robot: Helicoidal, **kwargs):
@@ -205,7 +241,7 @@ def build_renderer(robot: Helicoidal, **kwargs):
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--duration", type=float, default=0.02)
-    parser.add_argument("--dt", type=float, default=0.001)
+    parser.add_argument("--dt", type=float, default=250e-6, help="Tsit5 step size [s].")
     parser.add_argument(
         "--tension", type=float, default=0.1, help="Distal tendon tension [N]."
     )
@@ -229,7 +265,6 @@ def main() -> None:
         if args.viser:
             build_renderer(robot).show(q0)
         return
-    # The remaining stiff, damped modes still call for an implicit integrator.
     trajectory = robot.rollout_to(
         SystemState(t=jnp.array(0.0), y=jnp.concatenate((q0, q0)), u=tension),
         t1=args.duration,
@@ -237,8 +272,8 @@ def main() -> None:
         save_ts=jnp.linspace(
             0.0, args.duration, max(11, int(np.ceil(30 * args.duration)) + 1)
         ),
-        solver=ImplicitEuler(root_finder=optx.Newton(rtol=1e-7, atol=1e-9)),
-        max_steps=10000,
+        solver=Tsit5(),
+        max_steps=max(10000, int(np.ceil(args.duration / args.dt)) + 2),
     )
     trajectory.y.block_until_ready()
     print(
