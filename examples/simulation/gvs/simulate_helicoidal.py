@@ -45,13 +45,14 @@ MODULE_BASIS_ORDER = (2, 2, 2, 1, 1, 1)
 
 
 def _merge_rigid_interfaces(source_links):
-    """Merge each massless connector gap with its following rigid end ring.
+    """Merge ring/plate spans and distribute their combined mass in cylinders.
 
-    The ring's distributed inertia is integrated into an attached-body matrix
-    at the merged link tip, preserving its mass, center of mass, and rotational
-    inertia. The fixture's module-tip masses retain their attachment locations.
+    Each internal cylinder includes the upstream module's platform mass and the
+    following transition's distributed mass. This preserves the fixture's total
+    mass while replacing its point-mass and thin-ring inertia approximations for
+    rigid parts. Deformable module inertia retains the source distribution.
     """
-    links, source_to_link, attached_inertia = [], [], []
+    links, source_to_link = [], []
     for source in source_links:
         if (
             source["role"] == "transition"
@@ -59,26 +60,30 @@ def _merge_rigid_interfaces(source_links):
             and links[-1]["role"] == "connector"
         ):
             length = source["length"]
-            mass = length * source["mass_per_length"]
-            inertia_at_center = jnp.diag(
-                length * jnp.array(source["rotational_inertia_per_length"])
-                + mass * length**2 / 12 * jnp.array([0.0, 1.0, 1.0])
+            mass = (
+                length * source["mass_per_length"]
+                + links[-1]["length"] * links[-1]["mass_per_length"]
+                + links[-2]["tip_mass"]
             )
-            attached_inertia[-1] = spatial_inertia(
-                mass, jnp.array([-length / 2, 0.0, 0.0]), inertia_at_center
-            )
+            links[-2]["tip_mass"] = 0.0
             links[-1]["length"] += length
+            links[-1]["mass_per_length"] = mass / links[-1]["length"]
         else:
             links.append(dict(source))
-            attached_inertia.append(jnp.zeros((6, 6)))
         source_to_link.append(len(links) - 1)
-    return links, source_to_link, jnp.stack(attached_inertia)
+    for link in links:
+        if link["role"] != "module":
+            # Solid circular section about native x; longitudinal spread is
+            # integrated by GVS, including the transverse m L^2 / 12 term.
+            polar = link["mass_per_length"] * link["radius"] ** 2 / 2
+            link["rotational_inertia_per_length"] = [polar, polar / 2, polar / 2]
+    return links, source_to_link
 
 
 def build_robot(num_gauss_points: int = 16) -> Helicoidal:
     """Build three deformable modules with rigid base and inter-module rings."""
     data = json.loads(FIXTURE.read_text())
-    links, source_to_link, attached_inertia = _merge_rigid_interfaces(data["links"])
+    links, source_to_link = _merge_rigid_interfaces(data["links"])
     segments = []
     for link in links:
         active = link["role"] == "module"
@@ -160,8 +165,19 @@ def build_robot(num_gauss_points: int = 16) -> Helicoidal:
         actuators=ThreadlikeActuator.tendons(routing),
         backend="jax",
     )
+    # The terminal ring/plate extends beyond the backbone tip. Attach its full
+    # cylinder inertia there, with its center halfway along the extension.
+    tip = links[-1]
+    mass, radius, length = tip["tip_mass"], tip["radius"], tip["tip_body_length"]
+    axial = mass * radius**2 / 2
+    transverse = mass * (3 * radius**2 + length**2) / 12
+    tip_inertia = spatial_inertia(
+        mass,
+        jnp.array([length / 2, 0.0, 0.0]),
+        jnp.diag(jnp.array([axial, transverse, transverse])),
+    )
     return robot.update_link_params(
-        tip_inertia=robot.params.link.tip_inertia + attached_inertia
+        tip_inertia=robot.params.link.tip_inertia.at[-1].set(tip_inertia)
     )
 
 
