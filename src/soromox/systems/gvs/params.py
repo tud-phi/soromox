@@ -176,20 +176,34 @@ def _as_strong_array(value: object) -> Array:
 
 
 class HelicoidalSectionParams(BaseSystemParams):
-    """Affine sectional compliance in native six-component strain order.
+    """Effective lattice compliance in the local backbone material frame.
 
-    The diagonal stiffness is ``1 / (compliance + (L-s)*compliance_gradient)``,
-    with order ``[twist, bend_y, bend_z, extension, shear_y, shear_z]``.
+    The coefficients describe the equivalent rod's sectional response, with
+    local x longitudinal and local y/z transverse to the backbone. Components
+    follow ``[twist, bend_y, bend_z, extension, shear_y, shear_z]`` in this
+    frame. Individual helical strands' material properties must first be
+    reduced to this effective backbone constitutive law.
+
+    The diagonal stiffness is ``1 / (compliance + (L-s)*compliance_gradient)``.
+    Here ``s`` is reference arc length along the backbone from the link's
+    proximal end, and ``L`` is its reference length. Thus the gradient is with
+    respect to distance ``L-s`` from the distal end, giving
+    ``dC/ds = -compliance_gradient``.
     Pass these coefficients to ``with_constitutive_law`` for Gauss projection.
 
     Attributes:
-        compliance: Distal sectional compliance, shape ``(num_links, 6)``.
+        compliance: Distal sectional compliance in the backbone material frame,
+            shape ``(num_links, 6)``.
             Rotational entries have units 1/(N m²); translational entries 1/N.
-        compliance_gradient: Compliance variation per distance from the tip,
-            shape ``(num_links, 6)``. Units are compliance units per metre.
+        compliance_gradient: Variation of those backbone-frame components per
+            unit reference distance from the link's distal end, shape
+            ``(num_links, 6)``. Units are compliance units per metre.
             Zero entries give constant sectional stiffness in those channels.
-        damping_time_constant: Kelvin-Voigt time constant per link,
-            shape ``(num_links,)`` [s]; zero disables material damping.
+        damping_time_constant: Scalar Kelvin-Voigt time constant per link,
+            shape ``(num_links,)`` [s]. It is frame independent and multiplies
+            the backbone sectional stiffness, ``D_section(s) = tau * K_section(s)``,
+            yielding ``D_link = tau * K_link`` after projection. Zero disables
+            material damping.
     """
 
     compliance: Array

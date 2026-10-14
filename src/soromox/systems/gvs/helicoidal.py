@@ -125,7 +125,9 @@ class Helicoidal(GVS):
         per link.
 
         Args:
-            law: Effective constitutive coefficients, one row per link.
+            law: Effective constitutive coefficients in the local backbone
+                material frame, one row per link; see ``HelicoidalSectionParams``
+                for component order and reference arc-length convention.
 
         Returns:
             A model with new canonical generalized stiffness and damping.
