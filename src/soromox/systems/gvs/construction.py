@@ -114,7 +114,7 @@ def project_sectional_matrices(
     structure: GVSStructure,
     sectional_matrix: Callable[[int, Array], Array],
 ) -> Array:
-    """Integrate a sectional law through the configured GVS bases.
+    """Integrate a sectional constitutive law through the configured GVS bases.
 
     Args:
         params: Canonical GVS parameters, including lengths and padded size.

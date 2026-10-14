@@ -180,7 +180,7 @@ class HelicoidalSectionParams(BaseSystemParams):
 
     The diagonal stiffness is ``1 / (compliance + (L-s)*compliance_gradient)``,
     with order ``[twist, bend_y, bend_z, extension, shear_y, shear_z]``.
-    Pass these coefficients to ``with_sectional_law`` for Gauss projection.
+    Pass these coefficients to ``with_constitutive_law`` for Gauss projection.
 
     Attributes:
         compliance: Distal sectional compliance, shape ``(num_links, 6)``.

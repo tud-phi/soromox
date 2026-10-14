@@ -17,6 +17,13 @@ import optimistix as optx
 from diffrax import ImplicitEuler
 
 from soromox.actuation import ThreadlikeActuator, ThreadlikeRouting
+from soromox.rendering import (
+    CameraConfig,
+    HelicoidalModuleVisual,
+    HelicoidalViserRenderer,
+    RendererConfig,
+    SceneConfig,
+)
 from soromox.systems import (
     GVSSegment,
     Helicoidal,
@@ -114,7 +121,7 @@ def build_robot(num_gauss_points: int = 16) -> Helicoidal:
             [link["rotational_inertia_per_length"] for link in links]
         ),
         tip_mass=jnp.array([link["tip_mass"] for link in links]),
-        sectional_law=law,
+        constitutive_law=law,
         gravity=jnp.array(data["gravity"]),
         base_pose=jnp.array(data["base_pose"]),
         actuators=ThreadlikeActuator.tendons(routing),
@@ -124,14 +131,6 @@ def build_robot(num_gauss_points: int = 16) -> Helicoidal:
 
 def build_renderer(robot: Helicoidal, **kwargs):
     """Build the cylindrical example's Viser lattice with three helical modules."""
-    from soromox.rendering import (
-        CameraConfig,
-        HelicoidalModuleVisual,
-        HelicoidalViserRenderer,
-        RendererConfig,
-        SceneConfig,
-    )
-
     config = kwargs.pop(
         "config",
         RendererConfig(

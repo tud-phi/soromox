@@ -61,7 +61,7 @@ def build(segments=None, **kwargs):
             jnp.array([[2e-4, 1e-4, 1e-4]]), (count, 1)
         ),
         tip_mass=jnp.full(count, 0.04),
-        sectional_law=law(count),
+        constitutive_law=law(count),
         **kwargs,
     )
 
@@ -69,7 +69,7 @@ def build(segments=None, **kwargs):
 @pytest.mark.parametrize("c_b", [0.0, 3.0, -3.0])
 @pytest.mark.parametrize("scaled", [False, True])
 def test_analytic_projection(c_b, scaled):
-    model = build(scale_rotational_basis_by_length=scaled).with_sectional_law(
+    model = build(scale_rotational_basis_by_length=scaled).with_constitutive_law(
         law(c_b=c_b)
     )
     bending = 0.2 / 2 if c_b == 0 else np.log1p(c_b * 0.2 / 2) / c_b
@@ -229,13 +229,13 @@ def test_parameter_updates_and_projection_reuse_compilation():
     @eqx.filter_jit
     def evaluate(robot, params, section):
         traces.append(True)
-        updated = robot.with_params(params).with_sectional_law(section)
+        updated = robot.with_params(params).with_constitutive_law(section)
         return updated.dynamics_terms(q, q * 0.1), updated.K
 
     evaluate(model, model.params, law())
     actual, stiffness = evaluate(model, changed, law(c_b=4.0))
     assert len(traces) == 1
-    fresh = Helicoidal(changed, model.structure).with_sectional_law(law(c_b=4.0))
+    fresh = Helicoidal(changed, model.structure).with_constitutive_law(law(c_b=4.0))
     for a, b in zip(actual, fresh.dynamics_terms(q, q * 0.1)):
         assert_allclose(a, b, rtol=1e-10, atol=1e-12)
     assert_allclose(stiffness, fresh.K)
@@ -249,13 +249,13 @@ def test_parameter_updates_and_projection_reuse_compilation():
         return robot.dynamics_terms(q, q * 0.1)
 
     evaluate_model(model)
-    outside_update = model.with_params(changed).with_sectional_law(law(c_b=4.0))
+    outside_update = model.with_params(changed).with_constitutive_law(law(c_b=4.0))
     for a, b in zip(evaluate_model(outside_update), actual):
         assert_allclose(a, b, rtol=1e-10, atol=1e-12)
     assert len(model_traces) == 1
 
     derivative = jax.grad(
-        lambda c: model.with_sectional_law(
+        lambda c: model.with_constitutive_law(
             law().replace(compliance=law().compliance.at[0, 1:3].set(c))
         ).K[1, 1]
     )(2.0)
@@ -264,7 +264,7 @@ def test_parameter_updates_and_projection_reuse_compilation():
     length_derivative = jax.grad(
         lambda length: (
             model.update_link_params(length=jnp.array([length]))
-            .with_sectional_law(law())
+            .with_constitutive_law(law())
             .K[1, 1]
         )
     )(0.2)
@@ -280,9 +280,9 @@ def test_parameter_updates_and_projection_reuse_compilation():
 def test_validation():
     model = build()
     with pytest.raises(ValueError, match="positive throughout"):
-        model.with_sectional_law(law(c_b=-20.0))
+        model.with_constitutive_law(law(c_b=-20.0))
     with pytest.raises(ValueError, match="one row per link"):
-        model.with_sectional_law(law(2))
+        model.with_constitutive_law(law(2))
     with pytest.raises(ValueError, match="positive semidefinite"):
         model.update_link_params(tip_inertia=-jnp.eye(6)[None])
     with pytest.raises(ValueError, match="shape"):

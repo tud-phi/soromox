@@ -6,7 +6,7 @@ from numpy.testing import assert_allclose
 
 from soromox.autodiff import strict_singularities_mode
 from soromox.utils.geometry import poses
-from soromox.utils.lie_algebra import se2, so2
+from soromox.utils.lie_algebra import se2, se3, so2
 from soromox.utils.lie_algebra.jacobian_coefficients import (
     inverse_left_jacobian_series_threshold,
 )
@@ -342,6 +342,23 @@ def test_coadjoint_action_se2_matches_matrix_product():
     assert_allclose(result, se2.coadjoint(xi) @ dual, rtol=RTOL, atol=ATOL)
     assert_allclose(se2.coadjoint(xi), -se2.small_adjoint(xi).T, atol=ATOL)
     assert_allclose(xi @ result, 0.0, atol=ATOL)
+
+
+@pytest.mark.parametrize("xi", [(0.0, 0.7, -0.4), (0.6, 0.0, 0.0), (-0.3, 0.5, 0.8)])
+def test_coadjoint_matches_dual_frame_transport_and_spatial_embedding(xi):
+    """Check the sign against finite frame transport and the spatial algebra."""
+    xi = jnp.asarray(xi)
+    wrench = jnp.array([0.2, -0.7, 0.9])
+    transported_derivative = jax.jacfwd(
+        lambda t: se2.adjoint(se2.exp(-t * xi, EPS)).T @ wrench
+    )(jnp.array(0.0))
+    planar_indices = jnp.array([2, 3, 4])
+    spatial_xi = jnp.zeros(6).at[planar_indices].set(xi)
+    spatial_wrench = jnp.zeros(6).at[planar_indices].set(wrench)
+    spatial_action = (se3.coadjoint(spatial_xi) @ spatial_wrench)[planar_indices]
+
+    assert_allclose(se2.coadjoint_action(xi, wrench), transported_derivative, atol=ATOL)
+    assert_allclose(se2.coadjoint_action(xi, wrench), spatial_action, atol=ATOL)
 
 
 def test_adjoint_g_se2_matches_manual_construction():

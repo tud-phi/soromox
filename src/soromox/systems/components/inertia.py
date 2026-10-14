@@ -1,7 +1,10 @@
 """Spatial inertia preparation shared by continuum system families."""
 
+import jax
 import jax.numpy as jnp
 from jax import Array
+
+from soromox.utils.lie_algebra import se2, se3
 
 
 def spatial_inertia(
@@ -147,10 +150,6 @@ def assemble_inertia_terms(
     ``return_matrix`` requires complete Jacobian derivatives and returns C;
     otherwise the second result is the velocity bias C @ velocity.
     """
-    import jax
-
-    from soromox.utils.lie_algebra import se2, se3
-
     dim, dofs = jacobians.shape[-2:]
     algebra = se2 if dim == 3 else se3
     J = jacobians.reshape(-1, dofs)
