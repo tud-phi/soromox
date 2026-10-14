@@ -56,7 +56,7 @@ from .gvs import (
     GVS,
     GVSSegment,
     Helicoidal,
-    HelicoidalSectionParams,
+    HelicoidalBackboneParams,
     StrainBasisSpec,
 )
 from .pcs import (
@@ -107,7 +107,7 @@ __all__ = [
     "GVSSegment",
     "StrainBasisSpec",
     "Helicoidal",
-    "HelicoidalSectionParams",
+    "HelicoidalBackboneParams",
     # pendulum systems
     "Pendulum",
     "PendulumParams",

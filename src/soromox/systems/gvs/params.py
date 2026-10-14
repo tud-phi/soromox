@@ -2,18 +2,22 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, ClassVar, Self
 
 import jax.numpy as jnp
-from jax import Array
+from jax import Array, ensure_compile_time_eval
 
 from soromox.systems.components import ContinuumLinkParams, JointParams
-from soromox.systems.params import BaseSoftRobotParams, BaseSystemParams
+from soromox.systems.params import (
+    BaseSoftRobotParams,
+    BaseSystemParams,
+    _contains_tracer,
+)
 
 if TYPE_CHECKING:
     from soromox.systems.gvs.structures import GVSStructure
 
-__all__ = ["GVSParams", "HelicoidalSectionParams"]
+__all__ = ["GVSParams", "HelicoidalBackboneParams"]
 
 
 class GVSParams(BaseSoftRobotParams):
@@ -175,68 +179,137 @@ def _as_strong_array(value: object) -> Array:
     return jnp.asarray(array, dtype=array.dtype)
 
 
-class HelicoidalSectionParams(BaseSystemParams):
-    """Effective lattice compliance in the local backbone material frame.
+class HelicoidalBackboneParams(BaseSystemParams):
+    """Endpoint sectional stiffnesses in the local backbone material frame.
 
-    The coefficients describe the equivalent rod's sectional response, with
-    local x longitudinal and local y/z transverse to the backbone. Components
-    follow ``[twist, bend_y, bend_z, extension, shear_y, shear_z]`` in this
-    frame. Individual helical strands' material properties must first be
-    reduced to this effective backbone constitutive law.
+    The coefficients describe the equivalent rod's effective lattice response.
+    Local x is longitudinal and y/z are transverse, with component order
+    ``[twist, bend_y, bend_z, extension, shear_y, shear_z]``. Individual helical
+    strands' properties must first be reduced to this backbone constitutive law.
 
-    The diagonal stiffness is ``1 / (compliance + (L-s)*compliance_gradient)``.
-    Here ``s`` is reference arc length along the backbone from the link's
-    proximal end, and ``L`` is its reference length. Thus the gradient is with
-    respect to distance ``L-s`` from the distal end, giving
-    ``dC/ds = -compliance_gradient``.
-    Pass these coefficients to ``with_constitutive_law`` for Gauss projection.
+    Compliance varies linearly over normalized reference backbone arc length
+    ``u = s/L``, measured from each link's proximal end:
+    ``C(u) = (1-u)/stiffness_base + u/stiffness_tip``. The sectional stiffness
+    is ``diag(1/C(u))``. Equal endpoint values give constant stiffness.
+    All six endpoint entries must be finite and positive. Active strains are
+    selected by the segment's strain basis.
+
+    Pass this object to ``with_constitutive_law`` for Gauss projection.
+    Reapplying it after a length change preserves the endpoint stiffnesses and
+    stretches the profile over the new length. Numeric updates reuse compilation
+    with fixed shapes and dtypes.
 
     Attributes:
-        compliance: Distal sectional compliance in the backbone material frame,
-            shape ``(num_links, 6)``.
-            Rotational entries have units 1/(N m²); translational entries 1/N.
-        compliance_gradient: Variation of those backbone-frame components per
-            unit reference distance from the link's distal end, shape
-            ``(num_links, 6)``. Units are compliance units per metre.
-            Zero entries give constant sectional stiffness in those channels.
+        stiffness_base: Diagonal sectional stiffness at each link's proximal
+            end, shape ``(num_links, 6)``. Rotational entries have units N m²;
+            translational entries have units N.
+        stiffness_tip: Diagonal sectional stiffness at each link's distal end,
+            with the same shape, component order, frame, and units.
         damping_time_constant: Scalar Kelvin-Voigt time constant per link,
-            shape ``(num_links,)`` [s]. It is frame independent and multiplies
-            the backbone sectional stiffness, ``D_section(s) = tau * K_section(s)``,
-            yielding ``D_link = tau * K_link`` after projection. Zero disables
-            material damping.
+            shape ``(num_links,)`` [s]. It is frame independent and scales the
+            backbone stiffness: ``D_section(u) = tau * K_section(u)`` and
+            ``D_link = tau * K_link`` after projection. Zero disables damping.
     """
 
-    compliance: Array
-    compliance_gradient: Array
+    stiffness_base: Array
+    stiffness_tip: Array
     damping_time_constant: Array
 
     def __check_init__(self) -> None:
-        for name in HelicoidalSectionParams.__annotations__:
+        for name in HelicoidalBackboneParams.__annotations__:
             object.__setattr__(self, name, _as_strong_array(getattr(self, name)))
         self.validate_for_update()
 
     def _normalize_replacement(self, name: str, value: object) -> object:
         return _as_strong_array(value)
 
-    def validate_structure(self) -> None:
-        if (
-            self.compliance.ndim != 2
-            or self.compliance.shape[1] != 6
-            or not self.compliance.shape[0]
-        ):
+    @classmethod
+    def from_compliance(
+        cls,
+        *,
+        compliance: Array,
+        compliance_gradient: Array,
+        lengths: Array,
+        damping_time_constant: Array,
+    ) -> Self:
+        """Convert an affine compliance law to endpoint stiffnesses.
+
+        Evaluates ``C(s) = compliance + (L-s)*compliance_gradient`` at both
+        ends. The supplied lengths are used for conversion; the returned
+        object stores endpoint stiffnesses. Subsequent length changes preserve
+        those values when the law is reprojected.
+
+        Args:
+            compliance: Distal backbone-frame compliance, shape ``(num_links, 6)``.
+                Rotational entries have units 1/(N m²), translational entries 1/N.
+            compliance_gradient: Compliance variation per unit reference distance
+                from the distal end, shape ``(num_links, 6)``. Units are compliance
+                units per metre, and ``dC/ds = -compliance_gradient``.
+            lengths: Positive reference backbone lengths, shape ``(num_links,)`` [m].
+            damping_time_constant: Effective backbone time constants,
+                shape ``(num_links,)`` [s].
+
+        Returns:
+            Endpoint parameters reproducing the supplied law at these lengths.
+
+        Raises:
+            ValueError: If shapes are incompatible, lengths are invalid, compliance
+                is not finite and positive throughout a link, or damping is invalid.
+        """
+        compliance = _as_strong_array(compliance)
+        compliance_gradient = _as_strong_array(compliance_gradient)
+        lengths = _as_strong_array(lengths)
+        if compliance.ndim != 2 or compliance.shape[1] != 6 or not compliance.shape[0]:
             raise ValueError("compliance must have shape (num_links, 6).")
-        if self.compliance_gradient.shape != self.compliance.shape:
+        if compliance_gradient.shape != compliance.shape:
             raise ValueError(
                 "compliance_gradient must have the same shape as compliance."
             )
-        if self.damping_time_constant.shape != (self.compliance.shape[0],):
+        if lengths.shape != (compliance.shape[0],):
+            raise ValueError("lengths must have shape (num_links,).")
+        if not _contains_tracer((compliance, compliance_gradient, lengths)):
+            with ensure_compile_time_eval():
+                if not bool(jnp.all(jnp.isfinite(lengths) & (lengths > 0))):
+                    raise ValueError("lengths must be finite and positive.")
+                if not bool(jnp.all(jnp.isfinite(compliance_gradient))):
+                    raise ValueError("compliance_gradient must be finite.")
+                proximal = compliance + lengths[:, None] * compliance_gradient
+                if not bool(
+                    jnp.all(
+                        jnp.isfinite(compliance)
+                        & (compliance > 0)
+                        & jnp.isfinite(proximal)
+                        & (proximal > 0)
+                    )
+                ):
+                    raise ValueError(
+                        "Compliance must be finite and positive throughout each link."
+                    )
+        return cls(
+            stiffness_base=1 / (compliance + lengths[:, None] * compliance_gradient),
+            stiffness_tip=1 / compliance,
+            damping_time_constant=damping_time_constant,
+        )
+
+    def validate_structure(self) -> None:
+        if (
+            self.stiffness_base.ndim != 2
+            or self.stiffness_base.shape[1] != 6
+            or not self.stiffness_base.shape[0]
+        ):
+            raise ValueError("stiffness_base must have shape (num_links, 6).")
+        if self.stiffness_tip.shape != self.stiffness_base.shape:
+            raise ValueError(
+                "stiffness_tip must have the same shape as stiffness_base."
+            )
+        if self.damping_time_constant.shape != (self.stiffness_base.shape[0],):
             raise ValueError("damping_time_constant must contain one value per link.")
 
     def validate_values(self) -> None:
-        if not bool(jnp.all(jnp.isfinite(self.compliance) & (self.compliance > 0))):
-            raise ValueError("compliance must be finite and positive.")
-        if not bool(jnp.all(jnp.isfinite(self.compliance_gradient))):
-            raise ValueError("compliance_gradient must be finite.")
+        for name in ("stiffness_base", "stiffness_tip"):
+            values = getattr(self, name)
+            if not bool(jnp.all(jnp.isfinite(values) & (values > 0))):
+                raise ValueError(f"{name} must be finite and positive.")
         if not bool(
             jnp.all(
                 jnp.isfinite(self.damping_time_constant)
