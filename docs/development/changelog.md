@@ -13,6 +13,10 @@ and include benchmark baseline and measurement context for performance claims.
 
 ### Added
 
+- GVS-based `Helicoidal` models for trimmed-helicoid robots, with analytic
+  sectional mechanics, a simulation example, and a dedicated Viser renderer.
+  Shared PCS/GVS dynamics support full sectional and tip inertia in JAX and Warp;
+  see [PR #229](https://github.com/tud-phi/soromox/pull/229).
 - Python 3.15 support, with numerical tests and patched Open3D source-build
   and rendering checks in Ubuntu CI.
 
