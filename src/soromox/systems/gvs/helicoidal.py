@@ -19,7 +19,7 @@ __all__ = ["Helicoidal"]
 class Helicoidal(GVS):
     """Tendon-driven helicoidal lattice arm with geometric variable strains.
 
-    An effective sectional law describes the lattice's bending, torsion,
+    An effective sectional constitutive law describes the lattice's bending, torsion,
     extension, and shear response. Bending stiffness varies along each link as
     ``EI(s) = 1 / (cA + cB * (L-s))``. Distributed lattice inertia and attached
     bodies at link tips account for the arm and its platforms. Tendons run
@@ -28,7 +28,7 @@ class Helicoidal(GVS):
     The local x-axis follows the backbone, with strains ordered as
     ``[twist, bend_y, bend_z, extension, shear_y, shear_z]``. Generalized
     stiffness and damping are stored in ``params.link``. After changing link
-    lengths, call ``with_sectional_law`` to project the law over the new geometry.
+    lengths, call ``with_constitutive_law`` to project the law over the new geometry.
     Numeric parameter updates reuse compilation with fixed structure, shapes,
     and dtypes. Supports JAX and Warp dynamics through GVS.
 
@@ -54,7 +54,7 @@ class Helicoidal(GVS):
         mass_per_length: Array,
         rotational_inertia_per_length: Array,
         tip_mass: Array | None = None,
-        sectional_law: HelicoidalSectionParams | None = None,
+        constitutive_law: HelicoidalSectionParams | None = None,
         gravity: Array | None = None,
         max_dof: int | None = None,
         max_num_gauss_points: int | None = None,
@@ -69,7 +69,7 @@ class Helicoidal(GVS):
             rotational_inertia_per_length: Principal local x/y/z inertias,
                 shape ``(num_links, 3)`` [kg m].
             tip_mass: One point mass per link tip [kg]; defaults to zeros.
-            sectional_law: Optional analytic law replacing the link stiffness
+            constitutive_law: Optional constitutive law replacing the link stiffness
                 and damping supplied by the segment specs.
             gravity: Optional world-frame acceleration, shape ``(3,)``.
             max_dof: Optional common padded link/joint matrix dimension.
@@ -112,11 +112,13 @@ class Helicoidal(GVS):
         )
         model = cls(params, structure, **kwargs)
         return (
-            model if sectional_law is None else model.with_sectional_law(sectional_law)
+            model
+            if constitutive_law is None
+            else model.with_constitutive_law(constitutive_law)
         )
 
-    def with_sectional_law(self, law: HelicoidalSectionParams) -> Self:
-        """Project the analytic sectional law using the configured Gauss rules.
+    def with_constitutive_law(self, law: HelicoidalSectionParams) -> Self:
+        """Project the sectional constitutive law using the configured Gauss rules.
 
         This evaluates ``integral B.T @ diag(1 / C(s)) @ B ds``
         (paper Eq. 25) at each link's quadrature nodes. Damping is ``tau * K``
@@ -137,7 +139,9 @@ class Helicoidal(GVS):
             raise TypeError("law must be a HelicoidalSectionParams instance.")
         law.validate_for_update()
         if law.compliance.shape[0] != self.num_segments:
-            raise ValueError("sectional law must contain one row per link.")
+            raise ValueError(
+                "sectional constitutive law must contain one row per link."
+            )
         if not _contains_tracer((law, self.segment_lengths)):
             with jax.ensure_compile_time_eval():
                 proximal_compliance = (
@@ -165,5 +169,7 @@ class Helicoidal(GVS):
         return self.update_link_params(stiffness=stiffness, damping=damping)
 
     def with_isotropic_material(self, material: IsotropicMaterialParams) -> Self:
-        """Require an effective sectional law for helicoidal lattice mechanics."""
-        raise ValueError("Use with_sectional_law for effective helicoidal mechanics.")
+        """Require an effective sectional constitutive law for helicoidal lattice mechanics."""
+        raise ValueError(
+            "Use with_constitutive_law for effective helicoidal mechanics."
+        )

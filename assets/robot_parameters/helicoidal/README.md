@@ -45,3 +45,16 @@ undeformed lengths are 0.208 m, 0.4263 m, and 0.6446 m (three of each). Upstream
 uses higher-order module strains with penalized shear and omits transitions and
 gaps from tendon lengths. Comparisons with its saved solutions should account
 for these modeling differences.
+
+## Running and visualizing the example
+
+From the repository checkout:
+
+```bash
+JAX_PLATFORMS=cpu python examples/simulation/gvs/simulate_helicoidal.py --duration 0.02
+```
+
+Use `--duration 0` to inspect construction, `--output trajectory.npz` to save a
+rollout, or `--viser` to display the helicoidal lattice with the standard neutral
+Studio preset. A positive duration with `--viser` plays the simulated trajectory.
+The example uses implicit Euler to handle the stiff, damped modes.

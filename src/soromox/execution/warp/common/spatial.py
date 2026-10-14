@@ -173,7 +173,21 @@ def _mass_vector_action(
     use_first: bool,
     base_row: int,
 ) -> wp.float64:
-    """Apply diagonal or row-major full spatial inertia to a stored vector."""
+    """Apply diagonal or row-major full spatial inertia to a stored vector.
+
+    Args:
+        masses: Weighted inertia rows, shaped ``(items, 6)`` for diagonal
+            inertia or ``(items, 36)`` for full matrices in row-major order.
+        item: Inertia row for the current quadrature or link-tip contribution.
+        row: Spatial component of the resulting vector, in angular-first order.
+        first: First flattened spatial-vector buffer.
+        second: Second flattened spatial-vector buffer.
+        use_first: Whether to read from the first buffer.
+        base_row: First flattened row of the stored six-component vector.
+
+    Returns:
+        The selected component of the weighted inertia-vector product.
+    """
     if masses.shape[1] == SPATIAL_DIM:
         return masses[item, row] * _vector_value(
             first, second, use_first, base_row, row
@@ -197,7 +211,22 @@ def _mass_jacobian_action(
     base_row: int,
     column: int,
 ) -> wp.float64:
-    """Apply diagonal or full spatial inertia to one Jacobian column."""
+    """Apply diagonal or full spatial inertia to one Jacobian column.
+
+    Args:
+        masses: Weighted inertia rows, shaped ``(items, 6)`` for diagonal
+            inertia or ``(items, 36)`` for full matrices in row-major order.
+        item: Inertia row for the current quadrature or link-tip contribution.
+        row: Spatial row of the product, in angular-first order.
+        first: First Jacobian buffer, with spatial blocks stacked by row.
+        second: Second Jacobian buffer, with spatial blocks stacked by row.
+        use_first: Whether to read from the first buffer.
+        base_row: First row of the stored six-row Jacobian block.
+        column: Generalized-velocity column of the Jacobian.
+
+    Returns:
+        The selected entry of the weighted inertia-Jacobian product.
+    """
     if masses.shape[1] == SPATIAL_DIM:
         return masses[item, row] * _matrix_value(
             first, second, use_first, base_row, row, column
@@ -230,7 +259,7 @@ def _coadjoint_wrench(
         derivative_second: Second flattened velocity-derivative buffer.
         use_first: Whether the first pair of buffers is active.
         base_row: First flattened row of the current spatial vector.
-        masses: Diagonal spatial inertias for all quadrature items.
+        masses: Packed diagonal or full weighted spatial inertias.
         quadrature: Row of ``masses`` used by the current item.
 
     Returns:
