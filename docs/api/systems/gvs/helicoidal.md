@@ -78,18 +78,21 @@ JAX_PLATFORMS=cpu python examples/simulation/gvs/simulate_helicoidal.py --durati
 ```
 
 The example has three modules, three compliant transitions, two inactive
-connector links, 63 strain coordinates, and nine tendons. Modules use shifted
+connector links, 51 strain coordinates, and nine tendons. Modules use shifted
 Legendre orders `(2, 2, 2, 1, 1, 1)` in native strain order: quadratic twist and
-bending, linear extension and shear. Transitions use constant strains. Each
+bending and linear extension, with both shear strains inactive. Their negative
+fitted shear compliance is represented by `shear_stiffness: null` in the fixture;
+the example constrains those strains instead of assigning a large penalty
+stiffness. Transitions use constant strains in all six channels. Each
 module uses 16 Gauss points; transitions and connectors use eight. Use
 `--duration 0` to inspect construction or `--output trajectory.npz` to save a
-rollout. An implicit integrator handles the large effective shear stiffness.
+rollout. An implicit integrator handles the remaining stiff, damped modes.
 The fixture preserves the source world frame: undeformed backbone along +z,
 gravity along +z, and a base rotation mapping native local x to world z.
 
 The analytic law is derived from the pinned toolkit's interface compliance.
 The fixture README at `assets/robot_parameters/helicoidal/README.md` records its
-provenance, coordinate conversion, and shear fallback. Tendons include every
+provenance, coordinate conversion, and treatment of the inadmissible shear fit. Tendons include every
 transition and connector in their contiguous spans. Comparisons with upstream saved solutions should account for the discretization
 and routing differences. The fixture describes the toolkit's illustrative
 cylindrical arm.

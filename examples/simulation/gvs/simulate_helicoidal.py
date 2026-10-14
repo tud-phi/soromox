@@ -37,14 +37,20 @@ MODULE_BASIS_ORDER = (2, 2, 2, 1, 1, 1)
 
 
 def build_robot(num_gauss_points: int = 16) -> Helicoidal:
-    """Build six deformable links and two massless, inactive connector links."""
+    """Build the arm, constraining module shear when its fit is inadmissible."""
     data = json.loads(FIXTURE.read_text())
     links = data["links"]
     segments = []
     for link in links:
         active = link["role"] != "connector"
+        shear_active = active and link["shear_stiffness"] is not None
+        strain_selector = [active] * 4 + [shear_active] * 2
         basis_order = MODULE_BASIS_ORDER if link["role"] == "module" else (0,) * 6
-        dof = sum(order + 1 for order in basis_order) if active else 0
+        dof = sum(
+            order + 1
+            for order, selected in zip(basis_order, strain_selector, strict=True)
+            if selected
+        )
         segments.append(
             GVSSegment(
                 link=LinkSpec.circular(
@@ -58,7 +64,7 @@ def build_robot(num_gauss_points: int = 16) -> Helicoidal:
                 joint=JointSpec(type="fixed"),
                 basis=StrainBasisSpec(
                     type="legendre",
-                    strain_selector=[active] * 6,
+                    strain_selector=strain_selector,
                     basis_order=basis_order,
                 ),
                 num_gauss_points=num_gauss_points if link["role"] == "module" else 8,
@@ -71,7 +77,16 @@ def build_robot(num_gauss_points: int = 16) -> Helicoidal:
                     1 / link["torsional_stiffness"],
                     *([link["bending_compliance"][0]] * 2),
                     1 / link["axial_stiffness"],
-                    *([1 / link["shear_stiffness"]] * 2),
+                    # Inactive shear rows have no basis columns. Their finite
+                    # padding is ignored by the sectional projection.
+                    *(
+                        [
+                            1 / link["shear_stiffness"]
+                            if link["shear_stiffness"] is not None
+                            else 1.0
+                        ]
+                        * 2
+                    ),
                 ]
                 for link in links
             ]
@@ -163,7 +178,7 @@ def main() -> None:
         if args.viser:
             build_renderer(robot).show(q0)
         return
-    # Large effective shear stiffness calls for an implicit integrator.
+    # The remaining stiff, damped modes still call for an implicit integrator.
     trajectory = robot.rollout_to(
         SystemState(t=jnp.array(0.0), y=jnp.concatenate((q0, q0)), u=tension),
         t1=args.duration,
