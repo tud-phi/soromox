@@ -15,7 +15,7 @@ jax.config.update("jax_enable_x64", True)
 def test_cylindrical_fixture_geometry_routing_and_constitutive_reduction():
     robot = build_robot()
     data = json.loads(FIXTURE.read_text())
-    assert robot.num_coordinates == 63
+    assert robot.num_coordinates == 51
     assert robot.num_segments == 8
     assert robot.num_actuators == 9
     q = jnp.zeros(robot.num_coordinates)
@@ -53,8 +53,17 @@ def test_cylindrical_fixture_geometry_routing_and_constitutive_reduction():
             0.5 * (abs(compliance[0, 4]) + abs(compliance[1, 3])),
             rtol=1e-12,
         )
-        assert diagnostic["shear_fallback_used"]
-        assert link["shear_stiffness"] == 1e6
+        assert diagnostic["shear_compliance_residual"] < 0
+        assert not diagnostic["shear_strain_active"]
+        assert link["shear_stiffness"] is None
+        assert robot.structure.segments[index].basis.strain_selector == (
+            True,
+            True,
+            True,
+            True,
+            False,
+            False,
+        )
         # The new generalized stiffness integrates EI, not inverse interface compliance.
         bending = np.log1p(c_b * length / c_a) / c_b
         assert_allclose(robot.params.link.stiffness[index, 3, 3], bending, rtol=5e-12)
@@ -64,6 +73,8 @@ def test_cylindrical_fixture_geometry_routing_and_constitutive_reduction():
             rtol=1e-12,
         )
     assert_allclose(robot.params.link.sectional_inertia[np.array([2, 5])], 0.0)
+    for index in (0, 3, 6):
+        assert all(robot.structure.segments[index].basis.strain_selector)
     assert_allclose(
         robot.params.link.tip_inertia[np.array([1, 4, 7]), 3, 3],
         [0.04226477771961455, 0.04226477771961455, 0.01613238885980728],

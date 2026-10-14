@@ -13,10 +13,15 @@ Soft Arms with a Separated-Section Constitutive Law*,
 toolkit's illustrative cylindrical arm.
 
 The analytic `EI(s) = 1 / (cA + cB*(L-s))` law is recovered from the upstream
-`module_compliance.npz`. Its stiffness agrees with the exported sectional values.
-The fixture records the source compliance matrices and shear-fit residuals. All
-three modules use the upstream `GA = 1e6 N` fallback for a nonpositive shear
-compliance residual. This value is a modeling assumption.
+`module_compliance.npz`. Its bending, torsional, and axial stiffness agrees with
+the exported sectional values. The fixture records the source compliance
+matrices and shear-fit residuals. All three modules have a negative residual
+after subtracting the fitted bending contribution from transverse compliance.
+The upstream builder substitutes `GA = 1e6 N` in that case. This fixture instead
+stores `shear_stiffness: null`, and the example deactivates both module shear
+strains. They remain exactly at their zero reference values, with no penalty
+stiffness or damping. This is a shear-free approximation; it does not recover
+the source interface compliance's remaining transverse response.
 Transitions have constant EI and GJ equal to 50 times the module's distal values;
 EA and GA both equal 50 times the module EA. The damping time constant is 0.02 s.
 
@@ -26,15 +31,17 @@ source world frame. Consequently, the undeformed tip is `[0,0,0.6446] m` and wor
 gravity is `[0,0,9.81] m/s²`. Both angular and linear strain blocks use P.
 Rotational inertia is reordered from source x/y/z to native z/x/y.
 
-The example uses zero-order strains in all six channels of each of the six
-compliant links (36 coordinates). Two 10.3 mm connectors have inactive strain
-bases and zero distributed inertia. Platform point masses attach to the module
-tips before their following gaps. Connector law coefficients are positive
-placeholders that project to zero because their bases are inactive.
+The example uses quadratic twist/bending and linear extension in each module,
+with module shear inactive. Transitions use constant strains in all six channels,
+giving 51 coordinates in total. Modules use 16 Gauss points and other links use
+eight. Two 10.3 mm connectors have inactive strain bases and zero distributed
+inertia. Platform point masses attach to the module tips before their following
+gaps. Inactive law rows use finite positive padding that contributes nothing
+to the projected stiffness or damping because their basis rows are zero.
 
 Each tendon runs continuously from the base to its anchor, including transitions
 and connectors. There are nine independent tension inputs in newtons. Their
 undeformed lengths are 0.208 m, 0.4263 m, and 0.6446 m (three of each). Upstream
-uses higher-order module strains and omits transitions and gaps from tendon
-lengths. Comparisons with its saved solutions should account for these modeling
-differences.
+uses higher-order module strains with penalized shear and omits transitions and
+gaps from tendon lengths. Comparisons with its saved solutions should account
+for these modeling differences.

@@ -54,7 +54,7 @@
       ],
       "torsional_stiffness": 0.3212933156408179,
       "axial_stiffness": 17.107191905094012,
-      "shear_stiffness": 1000000.0,
+      "shear_stiffness": null,
       "mass_per_length": 0.23544874042678135,
       "rotational_inertia_per_length": [
         0.00014715546276673836,
@@ -113,7 +113,7 @@
       ],
       "torsional_stiffness": 0.3212933156281724,
       "axial_stiffness": 17.107191879445086,
-      "shear_stiffness": 1000000.0,
+      "shear_stiffness": null,
       "mass_per_length": 0.23544874042678138,
       "rotational_inertia_per_length": [
         0.0001471554627667384,
@@ -172,7 +172,7 @@
       ],
       "torsional_stiffness": 0.3212933157050478,
       "axial_stiffness": 17.10719190829146,
-      "shear_stiffness": 1000000.0,
+      "shear_stiffness": null,
       "mass_per_length": 0.23544874042678135,
       "rotational_inertia_per_length": [
         0.00014715546276673836,
@@ -319,7 +319,7 @@
         ]
       ],
       "shear_compliance_residual": -0.0054993362297641735,
-      "shear_fallback_used": true
+      "shear_strain_active": false
     },
     {
       "source_module": "M2",
@@ -374,7 +374,7 @@
         ]
       ],
       "shear_compliance_residual": -0.005499319960810212,
-      "shear_fallback_used": true
+      "shear_strain_active": false
     },
     {
       "source_module": "M3",
@@ -429,7 +429,7 @@
         ]
       ],
       "shear_compliance_residual": -0.003578272130976723,
-      "shear_fallback_used": true
+      "shear_strain_active": false
     }
   ]
 }
