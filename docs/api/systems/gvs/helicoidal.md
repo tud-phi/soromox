@@ -78,7 +78,10 @@ JAX_PLATFORMS=cpu python examples/simulation/gvs/simulate_helicoidal.py --durati
 ```
 
 The example has three modules, three compliant transitions, two inactive
-connector links, 36 zero-order strain coordinates, and nine tendons. Use
+connector links, 63 strain coordinates, and nine tendons. Modules use shifted
+Legendre orders `(2, 2, 2, 1, 1, 1)` in native strain order: quadratic twist and
+bending, linear extension and shear. Transitions use constant strains. Each
+module uses 16 Gauss points; transitions and connectors use eight. Use
 `--duration 0` to inspect construction or `--output trajectory.npz` to save a
 rollout. An implicit integrator handles the large effective shear stiffness.
 The fixture preserves the source world frame: undeformed backbone along +z,
@@ -100,8 +103,8 @@ JAX_PLATFORMS=cpu python examples/simulation/gvs/simulate_helicoidal.py --durati
 ```
 
 Use `--viser` with a positive duration to play a simulated trajectory. The
-renderer displays two winding families of solid helices, module end rings,
-transition and connector surfaces, and tendon routes. Strand geometry follows
+renderer uses the standard Studio preset and displays two winding families of
+solid helices, module end rings, transition and connector surfaces, and tendon routes. Strand geometry follows
 the GVS material frames through bending, twist, shear, and extension.
 
 ```python

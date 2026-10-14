@@ -15,7 +15,7 @@ jax.config.update("jax_enable_x64", True)
 def test_cylindrical_fixture_geometry_routing_and_constitutive_reduction():
     robot = build_robot()
     data = json.loads(FIXTURE.read_text())
-    assert robot.num_coordinates == 36
+    assert robot.num_coordinates == 63
     assert robot.num_segments == 8
     assert robot.num_actuators == 9
     q = jnp.zeros(robot.num_coordinates)
@@ -57,7 +57,7 @@ def test_cylindrical_fixture_geometry_routing_and_constitutive_reduction():
         assert link["shear_stiffness"] == 1e6
         # The new generalized stiffness integrates EI, not inverse interface compliance.
         bending = np.log1p(c_b * length / c_a) / c_b
-        assert_allclose(robot.params.link.stiffness[index, 1, 1], bending, rtol=5e-12)
+        assert_allclose(robot.params.link.stiffness[index, 3, 3], bending, rtol=5e-12)
         assert_allclose(
             robot.params.link.stiffness[index, 0, 0],
             length**2 / compliance[2, 2],

@@ -1,4 +1,4 @@
-"""Simulate the cylindrical helicoidal example with constant strains and JAX.
+"""Simulate the cylindrical helicoidal example with quadratic rotational strains and JAX.
 
 Run from the checkout with ``JAX_PLATFORMS=cpu python
 examples/simulation/gvs/simulate_helicoidal.py --duration 0.02``.
@@ -33,14 +33,18 @@ FIXTURE = (
 )
 
 
-def build_robot(num_gauss_points: int = 8) -> Helicoidal:
+MODULE_BASIS_ORDER = (2, 2, 2, 1, 1, 1)
+
+
+def build_robot(num_gauss_points: int = 16) -> Helicoidal:
     """Build six deformable links and two massless, inactive connector links."""
     data = json.loads(FIXTURE.read_text())
     links = data["links"]
     segments = []
     for link in links:
         active = link["role"] != "connector"
-        dof = 6 if active else 0
+        basis_order = MODULE_BASIS_ORDER if link["role"] == "module" else (0,) * 6
+        dof = sum(order + 1 for order in basis_order) if active else 0
         segments.append(
             GVSSegment(
                 link=LinkSpec.circular(
@@ -53,9 +57,11 @@ def build_robot(num_gauss_points: int = 8) -> Helicoidal:
                 ),
                 joint=JointSpec(type="fixed"),
                 basis=StrainBasisSpec(
-                    type="legendre", strain_selector=[active] * 6, basis_order=[0] * 6
+                    type="legendre",
+                    strain_selector=[active] * 6,
+                    basis_order=basis_order,
                 ),
-                num_gauss_points=num_gauss_points,
+                num_gauss_points=num_gauss_points if link["role"] == "module" else 8,
             )
         )
     law = HelicoidalSectionParams(
@@ -105,7 +111,6 @@ def build_renderer(robot: Helicoidal, **kwargs):
     """Build the cylindrical example's Viser lattice with three helical modules."""
     from soromox.rendering import (
         CameraConfig,
-        GroundPlaneConfig,
         HelicoidalModuleVisual,
         HelicoidalViserRenderer,
         RendererConfig,
@@ -116,11 +121,11 @@ def build_renderer(robot: Helicoidal, **kwargs):
         "config",
         RendererConfig(
             camera=CameraConfig(
-                position=(0.75, -1.0, 0.30),
-                look_at=(0.0, 0.0, 0.32),
+                position=(0.035, -0.62, 0.31),
+                look_at=(0.035, 0.0, 0.31),
                 up=(0.0, 0.0, -1.0),
             ),
-            scene=SceneConfig(ground=GroundPlaneConfig(visible=False)),
+            scene=SceneConfig.studio(),
         ),
     )
     return HelicoidalViserRenderer(
@@ -163,7 +168,9 @@ def main() -> None:
         SystemState(t=jnp.array(0.0), y=jnp.concatenate((q0, q0)), u=tension),
         t1=args.duration,
         solver_dt=args.dt,
-        save_ts=jnp.linspace(0.0, args.duration, 11),
+        save_ts=jnp.linspace(
+            0.0, args.duration, max(11, int(np.ceil(30 * args.duration)) + 1)
+        ),
         solver=ImplicitEuler(root_finder=optx.Newton(rtol=1e-7, atol=1e-9)),
         max_steps=10000,
     )
