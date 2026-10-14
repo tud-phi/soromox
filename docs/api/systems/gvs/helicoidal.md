@@ -18,8 +18,11 @@ for the line mass [kg/m], three principal rotational inertias [kg m], and option
 inactive strain bases. The line mass and rotational inertias specify lattice inertia. Tip masses have translational inertia only.
 
 Supply a `HelicoidalSectionParams` object through `constitutive_law=` or
-`with_constitutive_law(...)`. The local x-axis is tangent to the backbone, with
-sectional order `[twist, bend_y, bend_z, extension, shear_y, shear_z]`:
+`with_constitutive_law(...)`. Its compliance coefficients describe the effective
+lattice response in the local **backbone material frame**, with local x
+longitudinal and y/z transverse. Individual helical strands' material properties
+must first be reduced to this equivalent-rod law. The sectional order is
+`[twist, bend_y, bend_z, extension, shear_y, shear_z]`:
 
 ```text
 C(s) = compliance + (L - s) * compliance_gradient
@@ -27,6 +30,12 @@ K_section(s) = diag(1 / C(s))
 K_link = integral B(s).T @ K_section(s) @ B(s) ds
 D_link = tau * K_link
 ```
+
+Here `s` is reference backbone arc length measured from the link's proximal end,
+and `L` is its reference length. `compliance_gradient` differentiates the
+backbone-frame compliance components with respect to `L-s`, so
+`dC/ds = -compliance_gradient`. The damping time constant `tau` is a frame-independent
+scalar per link: it scales the same backbone sectional stiffness before projection.
 
 The sectional constitutive law is evaluated directly at GVS Gauss nodes, using the
 configured basis and optional rotational length scaling. Both coefficient arrays
