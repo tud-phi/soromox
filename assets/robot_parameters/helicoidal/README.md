@@ -42,11 +42,22 @@ and a 2.3 mm connector plate into one fully rigid 18.3 mm link. The example thus
 builds six links from the fixture's eight source links. Modules use 16 Gauss
 points and other links use eight.
 
-Merging preserves the fixture's mass distribution: each absorbed transition's
-distributed inertia becomes a full attached-body inertia at the merged link tip,
-including its center-of-mass offset. Platform point masses remain attached to
-the module tips before their following gaps. This preserves the source mass
-approximation; it does not infer new cylinder dimensions or mass properties.
+The example approximates each rigid assembly as a uniform solid cylinder with
+the fixture's 25 mm radius. Each 18.3 mm junction contains both the upstream
+platform mass and the following transition's distributed mass. The base ring
+retains its source mass over 8 mm. This preserves the fixture's total mass while
+redistributing it over the rigid spans. Its inherited mass allocation is not a
+new estimate from CAD or measured densities.
+
+Rigid-link sectional inertia uses `J_xx = mu*r^2/2` and
+`J_yy = J_zz = mu*r^2/4`, where `mu` is mass per unit length. GVS integrates the
+longitudinal distribution. The terminal ring/plate cylinder extends 10.3 mm
+beyond the last module, using the source 8 mm ring and 2.3 mm plate dimensions
+recorded as `tip_body_length`. Its full attached-body inertia includes the
+5.15 mm center-of-mass offset and transverse `m*L^2/12` contribution. The uniform
+cylinders approximate the ring-and-plate geometry; deformable modules retain the
+source thin-ring sectional inertia.
+
 Inactive law rows use finite positive padding that contributes nothing to the
 projected stiffness or damping because their basis rows are zero.
 

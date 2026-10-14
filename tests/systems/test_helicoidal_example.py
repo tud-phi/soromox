@@ -74,17 +74,16 @@ def test_cylindrical_fixture_geometry_routing_and_constitutive_reduction():
             length**2 / compliance[2, 2],
             rtol=1e-12,
         )
-    assert_allclose(robot.params.link.sectional_inertia[np.array([2, 4])], 0.0)
     for index in (0, 2, 4):
         assert not any(robot.structure.segments[index].basis.strain_selector)
         assert_allclose(robot.params.link.stiffness[index], 0.0)
     assert_allclose(
         robot.params.link.tip_inertia[np.array([1, 3, 5]), 3, 3],
-        [0.04226477771961455, 0.04226477771961455, 0.01613238885980728],
+        [0.0, 0.0, 0.01613238885980728],
     )
 
 
-def test_merged_rigid_interfaces_preserve_mass_and_ring_inertia():
+def test_rigid_cylinders_preserve_total_mass_and_sectional_moments():
     robot = build_robot()
     data = json.loads(FIXTURE.read_text())
     assert_allclose(robot.segment_lengths[np.array([2, 4])], 0.0183, atol=1e-15)
@@ -98,23 +97,43 @@ def test_merged_rigid_interfaces_preserve_mass_and_ring_inertia():
         + np.asarray(robot.params.link.tip_inertia)[:, 3, 3].sum()
     )
     assert_allclose(actual_mass, expected_mass, rtol=1e-13)
-    nodes, weights = np.polynomial.legendre.leggauss(3)
-    for index, source_index in ((2, 3), (4, 6)):
+    for index, source_index in ((0, 0), (2, 3), (4, 6)):
         source = data["links"][source_index]
-        length = source["length"]
-        sectional = np.diag(
-            source["rotational_inertia_per_length"] + [source["mass_per_length"]] * 3
+        mass = source["length"] * source["mass_per_length"]
+        if index:
+            mass += data["links"][source_index - 2]["tip_mass"]
+        length = float(robot.segment_lengths[index])
+        radius = source["radius"]
+        # Disk second moments: <x^2>=0, <y^2>=<z^2>=r^2/4.
+        expected = (
+            mass
+            / length
+            * np.array([radius**2 / 2, radius**2 / 4, radius**2 / 4, 1, 1, 1])
         )
-        integrated = np.zeros((6, 6))
-        for node, weight in zip(nodes, weights):
-            # A rigid body's point velocity is v_tip + omega cross r.
-            r_x = length * (node - 1) / 2
-            velocity_map = np.eye(6)
-            velocity_map[4, 2] = r_x
-            velocity_map[5, 1] = -r_x
-            integrated += (
-                length * weight / 2 * velocity_map.T @ sectional @ velocity_map
+        assert_allclose(robot.params.link.sectional_inertia[index], np.diag(expected))
+        assert_allclose(robot.params.link.tip_inertia[index], 0.0)
+
+
+def test_terminal_cylinder_inertia_matches_volume_integration():
+    robot = build_robot()
+    source = json.loads(FIXTURE.read_text())["links"][-1]
+    mass, radius, length = (
+        source["tip_mass"],
+        source["radius"],
+        source["tip_body_length"],
+    )
+    assert_allclose(length, 0.0103)
+    nodes, weights = np.polynomial.legendre.leggauss(3)
+    integrated = np.zeros((6, 6))
+    # Four disk points at r/sqrt(2) reproduce its area second moments exactly;
+    # axial Gauss quadrature covers the cylinder extending from the backbone tip.
+    for node, weight in zip(nodes, weights):
+        for theta in np.arange(4) * np.pi / 2:
+            x = length * (node + 1) / 2
+            y = radius / np.sqrt(2) * np.cos(theta)
+            z = radius / np.sqrt(2) * np.sin(theta)
+            velocity_map = np.column_stack(
+                (np.array([[0, z, -y], [-z, 0, x], [y, -x, 0]]), np.eye(3))
             )
-        assert_allclose(
-            robot.params.link.tip_inertia[index], integrated, rtol=1e-13, atol=1e-16
-        )
+            integrated += mass * weight / 8 * velocity_map.T @ velocity_map
+    assert_allclose(robot.params.link.tip_inertia[-1], integrated, atol=1e-16)
