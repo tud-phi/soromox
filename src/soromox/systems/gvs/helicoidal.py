@@ -9,9 +9,8 @@ from jax import Array
 from soromox.systems.components import IsotropicMaterialParams
 from soromox.systems.gvs.construction import project_sectional_matrices
 from soromox.systems.gvs.core import GVS
-from soromox.systems.gvs.params import HelicoidalSectionParams
+from soromox.systems.gvs.params import HelicoidalBackboneParams
 from soromox.systems.gvs.specs import GVSSegment
-from soromox.systems.params import _contains_tracer
 
 __all__ = ["Helicoidal"]
 
@@ -20,8 +19,9 @@ class Helicoidal(GVS):
     """Tendon-driven helicoidal lattice arm with geometric variable strains.
 
     An effective sectional constitutive law describes the lattice's bending, torsion,
-    extension, and shear response. Bending stiffness varies along each link as
-    ``EI(s) = 1 / (cA + cB * (L-s))``. Distributed lattice inertia and attached
+    extension, and shear response. Compliance varies linearly between the
+    reciprocals of the endpoint sectional stiffnesses. Distributed lattice inertia
+    and attached
     bodies at link tips account for the arm and its platforms. Tendons run
     continuously through compliant transitions and rigid links.
 
@@ -54,7 +54,7 @@ class Helicoidal(GVS):
         mass_per_length: Array,
         rotational_inertia_per_length: Array,
         tip_mass: Array | None = None,
-        constitutive_law: HelicoidalSectionParams | None = None,
+        constitutive_law: HelicoidalBackboneParams | None = None,
         gravity: Array | None = None,
         max_dof: int | None = None,
         max_num_gauss_points: int | None = None,
@@ -117,7 +117,7 @@ class Helicoidal(GVS):
             else model.with_constitutive_law(constitutive_law)
         )
 
-    def with_constitutive_law(self, law: HelicoidalSectionParams) -> Self:
+    def with_constitutive_law(self, law: HelicoidalBackboneParams) -> Self:
         """Project the sectional constitutive law using the configured Gauss rules.
 
         This evaluates ``integral B.T @ diag(1 / C(s)) @ B ds``
@@ -126,7 +126,7 @@ class Helicoidal(GVS):
 
         Args:
             law: Effective constitutive coefficients in the local backbone
-                material frame, one row per link; see ``HelicoidalSectionParams``
+                material frame, one row per link; see ``HelicoidalBackboneParams``
                 for component order and reference arc-length convention.
 
         Returns:
@@ -134,33 +134,21 @@ class Helicoidal(GVS):
 
         Raises:
             TypeError: If the law has the wrong parameter type.
-            ValueError: If the link count differs or sectional compliance is not
-                strictly positive throughout any link.
+            ValueError: If the link count differs or endpoint stiffnesses or damping
+                values are invalid.
         """
-        if not isinstance(law, HelicoidalSectionParams):
-            raise TypeError("law must be a HelicoidalSectionParams instance.")
+        if not isinstance(law, HelicoidalBackboneParams):
+            raise TypeError("law must be a HelicoidalBackboneParams instance.")
         law.validate_for_update()
-        if law.compliance.shape[0] != self.num_segments:
+        if law.stiffness_base.shape[0] != self.num_segments:
             raise ValueError(
                 "sectional constitutive law must contain one row per link."
             )
-        if not _contains_tracer((law, self.segment_lengths)):
-            with jax.ensure_compile_time_eval():
-                proximal_compliance = (
-                    law.compliance
-                    + law.compliance_gradient * self.segment_lengths[:, None]
-                )
-                if not bool(jnp.all(proximal_compliance > 0)):
-                    raise ValueError(
-                        "Sectional compliance must be positive throughout each link."
-                    )
 
         def sectional_matrix(index: int, s: Array) -> Array:
-            compliance = (
-                law.compliance[index]
-                + (self.segment_lengths[index] - s[:, None])
-                * law.compliance_gradient[index]
-            )
+            u = s[:, None] / self.segment_lengths[index]
+            base, tip = law.stiffness_base[index], law.stiffness_tip[index]
+            compliance = (1 - u) / base + u / tip
             diagonal = 1 / compliance
             return jax.vmap(jnp.diag)(diagonal)
 

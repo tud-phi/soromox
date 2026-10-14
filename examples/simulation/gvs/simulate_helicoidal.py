@@ -27,7 +27,7 @@ from soromox.rendering import (
 from soromox.systems import (
     GVSSegment,
     Helicoidal,
-    HelicoidalSectionParams,
+    HelicoidalBackboneParams,
     JointSpec,
     LinkSpec,
     StrainBasisSpec,
@@ -77,7 +77,8 @@ def build_robot(num_gauss_points: int = 16) -> Helicoidal:
                 num_gauss_points=num_gauss_points if link["role"] == "module" else 8,
             )
         )
-    law = HelicoidalSectionParams(
+    law = HelicoidalBackboneParams.from_compliance(
+        lengths=jnp.array([link["length"] for link in links]),
         compliance=jnp.array(
             [
                 [

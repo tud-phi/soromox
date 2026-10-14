@@ -13,7 +13,7 @@ from soromox.systems import (
     GVSParams,
     GVSSegment,
     Helicoidal,
-    HelicoidalSectionParams,
+    HelicoidalBackboneParams,
     JointSpec,
     LinkSpec,
     StrainBasisSpec,
@@ -42,7 +42,8 @@ def segment(length=0.2, active=(1, 1, 1, 1, 1, 1), order=(0,) * 6, gauss=8):
 
 
 def law(count=1, c_b=3.0):
-    return HelicoidalSectionParams(
+    return HelicoidalBackboneParams.from_compliance(
+        lengths=jnp.full(count, 0.2),
         compliance=jnp.tile(jnp.array([[5.0, 2.0, 2.0, 0.01, 0.02, 0.02]]), (count, 1)),
         compliance_gradient=jnp.tile(
             jnp.array([[0.0, c_b, c_b, 0.0, 0.0, 0.0]]), (count, 1)
@@ -132,6 +133,11 @@ def test_platform_and_distributed_mechanics():
     assert_allclose(mass, model.inertia_matrix(q), rtol=1e-9, atol=1e-11)
     assert_allclose(bias, model.coriolis_matrix(q, qd) @ qd, rtol=1e-9, atol=1e-11)
     assert_allclose(gravity, model.gravitational_force(q), rtol=1e-9, atol=1e-10)
+    if jax.default_backend() == "gpu":
+        for actual, expected in zip(
+            model.dynamics_terms(q, qd, backend="warp"), (mass, bias, gravity)
+        ):
+            assert_allclose(actual, expected, rtol=2e-8, atol=2e-11)
 
     # Lagrange's kinetic-energy identity checks the velocity bias independently.
     def kinetic(coordinates, velocity):
@@ -255,11 +261,13 @@ def test_parameter_updates_and_projection_reuse_compilation():
     assert len(model_traces) == 1
 
     derivative = jax.grad(
-        lambda c: model.with_constitutive_law(
-            law().replace(compliance=law().compliance.at[0, 1:3].set(c))
+        lambda k: model.with_constitutive_law(
+            law().replace(stiffness_tip=law().stiffness_tip.at[0, 1:3].set(k))
         ).K[1, 1]
-    )(2.0)
-    expected = quad(lambda s: -1 / (2 + 3 * (0.2 - s)) ** 2, 0, 0.2)[0]
+    )(0.5)
+    expected = quad(lambda u: 0.2 * u / (0.5**2 * ((1 - u) * 2.6 + u * 2) ** 2), 0, 1)[
+        0
+    ]
     assert_allclose(derivative, expected, rtol=1e-12)
     length_derivative = jax.grad(
         lambda length: (
@@ -268,7 +276,7 @@ def test_parameter_updates_and_projection_reuse_compilation():
             .K[1, 1]
         )
     )(0.2)
-    assert_allclose(length_derivative, 1 / (2 + 3 * 0.2), rtol=1e-12)
+    assert_allclose(length_derivative, model.K[1, 1] / 0.2, rtol=1e-12)
     mass_derivative = jax.grad(
         lambda m: model.update_link_params(
             tip_inertia=jnp.diag(jnp.array([0.0, 0.0, 0.0, m, m, m]))[None]
@@ -287,3 +295,94 @@ def test_validation():
         model.update_link_params(tip_inertia=-jnp.eye(6)[None])
     with pytest.raises(ValueError, match="shape"):
         model.update_link_params(sectional_inertia=jnp.zeros((2, 6, 6)))
+
+
+def test_endpoint_inputs_and_compliance_conversion_agree():
+    lengths = jnp.array([0.12, 0.27])
+    base = jnp.array(
+        [[0.2, 0.3, 0.4, 80.0, 50.0, 60.0], [0.4, 0.2, 0.3, 60.0, 40.0, 70.0]]
+    )
+    tip = base * jnp.array([[1.0, 1.4, 0.7, 1.2, 1.0, 0.8]])
+    tau = jnp.array([0.0, 0.03])
+    direct = HelicoidalBackboneParams(base, tip, tau)
+    converted = HelicoidalBackboneParams.from_compliance(
+        compliance=1 / tip,
+        compliance_gradient=(1 / base - 1 / tip) / lengths[:, None],
+        lengths=lengths,
+        damping_time_constant=tau,
+    )
+    assert_allclose(converted.stiffness_base, base, rtol=1e-14)
+    assert_allclose(converted.stiffness_tip, tip, rtol=1e-14)
+    robot = build([segment(length=float(length)) for length in lengths])
+    updated = robot.with_constitutive_law(direct)
+    expected = np.stack(
+        [
+            np.diag(
+                [
+                    quad(
+                        lambda u, length=length, k0=k0, k1=k1: (
+                            float(length) / ((1 - u) / float(k0) + u / float(k1))
+                        ),
+                        0,
+                        1,
+                    )[0]
+                    for k0, k1 in zip(k_base, k_tip)
+                ]
+            )
+            for length, k_base, k_tip in zip(lengths, base, tip)
+        ]
+    )
+    assert_allclose(updated.params.link.stiffness, expected, rtol=1e-12)
+    assert_allclose(
+        updated.params.link.damping, tau[:, None, None] * expected, atol=1e-14
+    )
+    stretched = updated.update_link_params(length=1.3 * lengths).with_constitutive_law(
+        direct
+    )
+    assert_allclose(stretched.params.link.stiffness, 1.3 * expected, rtol=1e-12)
+
+
+@pytest.mark.parametrize("field", ["stiffness_base", "stiffness_tip"])
+@pytest.mark.parametrize("value", [0.0, -1.0, np.inf, np.nan])
+def test_endpoint_stiffness_domain_validation(field, value):
+    with pytest.raises(ValueError, match=field):
+        law().replace(**{field: jnp.full((1, 6), value)})
+
+
+@pytest.mark.parametrize(
+    "lengths", [jnp.array([0.0]), jnp.array([-0.1]), jnp.array([np.inf])]
+)
+def test_compliance_conversion_rejects_invalid_lengths(lengths):
+    with pytest.raises(ValueError, match="lengths"):
+        HelicoidalBackboneParams.from_compliance(
+            compliance=jnp.ones((1, 6)),
+            compliance_gradient=jnp.zeros((1, 6)),
+            lengths=lengths,
+            damping_time_constant=jnp.zeros(1),
+        )
+
+
+def test_compliance_conversion_is_differentiable_and_reuses_compilation():
+    traces = []
+
+    @eqx.filter_jit
+    def convert(c, gradient, lengths):
+        traces.append(True)
+        return HelicoidalBackboneParams.from_compliance(
+            compliance=c,
+            compliance_gradient=gradient,
+            lengths=lengths,
+            damping_time_constant=jnp.zeros(1),
+        )
+
+    c = jnp.full((1, 6), 2.0)
+    gradient = jnp.full((1, 6), 3.0)
+    lengths = jnp.array([0.2])
+    convert(c, gradient, lengths)
+    result = convert(c * 2, gradient, lengths * 2)
+    assert len(traces) == 1
+    assert_allclose(result.stiffness_base, 1 / 5.2, rtol=1e-14)
+    derivative = jax.grad(
+        lambda length: convert(c, gradient, jnp.array([length])).stiffness_base.sum()
+    )(0.2)
+    assert_allclose(derivative, -18 / 2.6**2, rtol=1e-14)

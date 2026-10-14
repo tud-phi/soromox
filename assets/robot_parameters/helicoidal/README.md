@@ -14,7 +14,10 @@ toolkit's illustrative cylindrical arm.
 
 The analytic `EI(s) = 1 / (cA + cB*(L-s))` law is recovered from the upstream
 `module_compliance.npz`. Its bending, torsional, and axial stiffness agrees with
-the exported sectional values. The fixture records the source compliance
+the exported sectional values. The example converts these coefficients with
+`HelicoidalBackboneParams.from_compliance`, using each link's reference length.
+The resulting endpoint stiffnesses reproduce this law through linear compliance
+interpolation. The fixture records the source compliance
 matrices and shear-fit residuals. All three modules have a negative residual
 after subtracting the fitted bending contribution from transverse compliance.
 The upstream builder substitutes `GA = 1e6 N` in that case. This fixture instead
