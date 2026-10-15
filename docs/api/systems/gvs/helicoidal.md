@@ -52,8 +52,19 @@ Endpoint arrays have shape `(6,)`, with positive rotational stiffnesses
 in N m² and translational stiffnesses in N. Compliance interpolates linearly
 between their reciprocals; equal endpoint values give constant stiffness.
 The law is projected using the configured strain basis and Gauss rule.
-`damping_time_constant` is a scalar in seconds and gives
-`D_link = tau * K_link`. Active strains are selected in `StrainBasisSpec`.
+`damping_time_constant` accepts a scalar or six values in seconds, ordered as
+`[twist, bend_y, bend_z, extension, shear_y, shear_z]` in the backbone material
+frame. Each value scales its sectional stiffness before Gauss projection;
+a scalar gives `D_link = tau * K_link`. For example:
+
+```python
+law = law.replace(damping_time_constant=[0.002, 0.02, 0.02, 0.02, 0.02, 0.02])
+robot = robot.with_constitutive_params({1: law, 3: law, 5: law})
+```
+
+Values must be finite and nonnegative; zero disables damping for that strain.
+Active strains are selected in `StrainBasisSpec`. Numeric updates reuse compiled
+methods when array shapes and dtypes remain fixed.
 
 `HelicoidalBackboneParams.from_compliance(...)` also accepts affine compliance
 coefficients and a segment length; see its API reference below.

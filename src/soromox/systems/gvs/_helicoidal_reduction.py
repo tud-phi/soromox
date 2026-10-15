@@ -346,8 +346,9 @@ def _fit_backbone(compliance, length, damping_time_constant):
             order and reference backbone axes with x longitudinal. It maps tip
             moments/forces [N m, N] to small rotations/translations [rad, m].
         length: Soft segment backbone length [m].
-        damping_time_constant: Backbone Kelvin-Voigt time constant [s], used
-            to scale the fitted stiffness when preparing generalized damping.
+        damping_time_constant: Backbone Kelvin-Voigt time constant [s], scalar
+            or shape ``(6,)`` in native backbone strain order. Passed through
+            to scale the fitted sectional stiffness before damping projection.
 
     Returns:
         Pair ``(law, residual)`` containing ``HelicoidalBackboneParams`` with
@@ -429,6 +430,6 @@ def reduce_helix(params: HelicoidalHelixParams) -> _HelicoidalReduction:
     params.validate_for_update()
     compliance, asymmetry = _tip_compliance(params)
     law, residual = _fit_backbone(
-        compliance, float(params.length), float(params.damping_time_constant)
+        compliance, float(params.length), params.damping_time_constant
     )
     return _HelicoidalReduction(law, jnp.asarray(compliance), residual, asymmetry)
