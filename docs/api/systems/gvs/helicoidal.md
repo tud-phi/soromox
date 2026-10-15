@@ -1,30 +1,30 @@
 # Helicoidal
 
-3D tendon-driven soft robots with helicoidal lattice structures.
+`Helicoidal` models tendon-driven helicoidal lattice robots using GVS strain
+bases, quadrature, and continuous tendon routing. It supports fixed and floating
+bases with shared JAX and Warp dynamics.
 
-## Overview
+## Construction
 
-`Helicoidal` specializes GVS for effective helicoidal lattice mechanics. It uses
-native segment specifications, strain bases, quadrature, and contiguous tendon
-routing. Shared GVS mechanics support fixed and floating bases in JAX and Warp,
-with distributed lattice inertia and attached bodies.
+Use `Helicoidal.from_segments(...)` with `GVSSegment` specifications and one
+entry per link for `mass_per_length` [kg/m] and
+`rotational_inertia_per_length` [kg m, three principal components]. Optional
+`tip_mass` [kg] adds translational tip inertia. For distributed and attached-body
+matrices, see the shared [inertia representation](../continuum-components.md#distributed-and-attached-body-inertia).
 
-## Construction and Constitutive Mechanics
+Choose either backbone endpoint stiffnesses through `constitutive_law=`, or
+strand material and geometry through `helix_params=`. Both prepare the
+canonical generalized stiffness and damping in `robot.params.link`.
 
-Use `Helicoidal.from_segments(...)` with `GVSSegment` specifications,
-`mass_per_length`, and `rotational_inertia_per_length`. Supply one entry per link
-for the line mass [kg/m], three principal rotational inertias [kg m], and optional
-`tip_mass` [kg]. Zero inertia is supported for geometric connector links with
-inactive strain bases. The line mass and rotational inertias specify lattice inertia. Tip masses have translational inertia only.
+### Backbone Parameters
 
-Supply a `HelicoidalBackboneParams` object through `constitutive_law=` or
-`with_constitutive_law(...)`. Its endpoint stiffnesses describe the effective
-lattice response in the local **backbone material frame**, with local x
-longitudinal and y/z transverse. Individual helical strands' material properties
-must first be reduced to this equivalent-rod law. The sectional order is
-`[twist, bend_y, bend_z, extension, shear_y, shear_z]`:
+`HelicoidalBackboneParams` describes the effective lattice response in the local
+**backbone material frame**: x is longitudinal, and the component order is
+`[twist, bend_y, bend_z, extension, shear_y, shear_z]`.
 
 ```python
+from soromox.systems import HelicoidalBackboneParams
+
 law = HelicoidalBackboneParams(
     stiffness_base=K_base,
     stiffness_tip=K_tip,
@@ -33,70 +33,81 @@ law = HelicoidalBackboneParams(
 robot = robot.with_constitutive_law(law)
 ```
 
-Both endpoint arrays have shape `(num_links, 6)`, with rotational stiffnesses
-in N m² and translational stiffnesses in N. All entries must be finite and
-positive; active strain selection belongs to the segment basis. Equal endpoint
-values give constant stiffness. **Compliance is interpolated linearly** over
-normalized reference backbone arc length `u = s/L`, measured from the proximal end:
+Endpoint arrays have shape `(num_links, 6)`, with positive rotational stiffnesses
+in N m² and translational stiffnesses in N. Compliance interpolates linearly
+between their reciprocals; equal endpoint values give constant stiffness.
+The law is projected using the configured strain basis and Gauss rule.
+`damping_time_constant` has shape `(num_links,)` in seconds and gives
+`D_link = tau * K_link`. Active strains are selected in `StrainBasisSpec`.
 
-```text
-C(u) = (1-u) / stiffness_base + u / stiffness_tip
-K_section(u) = diag(1 / C(u))
-K_link = integral B(s).T @ K_section(s/L) @ B(s) ds
-D_link = tau * K_link
-```
+`HelicoidalBackboneParams.from_compliance(...)` also accepts affine compliance
+coefficients and segment lengths; see its API reference below.
 
-The law is evaluated directly at GVS Gauss nodes, using the configured basis and
-optional rotational length scaling. The damping time constant `tau` has shape
-`(num_links,)` and units seconds. It is a frame-independent scalar per link that
-scales the same backbone sectional stiffness before projection.
+### Helix Parameters
 
-`HelicoidalBackboneParams.from_compliance(...)` converts the affine law
-`C(s) = compliance + (L-s)*compliance_gradient` using supplied `lengths`:
+`HelicoidalHelixParams` describes one soft segment with two oppositely wound
+strand families. Material and sectional properties belong to cross-sections
+**normal to each strand's tangent**. Lengths are in metres and angles in radians.
 
 ```python
-law = HelicoidalBackboneParams.from_compliance(
-    compliance=compliance,
-    compliance_gradient=compliance_gradient,
-    lengths=robot.params.link.length,
-    damping_time_constant=tau,
+from math import pi
+from soromox.systems import HelicoidalHelixParams
+
+helix = HelicoidalHelixParams.circular(
+    length=0.2,
+    radius_base=0.025,
+    radius_tip=0.025,
+    num_turns=3.0,                      # Each strand revolves around the backbone 3 times.
+    helices_per_direction=3,           # Three strands in each winding direction.
+    winding_family_phase_offset=pi/6,  # Families' base azimuths differ by 30 degrees.
+    strand_radius=0.002,
+    young_modulus=30e6,
+    shear_modulus=30e6 / (2 * (1 + 0.48)),
+    fusion_stiffness_multiplier=4.0,    # Scale the stiffness of fused strand crossings.
+    damping_time_constant=0.02,
 )
+reduced = helix.reduce()
+# Construct each soft segment's basis using reduced.strain_selector.
+# Apply to a robot with matching segment lengths:
+robot = robot.with_helix_params({1: helix, 3: helix, 5: helix})
 ```
 
-The conversion uses `K_tip = 1/compliance` and
-`K_base = 1/(compliance + lengths[:, None]*compliance_gradient)`. It reproduces
-the input law at those lengths and stores the endpoint stiffnesses.
+The reduction solves six unit-load cases at the soft segment tip relative to its
+fixed base and fits a diagonal backbone law. It includes deformation of the
+strand connections to the tip ring. `reduced` contains the tip compliance,
+backbone law, and admissible strain selector. Inadmissible fitted shear requires
+both shear strains to be deactivated in the segment basis.
 
-Distributed and attached-body matrices use the shared
-[continuum-link inertia representation](../continuum-components.md#distributed-and-attached-body-inertia).
+For noncircular strands, the constructor accepts area, principal area moments,
+torsion constant, and shear correction factors. The parameter reference below
+defines their frames and the connection stiffness multipliers.
+`damping_time_constant` applies to the fitted **backbone** stiffness.
+
+Run the cylindrical example with strand-derived mechanics using:
+
+```bash
+JAX_PLATFORMS=cpu python examples/simulation/gvs/simulate_helicoidal.py \
+    --parameter-domain helix --duration 2 --tension 0.5 --viser
+```
+
+The example uses square-root sectional damping and Tsit5 at 250 µs.
 
 ## Parameter Updates
 
-Canonical generalized stiffness and damping live in `robot.params.link`, as in
-GVS. Changes to other parameters preserve these matrices. Reproject explicitly
-when changing lengths or endpoint stiffnesses. Reapplying the same law after a
-length change preserves its endpoint values and stretches the profile over the
-new length:
+Reapply `with_constitutive_law(law)` after updating lengths or endpoint
+stiffnesses. For helix inputs, update the corresponding geometry or material
+parameters and call `with_helix_params(...)` again. Shared parameter objects are
+reduced once per call; helix lengths must match their selected GVS segments.
 
-```python
-robot = robot.update_link_params(length=1.05 * robot.params.link.length)
-robot = robot.with_constitutive_law(constitutive_law)
-robot = robot.update_link_params(tip_inertia=1.1 * robot.params.link.tip_inertia)
-```
-
-These operations support JAX differentiation. Passing updated models into the
-same compiled function, or updating parameters within a compiled function,
-reuses compilation when topology, array shapes, and dtypes are fixed. All
-links created by `Helicoidal.from_segments` have allocated tip inertia matrices,
-so changing zero to a positive mass is a numeric update. Basis choices, link counts, quadrature counts, and
-tendon spans are static. As with other system parameters, physical value
-validation occurs for eager inputs; transformed code must preserve their domains.
+Helix reduction runs eagerly on the CPU during preparation. Use backbone
+parameters for differentiation through constitutive inputs. Prepared models
+reuse compiled dynamics when topology, array shapes, and dtypes stay fixed.
+Basis choices, quadrature counts, and tendon spans define the static structure.
 
 ## Specialized Viser Rendering
 
-`HelicoidalViserRenderer` displays both winding families, end rings,
-transitions, and tendon routes. Strand geometry follows the GVS material frames
-through bending, twist, shear, and extension.
+`HelicoidalViserRenderer` displays both winding families, end rings, connectors,
+and tendon routes, following the GVS material frames through deformation.
 
 ```python
 from soromox.rendering import HelicoidalModuleVisual, HelicoidalViserRenderer
@@ -109,16 +120,11 @@ renderer = HelicoidalViserRenderer(
 renderer.show(q)
 ```
 
-Each module selects one link. Its circular cross-section radius gives the helix
-centerline radius; `strand_radius`, `turns`, `strands_per_family`, `phase`, and
-`family_phase` describe the strands. Links outside the module selection use
-swept cross-section surfaces. `HelicoidalVisualConfig` controls strand colors
-and mesh resolution. These visual dimensions describe the deformed lattice
-geometry; the effective constitutive parameters determine its mechanics.
-
-The renderer supports batched configurations, `render_sequence`, `render_frame`,
-and `start_live_mode`. Trajectory and live updates reuse mesh handles. Image
-and video capture use a connected Viser browser client.
+Each module selects a link whose cross-section radius sets the helix centreline
+radius. `HelicoidalModuleVisual` specifies the strand geometry;
+`HelicoidalVisualConfig` controls colors and mesh resolution. The renderer
+supports batched configurations, `render_sequence`, `render_frame`, and live
+updates. Image and video capture use a connected Viser browser client.
 
 ## API Reference
 
@@ -131,6 +137,18 @@ and video capture use a connected Viser browser client.
       members_order: source
 
 ::: soromox.systems.gvs.params.HelicoidalBackboneParams
+    options:
+      show_root_heading: true
+      show_source: false
+      heading_level: 3
+
+::: soromox.systems.gvs.params.HelicoidalHelixParams
+    options:
+      show_root_heading: true
+      show_source: false
+      heading_level: 3
+
+::: soromox.systems.gvs.params.HelicoidalReduction
     options:
       show_root_heading: true
       show_source: false

@@ -7,9 +7,45 @@ import jax.numpy as jnp
 import numpy as np
 from numpy.testing import assert_allclose
 
-from examples.simulation.gvs.simulate_helicoidal import FIXTURE, build_robot
+from examples.simulation.gvs.simulate_helicoidal import (
+    FIXTURE,
+    build_helix_params,
+    build_robot,
+)
 
 jax.config.update("jax_enable_x64", True)
+
+
+def test_helix_domain_example_projects_reduced_stiffness_and_damping():
+    helix = build_helix_params()
+    reduced = helix.reduce()
+    robot = build_robot(parameter_domain="helix")
+    assert robot.num_coordinates == 33
+    c_base = 1 / float(reduced.backbone.stiffness_base[0, 1])
+    c_tip = 1 / float(reduced.backbone.stiffness_tip[0, 1])
+    gj = float(reduced.backbone.stiffness_base[0, 0])
+    length, tau = float(helix.length), float(helix.damping_time_constant)
+    for index in (1, 3, 5):
+        assert (
+            robot.structure.segments[index].basis.strain_selector
+            == reduced.strain_selector
+        )
+        stiffness = np.asarray(robot.params.link.stiffness[index])
+        damping = np.asarray(robot.params.link.damping[index])
+        assert_allclose(stiffness[0, 0], length * gj, rtol=1e-12)
+        assert_allclose(
+            stiffness[3, 3],
+            length * np.log(c_tip / c_base) / (c_tip - c_base),
+            rtol=1e-12,
+        )
+        assert_allclose(
+            damping[0, 0],
+            tau * np.sqrt(gj) * 2 * length / (np.sqrt(c_base) + np.sqrt(c_tip)),
+            rtol=1e-12,
+        )
+        assert_allclose(damping[3:, 3:], tau * stiffness[3:, 3:], atol=1e-14)
+    assert np.linalg.eigvalsh(robot.K).min() > 0
+    assert np.linalg.eigvalsh(robot.D_active).min() > 0
 
 
 def test_cylindrical_fixture_geometry_routing_and_constitutive_reduction():
