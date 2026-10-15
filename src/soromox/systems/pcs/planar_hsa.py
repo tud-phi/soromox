@@ -333,7 +333,19 @@ class PlanarHSA(PlanarPCS):
         )
 
     def _refresh_hsa_caches(self) -> None:
-        """Refresh HSA quantities that do not depend on the configuration."""
+        """Refresh geometry, inertia, and constitutive caches from HSA parameters.
+
+        Rod inertias are summed in each backbone material frame. Caps and
+        platforms are represented at segment tips, with the payload contribution
+        added to the final tip. Sectional and tip matrices have shape
+        ``(num_segments, 3, 3)`` in angular-first planar coordinates. Weighted
+        inertia has shape ``(num_segments, num_gauss_points + 1, 9)`` with
+        row-major matrix packing and the tip contribution in the final slot.
+        Stiffness and damping are also projected onto the active strain basis.
+
+        Returns:
+            None. Updates configuration-independent runtime arrays on this model.
+        """
         mapping = self._build_rod_strain_mapping()
         rod_transforms = vmap(
             lambda offsets: vmap(
@@ -1558,7 +1570,23 @@ class PlanarHSA(PlanarPCS):
     def _inertia_sample_geometry(
         self, geometry: tuple[Array, ...], *, full: bool = False
     ) -> tuple[Array, Array]:
-        """Collect backbone quadrature and tip states from one geometry pass."""
+        """Collect backbone quadrature and tip states from one geometry pass.
+
+        Args:
+            geometry: Tuple returned by ``_integration_geometry_full``. Uses its
+                quadrature transforms and full-strain body Jacobians, together
+                with segment-tip transforms and stored tip Jacobian histories.
+            full: Keep all virtual strain columns when true; otherwise project
+                onto the active internal strain basis.
+
+        Returns:
+            Pair ``(transforms, jacobians)`` with shapes ``(S, Q + 1, 3, 3)``
+            and ``(S, Q + 1, 3, n)``. S is ``num_segments``, Q is
+            ``num_gauss_points``, and n is ``num_strains`` when full, otherwise
+            ``num_internal_dofs``. Each segment's final sample is its tip.
+            Transforms map material frames into the kinematic reference frame;
+            Jacobians express angular-first velocities in those material frames.
+        """
         _, points, jacobians, _, _, _, _, tips, tip_jacobians = geometry
         indices = jnp.arange(self.num_segments)
         tip_jacobians = tip_jacobians[indices, indices]
@@ -1574,7 +1602,26 @@ class PlanarHSA(PlanarPCS):
         full: bool = False,
         convective_only_jd: bool = False,
     ) -> tuple[Array, Array, Array]:
-        """Collect backbone Jacobians and their time derivatives with tip states."""
+        """Collect backbone Jacobians and their time derivatives with tip states.
+
+        Args:
+            q: Active internal coordinates, shape ``(num_internal_dofs,)``.
+            qd: Active internal velocities, shape ``(num_internal_dofs,)``.
+            full: Keep all virtual strain columns when true; otherwise project
+                onto the active internal strain basis.
+            convective_only_jd: Use the simplified derivative expression needed
+                for the velocity product Jdot @ qd. Use false when the complete
+                derivative matrix is needed.
+
+        Returns:
+            Tuple ``(transforms, jacobians, derivatives)``. Transforms have shape
+            ``(S, Q + 1, 3, 3)``; both Jacobian arrays have shape
+            ``(S, Q + 1, 3, n)``. S is ``num_segments``, Q is
+            ``num_gauss_points``, and n is ``num_strains`` when full, otherwise
+            ``num_internal_dofs``. Tip states occupy the final sample slot.
+            Transforms map material frames into the kinematic reference frame;
+            Jacobians and derivatives use angular-first material-frame velocities.
+        """
         _, points, jacobians, derivatives, tips, tip_jacobians, tip_derivatives = (
             self._integration_kinematics_full(
                 q, qd, convective_only_jd, return_tips=True
@@ -1605,7 +1652,31 @@ class PlanarHSA(PlanarPCS):
         full: bool = False,
         return_matrix: bool = False,
     ) -> tuple[Array, Array, Array]:
-        """Assemble dynamics from precomputed backbone and attached-body inertia."""
+        """Assemble dynamics from precomputed backbone and attached-body inertia.
+
+        Args:
+            q: Configuration, shape ``(num_coordinates,)``, including the base
+                pose for floating-base models.
+            qd: Generalized velocity, shape ``(num_velocities,)``.
+            convective_only_jd: Use Jacobian derivatives simplified for the
+                velocity-bias product. Set false when requesting a full
+                Coriolis matrix. Floating-base assembly uses the product form.
+            full: Assemble in all virtual strain coordinates for fixed-base
+                models. The input q and qd still use active internal coordinates.
+            return_matrix: Return a Coriolis matrix for a fixed-base model;
+                otherwise return the velocity-dependent force vector.
+
+        Returns:
+            Tuple ``(M, C, G)`` when ``return_matrix`` is true, otherwise
+            ``(M, bias, G)``. Matrices have shape ``(n, n)`` and force vectors
+            have shape ``(n,)``, where n is ``num_strains`` when full, otherwise
+            ``num_velocities``. G is the gravity term on the left-hand side
+            of the equations of motion.
+
+        Raises:
+            ValueError: If full-strain or Coriolis-matrix assembly is requested
+                for a floating-base model.
+        """
         if self.floating_base:
             if full or return_matrix:
                 raise ValueError(
@@ -1629,7 +1700,20 @@ class PlanarHSA(PlanarPCS):
     def _assemble_floating_dynamics_terms_impl(
         self, q: Array, v: Array
     ) -> tuple[Array, Array, Array]:
-        """Assemble augmented HSA dynamics from the shared inertia distribution."""
+        """Assemble augmented HSA dynamics from the shared inertia distribution.
+
+        Args:
+            q: Floating-base configuration, shape ``(num_coordinates,)``.
+                Includes the planar base pose and active internal coordinates.
+            v: Generalized velocity, shape ``(num_velocities,)``, with base body
+                velocity followed by active internal velocities.
+
+        Returns:
+            Tuple ``(M, bias, G)`` with shapes ``(num_velocities, num_velocities)``,
+            ``(num_velocities,)``, and ``(num_velocities,)``. Includes base/internal
+            inertia coupling and velocity-dependent forces. G is the gravity
+            term on the left-hand side of the equations of motion.
+        """
         q = self.normalize_configuration(q)
         _, q_internal = self.split_configuration(q)
         _, v_internal = self.split_velocity(v)
@@ -1697,7 +1781,17 @@ class PlanarHSA(PlanarPCS):
 
     @eqx.filter_jit
     def _gravitational_energy(self, q: Array) -> Array:
-        """Evaluate potential energy using precomputed mass and first moments."""
+        """Evaluate potential energy using precomputed mass and first moments.
+
+        Args:
+            q: Configuration, shape ``(num_coordinates,)``, including the base
+                pose for floating-base models.
+
+        Returns:
+            Scalar gravitational potential energy [J] of rods, caps, platforms,
+            and payload. Fixed-base models reference height to the base origin;
+            floating-base models use the world origin.
+        """
         q_internal = self.split_configuration(q)[1] if self.floating_base else q
         transforms, _ = self._inertia_sample_geometry(
             self._integration_geometry_full(q_internal)
@@ -1716,7 +1810,21 @@ class PlanarHSA(PlanarPCS):
         return -jnp.sum(positions @ self.g[1:])
 
     def _assemble_gravity_force(self, q: Array, *, full: bool = False) -> Array:
-        """Project gravity through backbone quadrature and attached-body inertia."""
+        """Project gravity through backbone quadrature and attached-body inertia.
+
+        Args:
+            q: Configuration, shape ``(num_coordinates,)``, including the base
+                pose for floating-base models.
+            full: Project onto all virtual strain coordinates for a fixed-base
+                model; otherwise use the model's generalized velocities.
+
+        Returns:
+            Gravity term G on the left-hand side of the equations of motion,
+            shape ``(num_strains,)`` when full, otherwise ``(num_velocities,)``.
+
+        Raises:
+            ValueError: If full-strain gravity is requested for a floating base.
+        """
         if self.floating_base and full:
             raise ValueError("Full-strain gravity is only defined for fixed-base HSA.")
         q_internal = self.split_configuration(q)[1] if self.floating_base else q
@@ -1754,13 +1862,33 @@ class PlanarHSA(PlanarPCS):
         )[0]
 
     def _inertia_derivative_matrix(self, q: Array) -> Array:
-        """Differentiate the shared inertia reduction with analytic Jacobian derivatives."""
+        """Differentiate fixed-base inertia using analytic Jacobian derivatives.
+
+        Args:
+            q: Active internal coordinates, shape ``(num_internal_dofs,)``,
+                for a fixed-base model.
+
+        Returns:
+            Inertia derivatives of shape ``(n, n, n)``, with
+            ``result[i, j, k] = dM[i, j] / dq[k]`` and n equal to
+            ``num_internal_dofs``.
+        """
         geometry = self._integration_geometry_full(q)
         _, jacobians = self._inertia_sample_geometry(geometry)
         weighted = spatial_mass_action(self.weighted_inertias, jacobians)
         indices = jnp.arange(self.num_segments)
 
         def directional_derivative(direction: Array) -> Array:
+            """Evaluate the inertia derivative along an internal direction.
+
+            Args:
+                direction: Coordinate-space direction, shape
+                    ``(num_internal_dofs,)``.
+
+            Returns:
+                Directional inertia derivative, shape
+                ``(num_internal_dofs, num_internal_dofs)``.
+            """
             derivatives, tip_derivatives = (
                 self._integration_jacobian_time_derivative_from_geometry(
                     direction, geometry
