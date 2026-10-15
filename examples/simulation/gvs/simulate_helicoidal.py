@@ -115,7 +115,7 @@ def build_robot(
     if parameter_domain not in {"backbone", "helix"}:
         raise ValueError("parameter_domain must be 'backbone' or 'helix'.")
     helix = build_helix_params() if parameter_domain == "helix" else None
-    reduced = helix.reduce() if helix is not None else None
+    backbone = helix.to_backbone() if helix is not None else None
     data = json.loads(FIXTURE.read_text())
     links, source_to_link = _merge_rigid_interfaces(data["links"])
     segments = []
@@ -123,8 +123,8 @@ def build_robot(
         active = link["role"] == "module"
         shear_active = active and link["shear_stiffness"] is not None
         strain_selector = (
-            list(reduced.strain_selector)
-            if active and reduced is not None
+            list(backbone.admissible_strains)
+            if active and backbone is not None
             else [active] * 4 + [shear_active] * 2
         )
         basis_order = MODULE_BASIS_ORDER if link["role"] == "module" else (0,) * 6
@@ -152,27 +152,22 @@ def build_robot(
                 num_gauss_points=num_gauss_points if link["role"] == "module" else 8,
             )
         )
-    if reduced is not None:
-        law = HelicoidalBackboneParams(
-            stiffness_base=jnp.repeat(
-                reduced.backbone.stiffness_base, len(links), axis=0
-            ),
-            stiffness_tip=jnp.repeat(
-                reduced.backbone.stiffness_tip, len(links), axis=0
-            ),
-            damping_time_constant=jnp.full(len(links), data["damping_time_constant"]),
-        )
-    else:
-        law = HelicoidalBackboneParams.from_compliance(
-            lengths=jnp.array([link["length"] for link in links]),
-            compliance=jnp.array(
-                [
+    laws = {}
+    for index, link in enumerate(links):
+        if link["role"] != "module":
+            continue
+        # Convert shared helix inputs once, then use the same law for selecting
+        # admissible basis strains and preparing the example's damping.
+        laws[index] = (
+            backbone
+            if backbone is not None
+            else HelicoidalBackboneParams.from_compliance(
+                length=link["length"],
+                compliance=jnp.array(
                     [
                         1 / link["torsional_stiffness"],
                         *([link["bending_compliance"][0]] * 2),
                         1 / link["axial_stiffness"],
-                        # Inactive shear rows have no basis columns. Their finite
-                        # padding is ignored by the sectional projection.
                         *(
                             [
                                 1 / link["shear_stiffness"]
@@ -182,16 +177,14 @@ def build_robot(
                             * 2
                         ),
                     ]
-                    for link in links
-                ]
-            ),
-            compliance_gradient=jnp.array(
-                [
+                ),
+                compliance_gradient=jnp.array(
                     [0.0, *([link["bending_compliance"][1]] * 2), 0.0, 0.0, 0.0]
-                    for link in links
-                ]
-            ),
-            damping_time_constant=jnp.full(len(links), data["damping_time_constant"]),
+                ),
+                damping_time_constant=data["damping_time_constant"],
+                admissible_strains=(True,) * 4
+                + (link["shear_stiffness"] is not None,) * 2,
+            )
         )
     routing = ThreadlikeRouting.linear(
         intercept=jnp.array([tendon["intercept"] for tendon in data["tendons"]]),
@@ -208,12 +201,7 @@ def build_robot(
             [link["rotational_inertia_per_length"] for link in links]
         ),
         tip_mass=jnp.array([link["tip_mass"] for link in links]),
-        constitutive_law=law if helix is None else None,
-        helix_params={
-            index: helix for index, link in enumerate(links) if link["role"] == "module"
-        }
-        if helix is not None
-        else None,
+        constitutive_params=laws,
         gravity=jnp.array(data["gravity"]),
         base_pose=jnp.array(data["base_pose"]),
         actuators=ThreadlikeActuator.tendons(routing),
@@ -232,11 +220,11 @@ def build_robot(
     )
     return robot.update_link_params(
         tip_inertia=robot.params.link.tip_inertia.at[-1].set(tip_inertia),
-        damping=_square_root_damping(robot, links, law),
+        damping=_square_root_damping(robot, links, laws),
     )
 
 
-def _square_root_damping(robot, links, law):
+def _square_root_damping(robot, links, laws):
     """Project ``D_i(s) = tau * sqrt(K_ref,i(s) * K_i(s))`` in the backbone frame.
 
     The reference is the selected law's bending rigidity for rotational strains and
@@ -252,14 +240,13 @@ def _square_root_damping(robot, links, law):
         link = links[index]
         if link["role"] != "module":
             return jnp.zeros((len(s), 6, 6))
+        law = laws[index]
         u = s[:, None] / link["length"]
-        stiffness = 1 / (
-            (1 - u) / law.stiffness_base[index] + u / law.stiffness_tip[index]
-        )
+        stiffness = 1 / ((1 - u) / law.stiffness_base + u / law.stiffness_tip)
         bending, axial = stiffness[:, 1], stiffness[:, 3]
         reference = jnp.stack((bending, bending, bending, axial, axial, axial), axis=-1)
         return jax.vmap(jnp.diag)(
-            law.damping_time_constant[index] * jnp.sqrt(reference * stiffness)
+            law.damping_time_constant * jnp.sqrt(reference * stiffness)
         )
 
     return project_sectional_matrices(robot.params, robot.structure, sectional)

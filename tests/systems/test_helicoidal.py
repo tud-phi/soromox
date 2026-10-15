@@ -41,14 +41,12 @@ def segment(length=0.2, active=(1, 1, 1, 1, 1, 1), order=(0,) * 6, gauss=8):
     )
 
 
-def law(count=1, c_b=3.0):
+def law(c_b=3.0):
     return HelicoidalBackboneParams.from_compliance(
-        lengths=jnp.full(count, 0.2),
-        compliance=jnp.tile(jnp.array([[5.0, 2.0, 2.0, 0.01, 0.02, 0.02]]), (count, 1)),
-        compliance_gradient=jnp.tile(
-            jnp.array([[0.0, c_b, c_b, 0.0, 0.0, 0.0]]), (count, 1)
-        ),
-        damping_time_constant=jnp.full(count, 0.02),
+        length=0.2,
+        compliance=jnp.array([5.0, 2.0, 2.0, 0.01, 0.02, 0.02]),
+        compliance_gradient=jnp.array([0.0, c_b, c_b, 0.0, 0.0, 0.0]),
+        damping_time_constant=0.02,
     )
 
 
@@ -62,7 +60,7 @@ def build(segments=None, **kwargs):
             jnp.array([[2e-4, 1e-4, 1e-4]]), (count, 1)
         ),
         tip_mass=jnp.full(count, 0.04),
-        constitutive_law=law(count),
+        constitutive_params={i: law() for i in range(count)},
         **kwargs,
     )
 
@@ -70,8 +68,8 @@ def build(segments=None, **kwargs):
 @pytest.mark.parametrize("c_b", [0.0, 3.0, -3.0])
 @pytest.mark.parametrize("scaled", [False, True])
 def test_analytic_projection(c_b, scaled):
-    model = build(scale_rotational_basis_by_length=scaled).with_constitutive_law(
-        law(c_b=c_b)
+    model = build(scale_rotational_basis_by_length=scaled).with_constitutive_params(
+        {0: law(c_b=c_b)}
     )
     bending = 0.2 / 2 if c_b == 0 else np.log1p(c_b * 0.2 / 2) / c_b
     diagonal = np.array([0.2 * 0.2, bending, bending, 100 * 0.2, 50 * 0.2, 50 * 0.2])
@@ -235,13 +233,15 @@ def test_parameter_updates_and_projection_reuse_compilation():
     @eqx.filter_jit
     def evaluate(robot, params, section):
         traces.append(True)
-        updated = robot.with_params(params).with_constitutive_law(section)
+        updated = robot.with_params(params).with_constitutive_params({0: section})
         return updated.dynamics_terms(q, q * 0.1), updated.K
 
     evaluate(model, model.params, law())
     actual, stiffness = evaluate(model, changed, law(c_b=4.0))
     assert len(traces) == 1
-    fresh = Helicoidal(changed, model.structure).with_constitutive_law(law(c_b=4.0))
+    fresh = Helicoidal(changed, model.structure).with_constitutive_params(
+        {0: law(c_b=4.0)}
+    )
     for a, b in zip(actual, fresh.dynamics_terms(q, q * 0.1)):
         assert_allclose(a, b, rtol=1e-10, atol=1e-12)
     assert_allclose(stiffness, fresh.K)
@@ -255,14 +255,16 @@ def test_parameter_updates_and_projection_reuse_compilation():
         return robot.dynamics_terms(q, q * 0.1)
 
     evaluate_model(model)
-    outside_update = model.with_params(changed).with_constitutive_law(law(c_b=4.0))
+    outside_update = model.with_params(changed).with_constitutive_params(
+        {0: law(c_b=4.0)}
+    )
     for a, b in zip(evaluate_model(outside_update), actual):
         assert_allclose(a, b, rtol=1e-10, atol=1e-12)
     assert len(model_traces) == 1
 
     derivative = jax.grad(
-        lambda k: model.with_constitutive_law(
-            law().replace(stiffness_tip=law().stiffness_tip.at[0, 1:3].set(k))
+        lambda k: model.with_constitutive_params(
+            {0: law().replace(stiffness_tip=law().stiffness_tip.at[1:3].set(k))}
         ).K[1, 1]
     )(0.5)
     expected = quad(lambda u: 0.2 * u / (0.5**2 * ((1 - u) * 2.6 + u * 2) ** 2), 0, 1)[
@@ -272,7 +274,7 @@ def test_parameter_updates_and_projection_reuse_compilation():
     length_derivative = jax.grad(
         lambda length: (
             model.update_link_params(length=jnp.array([length]))
-            .with_constitutive_law(law())
+            .with_constitutive_params({0: law()})
             .K[1, 1]
         )
     )(0.2)
@@ -288,9 +290,9 @@ def test_parameter_updates_and_projection_reuse_compilation():
 def test_validation():
     model = build()
     with pytest.raises(ValueError, match="positive throughout"):
-        model.with_constitutive_law(law(c_b=-20.0))
-    with pytest.raises(ValueError, match="one row per link"):
-        model.with_constitutive_law(law(2))
+        model.with_constitutive_params({0: law(c_b=-20.0)})
+    with pytest.raises(ValueError, match="segment index"):
+        model.with_constitutive_params({1: law()})
     with pytest.raises(ValueError, match="positive semidefinite"):
         model.update_link_params(tip_inertia=-jnp.eye(6)[None])
     with pytest.raises(ValueError, match="shape"):
@@ -304,17 +306,18 @@ def test_endpoint_inputs_and_compliance_conversion_agree():
     )
     tip = base * jnp.array([[1.0, 1.4, 0.7, 1.2, 1.0, 0.8]])
     tau = jnp.array([0.0, 0.03])
-    direct = HelicoidalBackboneParams(base, tip, tau)
-    converted = HelicoidalBackboneParams.from_compliance(
-        compliance=1 / tip,
-        compliance_gradient=(1 / base - 1 / tip) / lengths[:, None],
-        lengths=lengths,
-        damping_time_constant=tau,
-    )
-    assert_allclose(converted.stiffness_base, base, rtol=1e-14)
-    assert_allclose(converted.stiffness_tip, tip, rtol=1e-14)
+    direct = {i: HelicoidalBackboneParams(base[i], tip[i], tau[i]) for i in range(2)}
+    for i, length in enumerate(lengths):
+        converted = HelicoidalBackboneParams.from_compliance(
+            compliance=1 / tip[i],
+            compliance_gradient=(1 / base[i] - 1 / tip[i]) / length,
+            length=length,
+            damping_time_constant=tau[i],
+        )
+        assert_allclose(converted.stiffness_base, base[i], rtol=1e-14)
+        assert_allclose(converted.stiffness_tip, tip[i], rtol=1e-14)
     robot = build([segment(length=float(length)) for length in lengths])
-    updated = robot.with_constitutive_law(direct)
+    updated = robot.with_constitutive_params(direct)
     expected = np.stack(
         [
             np.diag(
@@ -336,9 +339,9 @@ def test_endpoint_inputs_and_compliance_conversion_agree():
     assert_allclose(
         updated.params.link.damping, tau[:, None, None] * expected, atol=1e-14
     )
-    stretched = updated.update_link_params(length=1.3 * lengths).with_constitutive_law(
-        direct
-    )
+    stretched = updated.update_link_params(
+        length=1.3 * lengths
+    ).with_constitutive_params(direct)
     assert_allclose(stretched.params.link.stiffness, 1.3 * expected, rtol=1e-12)
 
 
@@ -346,19 +349,17 @@ def test_endpoint_inputs_and_compliance_conversion_agree():
 @pytest.mark.parametrize("value", [0.0, -1.0, np.inf, np.nan])
 def test_endpoint_stiffness_domain_validation(field, value):
     with pytest.raises(ValueError, match=field):
-        law().replace(**{field: jnp.full((1, 6), value)})
+        law().replace(**{field: jnp.full((6,), value)})
 
 
-@pytest.mark.parametrize(
-    "lengths", [jnp.array([0.0]), jnp.array([-0.1]), jnp.array([np.inf])]
-)
-def test_compliance_conversion_rejects_invalid_lengths(lengths):
-    with pytest.raises(ValueError, match="lengths"):
+@pytest.mark.parametrize("length", [0.0, -0.1, np.inf])
+def test_compliance_conversion_rejects_invalid_length(length):
+    with pytest.raises(ValueError, match="length"):
         HelicoidalBackboneParams.from_compliance(
-            compliance=jnp.ones((1, 6)),
-            compliance_gradient=jnp.zeros((1, 6)),
-            lengths=lengths,
-            damping_time_constant=jnp.zeros(1),
+            compliance=jnp.ones((6,)),
+            compliance_gradient=jnp.zeros((6,)),
+            length=length,
+            damping_time_constant=jnp.array(0.0),
         )
 
 
@@ -366,23 +367,23 @@ def test_compliance_conversion_is_differentiable_and_reuses_compilation():
     traces = []
 
     @eqx.filter_jit
-    def convert(c, gradient, lengths):
+    def convert(c, gradient, length):
         traces.append(True)
         return HelicoidalBackboneParams.from_compliance(
             compliance=c,
             compliance_gradient=gradient,
-            lengths=lengths,
-            damping_time_constant=jnp.zeros(1),
+            length=length,
+            damping_time_constant=jnp.array(0.0),
         )
 
-    c = jnp.full((1, 6), 2.0)
-    gradient = jnp.full((1, 6), 3.0)
-    lengths = jnp.array([0.2])
-    convert(c, gradient, lengths)
-    result = convert(c * 2, gradient, lengths * 2)
+    c = jnp.full((6,), 2.0)
+    gradient = jnp.full((6,), 3.0)
+    length = jnp.array(0.2)
+    convert(c, gradient, length)
+    result = convert(c * 2, gradient, length * 2)
     assert len(traces) == 1
     assert_allclose(result.stiffness_base, 1 / 5.2, rtol=1e-14)
     derivative = jax.grad(
-        lambda length: convert(c, gradient, jnp.array([length])).stiffness_base.sum()
+        lambda length: convert(c, gradient, length).stiffness_base.sum()
     )(0.2)
     assert_allclose(derivative, -18 / 2.6**2, rtol=1e-14)

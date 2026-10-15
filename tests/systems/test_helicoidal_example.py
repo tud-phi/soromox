@@ -18,17 +18,17 @@ jax.config.update("jax_enable_x64", True)
 
 def test_helix_domain_example_projects_reduced_stiffness_and_damping():
     helix = build_helix_params()
-    reduced = helix.reduce()
+    reduced = helix.to_backbone()
     robot = build_robot(parameter_domain="helix")
     assert robot.num_coordinates == 33
-    c_base = 1 / float(reduced.backbone.stiffness_base[0, 1])
-    c_tip = 1 / float(reduced.backbone.stiffness_tip[0, 1])
-    gj = float(reduced.backbone.stiffness_base[0, 0])
+    c_base = 1 / float(reduced.stiffness_base[1])
+    c_tip = 1 / float(reduced.stiffness_tip[1])
+    gj = float(reduced.stiffness_base[0])
     length, tau = float(helix.length), float(helix.damping_time_constant)
     for index in (1, 3, 5):
         assert (
             robot.structure.segments[index].basis.strain_selector
-            == reduced.strain_selector
+            == reduced.admissible_strains
         )
         stiffness = np.asarray(robot.params.link.stiffness[index])
         damping = np.asarray(robot.params.link.damping[index])

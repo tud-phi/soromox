@@ -15,7 +15,7 @@ from soromox.systems import (
     LinkSpec,
     StrainBasisSpec,
 )
-from soromox.systems.gvs._helicoidal_reduction import _fit_backbone
+from soromox.systems.gvs._helicoidal_reduction import _fit_backbone, reduce_helix
 
 jax.config.update("jax_enable_x64", True)
 
@@ -36,7 +36,7 @@ def helix():
 
 @pytest.fixture(scope="module")
 def reduced(helix):
-    return helix.reduce()
+    return reduce_helix(helix)
 
 
 def test_reference_compliance_at_soft_ends(reduced):
@@ -58,29 +58,31 @@ def test_reference_compliance_at_soft_ends(reduced):
     expected[2, 4] = expected[4, 2] = 3.080745062313
     assert_allclose(reduced.tip_compliance, expected, rtol=4e-7, atol=2e-8)
     assert reduced.relative_asymmetry < 1e-7
-    assert reduced.strain_selector == (True, True, True, True, False, False)
+    assert reduced.backbone.admissible_strains == (True, True, True, True, False, False)
     assert reduced.shear_compliance_residual < 0
 
 
 def test_material_scaling_and_rotation(helix, reduced):
-    changed = helix.replace(
-        young_modulus=2 * helix.young_modulus,
-        shear_modulus=2 * helix.shear_modulus,
-        phase=0.41,
-    ).reduce()
+    changed = reduce_helix(
+        helix.replace(
+            young_modulus=2 * helix.young_modulus,
+            shear_modulus=2 * helix.shear_modulus,
+            phase=0.41,
+        )
+    )
     # Threefold winding symmetry makes the diagonal fit azimuth invariant.
     assert_allclose(
         changed.tip_compliance, reduced.tip_compliance / 2, rtol=2e-7, atol=2e-8
     )
-    active = np.array(reduced.strain_selector)
+    active = np.array(reduced.backbone.admissible_strains)
     assert_allclose(
-        changed.backbone.stiffness_base[:, active],
-        2 * reduced.backbone.stiffness_base[:, active],
+        changed.backbone.stiffness_base[active],
+        2 * reduced.backbone.stiffness_base[active],
         rtol=2e-7,
     )
     assert_allclose(
-        changed.backbone.stiffness_tip[:, active],
-        2 * reduced.backbone.stiffness_tip[:, active],
+        changed.backbone.stiffness_tip[active],
+        2 * reduced.backbone.stiffness_tip[active],
         rtol=2e-7,
     )
 
@@ -99,10 +101,10 @@ def test_fit_recovers_uniform_timoshenko_beam():
     )
     tip[1, 5] = tip[5, 1] = -(length**2) / (2 * ei)
     tip[2, 4] = tip[4, 2] = length**2 / (2 * ei)
-    law, residual, selector = _fit_backbone(tip, length, 0.02)
-    assert selector == (True,) * 6
+    law, residual = _fit_backbone(tip, length, 0.02)
+    assert law.admissible_strains == (True,) * 6
     assert_allclose(residual, length / ga)
-    assert_allclose(law.stiffness_base, [[gj, ei, ei, ea, ga, ga]], rtol=1e-12)
+    assert_allclose(law.stiffness_base, [gj, ei, ei, ea, ga, ga], rtol=1e-12)
     assert_allclose(law.stiffness_tip, law.stiffness_base, rtol=1e-12)
     # Tip moments without force-induced bending rotation cannot support the fit.
     tip[1, 5] = tip[2, 4] = 0
@@ -140,7 +142,7 @@ def make_model(helix, active=(True, True, True, True, False, False), **kwargs):
         segments,
         mass_per_length=jnp.full(3, 0.2),
         rotational_inertia_per_length=jnp.full((3, 3), 1e-4),
-        helix_params={2: helix},
+        constitutive_params={2: helix},
         **kwargs,
     )
 
@@ -156,7 +158,7 @@ def test_install_and_update_without_recompilation(helix, reduced):
         return robot.dynamics_terms(q, 0.1 * q), robot.K, robot.D_active
 
     before = dynamics(model)
-    changed = model.with_helix_params(
+    changed = model.with_constitutive_params(
         {
             2: helix.replace(
                 young_modulus=2 * helix.young_modulus,
@@ -182,40 +184,42 @@ def test_install_and_update_without_recompilation(helix, reduced):
 
 
 def test_incompatible_structure_is_rejected(helix, reduced):
-    with pytest.raises(ValueError, match="deactivate both shear"):
+    with pytest.raises(ValueError, match="inadmissible"):
         make_model(helix, active=(True,) * 6)
-    with pytest.raises(ValueError, match="either constitutive_law or helix_params"):
-        make_model(helix, constitutive_law=reduced.backbone)
+    with pytest.raises(ValueError, match="inadmissible"):
+        make_model(reduced.backbone, active=(True,) * 6)
     model = make_model(helix)
     with pytest.raises(ValueError, match="length must match"):
-        model.with_helix_params({2: helix.replace(length=0.3)})
+        model.with_constitutive_params({2: helix.replace(length=0.3)})
     with pytest.raises(ValueError, match="segment index"):
-        model.with_helix_params({3: helix})
+        model.with_constitutive_params({3: helix})
     with pytest.raises(TypeError, match="HelicoidalHelixParams"):
-        model.with_helix_params({2: reduced.backbone})
+        model.with_constitutive_params({2: object()})
 
 
 def test_shared_inputs_reduce_once_and_match_sequential_updates(helix, monkeypatch):
     model = make_model(helix)
     model = model.update_link_params(length=jnp.array([0.2, 0.0183, 0.2]))
     # Two different strain bases share one lattice description.
-    expected = model.with_helix_params({0: helix}).with_helix_params({2: helix})
+    expected = model.with_constitutive_params({0: helix}).with_constitutive_params(
+        {2: helix}
+    )
     calls = []
-    original = HelicoidalHelixParams.reduce
+    original = HelicoidalHelixParams.to_backbone
 
     def counted_reduce(params):
         calls.append(params)
         return original(params)
 
-    monkeypatch.setattr(HelicoidalHelixParams, "reduce", counted_reduce)
-    actual = model.with_helix_params({0: helix, 2: helix})
+    monkeypatch.setattr(HelicoidalHelixParams, "to_backbone", counted_reduce)
+    actual = model.with_constitutive_params({0: helix, 2: helix})
     assert len(calls) == 1
     assert_allclose(actual.K, expected.K)
     assert_allclose(actual.D_active, expected.D_active)
-    assert actual.with_helix_params({}) is actual
+    assert actual.with_constitutive_params({}) is actual
 
     changed = helix.replace(young_modulus=1.5 * helix.young_modulus)
-    actual.with_helix_params({0: helix, 2: changed})
+    actual.with_constitutive_params({0: helix, 2: changed})
     assert len(calls) == 3  # Each distinct input is prepared in the new call.
 
 
@@ -236,15 +240,49 @@ def test_invalid_params(helix, field, value):
 
 def test_preparation_requires_eager_inputs(helix):
     with pytest.raises(ValueError, match="outside JAX transformations"):
-        eqx.filter_jit(lambda p: p.reduce().backbone.stiffness_base)(helix)
+        eqx.filter_jit(lambda p: p.to_backbone().stiffness_base)(helix)
+    model = make_model(helix)
+    with pytest.raises(ValueError, match="outside JAX transformations"):
+        eqx.filter_jit(lambda p: model.with_constitutive_params({2: p}))(helix)
 
 
 def test_preparation_without_global_x64(helix, reduced):
     with jax.enable_x64(False):
         params = jax.tree.map(lambda a: a.astype(jnp.float32), helix)
-        actual = params.reduce()
+        actual = reduce_helix(params)
         assert not jax.config.x64_enabled
         assert actual.tip_compliance.dtype == jnp.float32
         assert_allclose(
             actual.tip_compliance, reduced.tip_compliance, rtol=3e-6, atol=2e-7
         )
+
+
+def test_mixed_inputs_and_explicit_conversion_agree(helix, reduced):
+    model = make_model(helix).update_link_params(length=jnp.array([0.2, 0.0183, 0.2]))
+    backbone = helix.to_backbone()
+    converted = model.with_constitutive_params({0: backbone, 2: backbone})
+    mixed = model.with_constitutive_params({0: backbone, 2: helix})
+    assert_allclose(mixed.K, converted.K, rtol=1e-12)
+    assert_allclose(mixed.D_active, converted.D_active, rtol=1e-12)
+    assert_allclose(backbone.stiffness_base, reduced.backbone.stiffness_base)
+    assert_allclose(make_model(backbone).K, make_model(helix).K, rtol=1e-12)
+    updated = backbone.replace(stiffness_tip=1.2 * backbone.stiffness_tip)
+    assert updated.admissible_strains == backbone.admissible_strains
+    with pytest.raises(ValueError, match="inadmissible"):
+        make_model(updated, active=(True,) * 6)
+    with pytest.raises(ValueError, match="fixed"):
+        backbone.replace(admissible_strains=(True,) * 6)
+
+
+def test_public_reduction_diagnostics(helix, reduced):
+    diagnostics = helix.reduction_diagnostics()
+    assert set(diagnostics) == {
+        "tip_compliance",
+        "shear_compliance_residual",
+        "relative_asymmetry",
+    }
+    assert_allclose(diagnostics["tip_compliance"], reduced.tip_compliance)
+    assert_allclose(
+        diagnostics["shear_compliance_residual"], reduced.shear_compliance_residual
+    )
+    assert_allclose(diagnostics["relative_asymmetry"], reduced.relative_asymmetry)
