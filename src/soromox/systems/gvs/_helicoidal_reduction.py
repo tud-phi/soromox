@@ -32,7 +32,19 @@ from soromox.utils.lie_algebra import se3
 
 @dataclass(frozen=True)
 class _HelicoidalReduction:
-    """Internal fitted law and diagnostics from the six-load reduction."""
+    """Internal fitted law and diagnostics from the six-load reduction.
+
+    Attributes:
+        backbone: Effective endpoint stiffnesses, damping time constant, and
+            admissible strain components for one soft segment.
+        tip_compliance: Symmetric positive-definite matrix of shape ``(6, 6)``
+            mapping tip moments/forces to small tip rotations/translations,
+            in angular-first order and the reference backbone axes.
+        shear_compliance_residual: Mean transverse tip compliance remaining
+            after subtracting the fitted bending contribution [m/N].
+        relative_asymmetry: Frobenius norm of the raw tip compliance minus its
+            transpose, divided by the raw compliance norm, before symmetrization.
+    """
 
     backbone: HelicoidalBackboneParams
     tip_compliance: jax.Array
@@ -41,7 +53,22 @@ class _HelicoidalReduction:
 
 
 def _frame(s, phase, rate, length, radius_base, radius_tip):
-    """Reference strand frame: tangent x, projected radial y, normal z."""
+    """Construct a reference strand frame along a linearly tapered helix.
+
+    Args:
+        s: Reference backbone arc length from the soft segment base [m].
+        phase: Strand azimuth at the segment base [rad].
+        rate: Signed azimuth change per unit backbone length [rad/m].
+        length: Soft segment backbone length [m].
+        radius_base: Strand centerline radius at the segment base [m].
+        radius_tip: Strand centerline radius at the segment tip [m].
+
+    Returns:
+        NumPy homogeneous transform of shape ``(4, 4)`` from strand coordinates
+        to the reference backbone base frame. Local x follows the strand
+        tangent, y follows the outward radial direction projected normal to x,
+        and z completes a right-handed frame. Translation is in metres.
+    """
     slope = (radius_tip - radius_base) / length
     radius = radius_base + slope * s
     theta = phase + rate * s
@@ -58,6 +85,19 @@ def _frame(s, phase, rate, length, radius_base, radius_tip):
 
 
 def _arc_table(length, radius_base, radius_tip, rate, count):
+    """Tabulate strand arc length using trapezoidal integration.
+
+    Args:
+        length: Soft segment backbone length [m].
+        radius_base: Strand centerline radius at the segment base [m].
+        radius_tip: Strand centerline radius at the segment tip [m].
+        rate: Signed azimuth change per unit backbone length [rad/m].
+        count: Number of uniformly spaced backbone samples, including both ends.
+
+    Returns:
+        Pair of NumPy arrays of shape ``(count,)``: backbone positions and
+        cumulative strand arc lengths, both in metres and starting at zero.
+    """
     s = np.linspace(0.0, length, count)
     slope = (radius_tip - radius_base) / length
     radius = radius_base + slope * s
@@ -67,7 +107,22 @@ def _arc_table(length, radius_base, radius_tip, rate, count):
 
 
 def _spans(params):
-    """Generate crossings and reference frames using the source arc-length rules."""
+    """Partition each strand at crossings and the soft segment ends.
+
+    Args:
+        params: Validated ``HelicoidalHelixParams`` for one soft segment.
+            Opposite winding families share a linearly tapered radius profile.
+
+    Returns:
+        Tuple ``(frames, lengths, connections, terminal, tip_index)``. For N
+        spans, ``frames`` has shape ``(N, 3, 4, 4)`` and contains strand-to-base
+        transforms at each span's start, strand-arc midpoint, and end.
+        ``lengths`` has shape ``(N,)`` and stores strand arc lengths [m].
+        ``connections`` is a list of start/end node-index pairs; -1 denotes
+        the fixed base, crossing nodes start at zero, and ``tip_index`` denotes
+        the shared moving tip. ``terminal`` is a boolean array of shape
+        ``(N,)`` identifying spans attached to that tip.
+    """
     length, r0, r1 = map(float, (params.length, params.radius_base, params.radius_tip))
     n = params.helices_per_direction
     phase, offset, turns = map(
@@ -125,9 +180,37 @@ def _spans(params):
 
 @jax.jit
 def _condensed_spans(frames, lengths, section, fusions):
-    """Exact strain elimination in the two-element reference tangent of each span."""
+    """Eliminate the two constant-strain elements within each reference span.
+
+    Args:
+        frames: Strand-to-base transforms at span starts, arc midpoints, and
+            ends, shape ``(N, 3, 4, 4)``.
+        lengths: Strand arc length of each span [m], shape ``(N,)``.
+        section: Diagonal strand sectional stiffness, shape ``(6,)``, ordered
+            as twist, two bends, extension, and two shears. Rotational entries
+            have units N m²; translational entries have units N.
+        fusions: Diagonal connection stiffness at each span's distal end,
+            shape ``(N, 6)``, expressed in its strand frame. Rotational entries
+            have units N m/rad; translational entries have units N/m.
+
+    Returns:
+        Condensed stiffness blocks of shape ``(N, 6, 6)`` acting on differences
+        between endpoint spatial displacement coordinates expressed about the
+        reference backbone base origin, in angular-first order. Each block
+        includes strand deformation and distal connection compliance.
+    """
 
     def one(frame, length, fusion):
+        """Condense one span and express its stiffness about the base origin.
+
+        Args:
+            frame: Three strand-to-base transforms, shape ``(3, 4, 4)``.
+            length: Strand arc length of the span [m].
+            fusion: Six distal connection stiffnesses in the end strand frame.
+
+        Returns:
+            Angular-first stiffness block of shape ``(6, 6)`` for the span.
+        """
         first = jnp.linalg.inv(frame[0]) @ frame[1]
         second = jnp.linalg.inv(frame[1]) @ frame[2]
         # Body Jacobians of exp(xi*h) are h*J_right(xi*h).
@@ -145,6 +228,29 @@ def _condensed_spans(frames, lengths, section, fusions):
 
 
 def _tip_compliance(params):
+    """Solve six unit-load cases for the unloaded lattice's soft-segment tip.
+
+    Strand bases are fixed. Fused crossings and strand attachments to the tip
+    ring have finite connection stiffness. The sparse reference tangent is
+    assembled and solved in float64 on the CPU.
+
+    Args:
+        params: Validated ``HelicoidalHelixParams`` specifying strand geometry,
+            elastic section properties, and connection stiffness multipliers.
+
+    Returns:
+        Pair ``(compliance, asymmetry)``. ``compliance`` is a symmetric NumPy
+        array of shape ``(6, 6)`` mapping moments [N m] and forces [N] applied
+        at the soft tip to small rotations [rad] and translations [m] there.
+        Both use angular-first order and the reference backbone axes.
+        ``asymmetry`` is the relative Frobenius norm of the antisymmetric part
+        computed as ``norm(C - C.T) / norm(C)`` before symmetrization.
+
+    Raises:
+        ValueError: If the tangent is singular, the displacement is nonfinite,
+            the relative solve residual exceeds 1e-6, or the symmetrized tip
+            compliance is not positive definite.
+    """
     frames, lengths, connections, terminal, tip = _spans(params)
     E, G, area = map(
         float, (params.young_modulus, params.shear_modulus, params.strand_area)
@@ -227,7 +333,32 @@ def _tip_compliance(params):
 
 
 def _fit_backbone(compliance, length, damping_time_constant):
-    """Fit the reference diagonal law in native x-longitudinal coordinates."""
+    """Fit the reference diagonal backbone law to soft-segment tip compliance.
+
+    The fit averages the two bending directions and uses their rotation/force
+    coupling to determine affine sectional bending compliance. Torsion,
+    extension, and shear sectional compliances are constant. The transverse
+    compliance left after subtracting bending determines shear admissibility;
+    a residual at or below 1e-9 m/N deactivates both shear components.
+
+    Args:
+        compliance: Tip compliance matrix of shape ``(6, 6)``, in angular-first
+            order and reference backbone axes with x longitudinal. It maps tip
+            moments/forces [N m, N] to small rotations/translations [rad, m].
+        length: Soft segment backbone length [m].
+        damping_time_constant: Backbone Kelvin-Voigt time constant [s], used
+            to scale the fitted stiffness when preparing generalized damping.
+
+    Returns:
+        Pair ``(law, residual)`` containing ``HelicoidalBackboneParams`` with
+        endpoint stiffnesses and admissible strains, and the residual transverse
+        tip compliance [m/N]. Inactive shear entries contain positive padding
+        values; admissibility flags enforce their exclusion from the strain basis.
+
+    Raises:
+        ValueError: If fitted bending compliance is nonpositive at either end
+            or the resulting backbone parameters fail validation.
+    """
     bending = (compliance[1, 1] + compliance[2, 2]) / 2
     cross = (abs(compliance[1, 5]) + abs(compliance[2, 4])) / 2
     transverse = (compliance[4, 4] + compliance[5, 5]) / 2
@@ -269,6 +400,28 @@ def _fit_backbone(compliance, length, damping_time_constant):
 
 
 def reduce_helix(params: HelicoidalHelixParams) -> _HelicoidalReduction:
+    """Prepare a diagonal backbone law and diagnostics from strand parameters.
+
+    This eager CPU preparation follows the reference toolkit's six-unit-load
+    fit about the unloaded configuration. Recompute the reduction after changing
+    strand geometry, elastic properties, or connection stiffness.
+
+    Args:
+        params: Helix-domain inputs for one soft segment. Geometry and sectional
+            properties describe the individual strands; the damping time
+            constant applies to the resulting backbone stiffness.
+
+    Returns:
+        Fitted backbone parameters, full soft-tip compliance, residual shear
+        compliance, and relative compliance asymmetry in a
+        ``_HelicoidalReduction``. Returned JAX arrays use the caller's dtype policy.
+
+    Raises:
+        ValueError: If inputs contain JAX tracers, parameter validation fails,
+            the lattice solve fails its residual or positivity checks, or the
+            fitted backbone law is inadmissible. A nonpositive shear residual
+            is represented through inactive shear components in the fitted law.
+    """
     if _contains_tracer(params):
         raise ValueError(
             "Helix reduction is eager model preparation; call it outside JAX transformations."
