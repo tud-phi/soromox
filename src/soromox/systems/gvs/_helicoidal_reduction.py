@@ -2,7 +2,7 @@
 
 Methodology adapted from CharlesQueen/helicoid-toolkit (Apache-2.0), revision
 76c659d7900fb1a5ed01830a4fc1c6c6d473aa59: lattice/assembly2.py, spec/identify.py,
-and rod/equiv_rod.py. See assets/robot_parameters/helicoidal/LICENSE.
+and rod/equiv_rod.py. See the upstream repository for license terms.
 
 This implementation changes frames to SoRoMoX's x-longitudinal convention,
 measures compliance at the soft segment ends, and eliminates each span's strain

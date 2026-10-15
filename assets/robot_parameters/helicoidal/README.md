@@ -3,9 +3,9 @@
 `demo_cyl.json` contains native SoRoMoX parameters derived from the illustrative
 `demo_cyl` dataset in [CharlesQueen/helicoid-toolkit](https://github.com/CharlesQueen/helicoid-toolkit)
 at commit `76c659d7900fb1a5ed01830a4fc1c6c6d473aa59`. The upstream data and the
-conversion equations from `rod/equiv_rod.py` are distributed under Apache-2.0;
-the accompanying `LICENSE` retains that license. This converted fixture changes
-the coordinate convention, discretization, and routing as described below.
+conversion equations from `rod/equiv_rod.py` are distributed under Apache-2.0.
+This converted fixture changes the coordinate convention, discretization, and
+routing as described below.
 
 The modeling reference is Qin et al., *Cosserat Modeling of Trimmed Helicoid
 Soft Arms with a Separated-Section Constitutive Law*,
