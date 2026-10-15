@@ -79,6 +79,89 @@ def test_analytic_projection(c_b, scaled):
     assert_allclose(model.D_active, 0.02 * model.K, rtol=1e-12, atol=1e-13)
 
 
+@pytest.mark.parametrize("scaled", [False, True])
+def test_per_strain_damping_projection(scaled):
+    orders = (2, 1, 0, 1, 0, 2)
+    model = build(
+        [
+            segment(order=orders),
+            segment(active=(0, 1, 0, 1, 0, 0)),
+            segment(length=0.0183, active=(0,) * 6),
+        ],
+        scale_rotational_basis_by_length=scaled,
+    )
+    tau = jnp.array([0.002, 0.02, 0.03, 0.01, 0.0, 0.04])
+    updated = model.with_constitutive_params(
+        {0: law().replace(damping_time_constant=tau), 1: law()}
+    )
+    expected = np.zeros_like(updated.params.link.damping[0])
+    base, tip = map(np.asarray, (law().stiffness_base, law().stiffness_tip))
+    offset = 0
+    for strain, order in enumerate(orders):
+        for i in range(order + 1):
+            for j in range(order + 1):
+                expected[offset + i, offset + j] = quad(
+                    lambda u, strain=strain, i=i, j=j: (
+                        0.2
+                        * float(tau[strain])
+                        * np.polynomial.legendre.legval(2 * u - 1, [0] * i + [1])
+                        * np.polynomial.legendre.legval(2 * u - 1, [0] * j + [1])
+                        / ((1 - u) / base[strain] + u / tip[strain])
+                        / (0.2**2 if scaled and strain < 3 else 1)
+                    ),
+                    0,
+                    1,
+                )[0]
+        offset += order + 1
+    assert_allclose(updated.params.link.damping[0], expected, atol=1e-13, rtol=1e-12)
+    assert_allclose(updated.params.link.stiffness, model.params.link.stiffness)
+    assert_allclose(updated.params.link.damping[1:], model.params.link.damping[1:])
+    assert np.linalg.eigvalsh(updated.D_active).min() >= -1e-13
+    uniform = model.with_constitutive_params(
+        {0: law().replace(damping_time_constant=jnp.full(6, 0.02))}
+    )
+    assert_allclose(uniform.D_active, model.D_active, atol=1e-13, rtol=1e-12)
+
+
+def test_per_strain_damping_gradients_and_compilation_reuse():
+    model = build()
+    traces = []
+
+    @eqx.filter_jit
+    def project(tau):
+        traces.append(True)
+        return model.with_constitutive_params(
+            {0: law().replace(damping_time_constant=tau)}
+        ).D_active
+
+    tau = jnp.array([0.002, 0.02, 0.03, 0.01, 0.0, 0.04])
+    first = project(tau)
+    second = project(2 * tau)
+    assert len(traces) == 1
+    assert_allclose(second, 2 * first)
+    derivative = jax.jacfwd(project)(tau)
+    expected = np.zeros((6, 6, 6))
+    for i in range(6):
+        expected[i, i, i] = model.K[i, i]
+    assert_allclose(derivative, expected, atol=1e-13)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        [0.02],
+        [[0.02] * 6],
+        [0.02] * 5,
+        [0.02] * 5 + [-1],
+        [0.02] * 5 + [np.inf],
+        [np.nan] * 6,
+    ],
+)
+def test_per_strain_damping_validation(value):
+    with pytest.raises(ValueError, match="damping_time_constant"):
+        law().replace(damping_time_constant=value)
+
+
 def test_higher_order_projection_and_inactive_padding():
     model = build(
         [

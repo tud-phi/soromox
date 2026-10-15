@@ -169,8 +169,10 @@ class Helicoidal(GVS):
 
         Backbone compliance is evaluated at each segment's Gauss nodes and
         projected as ``integral B.T @ diag(1/C(s)) @ B ds`` (paper Eq. 25).
-        Damping is ``tau * K``. Active basis strains must be allowed by the
-        backbone parameters' ``admissible_strains``.
+        Each damping time constant scales its corresponding backbone sectional
+        stiffness before the same projection; a scalar applies to all strains.
+        Active basis strains must be allowed by the backbone parameters'
+        ``admissible_strains``.
 
         Backbone inputs support JAX transformations and differentiation. Prepare
         helix inputs eagerly on the CPU; repeat conversion after geometry or
@@ -240,26 +242,25 @@ class Helicoidal(GVS):
                 )
             laws[index] = law
 
-        def sectional_matrix(index: int, s: Array) -> Array:
+        def sectional_matrix(index: int, s: Array, *, damping: bool = False) -> Array:
             if index not in laws:
                 return jnp.zeros((len(s), 6, 6), dtype=self.params.link.stiffness.dtype)
             law = laws[index]
             u = s[:, None] / self.segment_lengths[index]
             compliance = (1 - u) / law.stiffness_base + u / law.stiffness_tip
-            return jax.vmap(jnp.diag)(1 / compliance)
+            diagonal = 1 / compliance
+            if damping:
+                diagonal = law.damping_time_constant * diagonal
+            return jax.vmap(jnp.diag)(diagonal)
 
         stiffness = project_sectional_matrices(
             self.params, self.structure, sectional_matrix
         )
-        damping_times = jnp.stack(
-            [
-                laws[i].damping_time_constant
-                if i in laws
-                else jnp.zeros((), dtype=stiffness.dtype)
-                for i in range(self.num_segments)
-            ]
+        damping = project_sectional_matrices(
+            self.params,
+            self.structure,
+            lambda index, s: sectional_matrix(index, s, damping=True),
         )
-        damping = damping_times[:, None, None] * stiffness
         mask = jnp.array([i in laws for i in range(self.num_segments)])[:, None, None]
         helix_inputs = {
             i: value

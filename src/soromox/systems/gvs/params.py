@@ -211,9 +211,11 @@ class HelicoidalBackboneParams(BaseSystemParams):
             translational entries have units N.
         stiffness_tip: Diagonal sectional stiffness at the segment's distal end,
             with the same shape, component order, frame, and units.
-        damping_time_constant: Scalar Kelvin-Voigt time constant [s].
-            It is frame independent and scales backbone stiffness: ``D_section(u) = tau * K_section(u)`` and
-            ``D_link = tau * K_link`` after projection. Zero disables damping.
+        damping_time_constant: Kelvin-Voigt time constant [s], either a scalar
+            shared by all strains or shape ``(6,)`` in backbone material-frame
+            order ``[twist, bend_y, bend_z, extension, shear_y, shear_z]``.
+            Each value scales its corresponding sectional stiffness before
+            Gauss projection. Zero disables damping for that component.
         admissible_strains: Six static flags in native strain order. Active basis
             strains must be admissible. Helix conversion marks inadmissible shear
             entries false; their endpoint values are finite padding. Numeric
@@ -261,7 +263,8 @@ class HelicoidalBackboneParams(BaseSystemParams):
                 from the distal end, shape ``(6,)``. Units are compliance
                 units per metre, and ``dC/ds = -compliance_gradient``.
             length: Positive scalar reference backbone length [m].
-            damping_time_constant: Scalar effective backbone time constant [s].
+            damping_time_constant: Effective backbone time constant [s], either
+                a scalar or shape ``(6,)`` in native backbone strain order.
             admissible_strains: Static flags identifying admissible basis strains.
 
         Returns:
@@ -314,8 +317,8 @@ class HelicoidalBackboneParams(BaseSystemParams):
             raise ValueError(
                 "stiffness_tip must have the same shape as stiffness_base."
             )
-        if self.damping_time_constant.shape != ():
-            raise ValueError("damping_time_constant must be scalar.")
+        if self.damping_time_constant.shape not in ((), (6,)):
+            raise ValueError("damping_time_constant must be scalar or have shape (6,).")
 
         if (
             not isinstance(self.admissible_strains, tuple)
@@ -385,8 +388,11 @@ class HelicoidalHelixParams(BaseSystemParams):
         tip_attachment_stiffness_multiplier: Stiffness of each strand's
             attachment to the tip ring relative to a fused crossing. The
             reference uses 10; strand bases are rigidly attached.
-        damping_time_constant: Effective backbone Kelvin-Voigt time constant [s].
-            Scales the fitted backbone sectional stiffness.
+        damping_time_constant: Effective backbone Kelvin-Voigt time constant [s],
+            either a scalar or shape ``(6,)`` ordered as
+            ``[twist, bend_y, bend_z, extension, shear_y, shear_z]`` in the
+            backbone material frame. Passed through the reduction to scale each
+            fitted backbone sectional stiffness before Gauss projection.
 
     References:
         CharlesQueen (2026). helicoid-toolkit, spec/identify.py,
@@ -453,6 +459,12 @@ class HelicoidalHelixParams(BaseSystemParams):
             raise ValueError("helices_per_direction must be a positive integer.")
         for name in HelicoidalHelixParams.__annotations__:
             if name == "helices_per_direction":
+                continue
+            if name == "damping_time_constant":
+                if self.damping_time_constant.shape not in ((), (6,)):
+                    raise ValueError(
+                        "damping_time_constant must be scalar or have shape (6,)."
+                    )
                 continue
             shape = (
                 (2,)

@@ -238,6 +238,36 @@ def test_invalid_params(helix, field, value):
         helix.replace(**{field: value})
 
 
+@pytest.mark.parametrize(
+    "value",
+    [
+        [0.02],
+        [[0.02] * 6],
+        [0.02] * 5,
+        [0.02] * 5 + [-1],
+        [0.02] * 5 + [np.inf],
+        [np.nan] * 6,
+    ],
+)
+def test_per_strain_damping_validation(helix, value):
+    with pytest.raises(ValueError, match="damping_time_constant"):
+        helix.replace(damping_time_constant=value)
+
+
+def test_per_strain_backbone_damping_survives_helix_reduction(helix, reduced):
+    tau = jnp.array([0.002, 0.02, 0.03, 0.0, 0.04, 0.05])
+    changed = helix.replace(damping_time_constant=tau)
+    backbone = changed.to_backbone()
+    assert_allclose(backbone.damping_time_constant, tau)
+    assert_allclose(backbone.stiffness_base, reduced.backbone.stiffness_base)
+    assert_allclose(backbone.stiffness_tip, reduced.backbone.stiffness_tip)
+    assert backbone.admissible_strains == reduced.backbone.admissible_strains
+    model = make_model(changed)
+    expected = np.zeros_like(model.params.link.damping[2])
+    expected[:4, :4] = np.diag(tau[:4] * np.diag(model.params.link.stiffness[2])[:4])
+    assert_allclose(model.params.link.damping[2], expected, atol=1e-13)
+
+
 def test_preparation_requires_eager_inputs(helix):
     with pytest.raises(ValueError, match="outside JAX transformations"):
         eqx.filter_jit(lambda p: p.to_backbone().stiffness_base)(helix)
