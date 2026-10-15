@@ -195,10 +195,12 @@ class ContinuumLinkParams(BaseSystemParams):
             if value is None:
                 continue
             _validate_symmetric(name, value)
-            scale = jnp.maximum(1.0, jnp.max(jnp.abs(value), axis=(-2, -1)))
-            if not bool(
-                jnp.all(jnp.linalg.eigvalsh(value) >= -1e-10 * scale[..., None])
-            ):
+            eigenvalues = jnp.linalg.eigvalsh(value)
+            # Allow eigensolver roundoff relative to each matrix's spectral norm.
+            # Avoid an absolute floor, which could hide invalid small inertias.
+            scale = jnp.max(jnp.abs(eigenvalues), axis=-1)
+            tolerance = 10 * value.shape[-1] * jnp.finfo(eigenvalues.dtype).eps * scale
+            if not bool(jnp.all(eigenvalues >= -tolerance[..., None])):
                 raise ValueError(f"{name} must be positive semidefinite.")
             angular = 1 if value.shape[-1] == 3 else 3
             linear = value.shape[-1] - angular
