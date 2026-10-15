@@ -89,7 +89,12 @@ def sectional_inertias(link, geometric: Array) -> Array:
         raise ValueError(
             f"sectional_inertia requires {geometric.shape[1]} quadrature samples per link; got {value.shape[1]}."
         )
-    return jnp.broadcast_to(value, geometric.shape)
+    value = jnp.broadcast_to(value, geometric.shape)
+    if link.sectional_inertia_mask is not None:
+        value = jnp.where(
+            link.sectional_inertia_mask[:, None, None, None], value, geometric
+        )
+    return value
 
 
 def weighted_inertias(link, geometric: Array, weights: Array) -> Array:

@@ -6,11 +6,16 @@ bases with shared JAX and Warp dynamics.
 
 ## Construction
 
-Use `Helicoidal.from_segments(...)` with `GVSSegment` specifications and one
-entry per link for `mass_per_length` [kg/m] and
-`rotational_inertia_per_length` [kg m, three principal components]. Optional
-`tip_mass` [kg] adds translational tip inertia. For distributed and attached-body
-matrices, see the shared [inertia representation](../continuum-components.md#distributed-and-attached-body-inertia).
+Use `Helicoidal.from_segments(...)` with `GVSSegment` specifications. Helix
+inputs derive distributed inertia from strand geometry and material density.
+Other segments, including rigid cylindrical assemblies, use their ordinary GVS
+cross-section geometry and density. Optional `tip_mass` [kg] adds translational
+tip inertia; full attached bodies use the shared
+[inertia representation](../continuum-components.md#distributed-and-attached-body-inertia).
+
+The optional pair `mass_per_length` [kg/m] and
+`rotational_inertia_per_length` [kg m, three components] overrides distributed
+inertia for all links. This is useful for externally identified backbone models.
 
 Supply constitutive parameters through a mapping from segment indices to
 `HelicoidalBackboneParams` or `HelicoidalHelixParams`. Each object describes
@@ -19,8 +24,6 @@ one segment; a mapping can mix the two types or reuse an object across segments:
 ```python
 robot = Helicoidal.from_segments(
     segments,
-    mass_per_length=mass_per_length,
-    rotational_inertia_per_length=rotational_inertia_per_length,
     constitutive_params={1: helix, 3: backbone, 5: helix},
 )
 ```
@@ -73,6 +76,7 @@ helix = HelicoidalHelixParams.circular(
     helices_per_direction=3,           # Three strands in each winding direction.
     winding_family_phase_offset=pi/6,  # Families' base azimuths differ by 30 degrees.
     strand_radius=0.002,
+    density=1220.0,
     young_modulus=30e6,
     shear_modulus=30e6 / (2 * (1 + 0.48)),
     fusion_stiffness_multiplier=4.0,    # Scale the stiffness of fused strand crossings.
@@ -81,6 +85,7 @@ helix = HelicoidalHelixParams.circular(
 backbone = helix.to_backbone()
 # Use backbone.admissible_strains to choose the soft segments' strain bases.
 robot = robot.with_constitutive_params({1: backbone, 3: backbone, 5: backbone})
+robot = robot.with_helix_inertia({1: helix, 3: helix, 5: helix})
 ```
 
 The reduction solves six unit-load cases at the soft segment tip relative to its
@@ -90,6 +95,13 @@ strand connections to the tip ring. The returned backbone parameters carry
 An inadmissible shear fit requires both shear strains to be deactivated.
 `helix.reduction_diagnostics()` reruns the reduction to report the full tip
 compliance, residual shear compliance, and numerical asymmetry.
+
+Passing helix inputs directly to `constitutive_params` or
+`with_constitutive_params` prepares both constitutive matrices and inertia.
+Strand inertia includes cross-sectional moments, orientation, backbone offsets,
+and the strand-to-backbone arc-length factor. It is sampled at the existing
+Gauss points, supporting tapered geometries. Strand volumes add at crossings;
+overlap is neglected. Each strand section moves with its backbone material frame.
 
 For noncircular strands, the constructor accepts area, principal area moments,
 torsion constant, and shear correction factors. The parameter reference below
@@ -117,6 +129,16 @@ robot = robot.with_constitutive_params({3: backbone.replace(stiffness_tip=K_tip)
 Reapply the parameters after changing segment lengths or constitutive inputs.
 Helix lengths must match their selected GVS segments. Shared helix objects are
 reduced once per call. Numeric backbone updates preserve `admissible_strains`.
+Helix inputs also refresh inertia. For density-only updates, or after explicit
+conversion with `to_backbone()`, use the differentiable `with_helix_inertia`:
+
+```python
+robot = robot.with_helix_inertia({1: helix.replace(density=1250.0)})
+```
+
+Ordinary cylinder density updates use `update_link_params(density=...)`.
+Stored helix inertia is refreshed through the helix input; constitutive-only
+backbone updates preserve the current inertia.
 
 Helix reduction runs eagerly on the CPU during preparation. Use backbone
 parameters for differentiation through constitutive inputs. Prepared models

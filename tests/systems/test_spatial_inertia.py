@@ -237,3 +237,33 @@ def test_gvs_full_inertia_with_joint_rigid_link_and_quadrature_padding():
             model.dynamics_terms(q, v, backend="warp"), (M, bias, gravity)
         ):
             assert_allclose(actual, expected, rtol=2e-8, atol=2e-11)
+
+
+@pytest.mark.parametrize("family", ["pcs", "gvs", "planar"])
+def test_partial_sectional_overrides_preserve_geometry_density_updates(family):
+    from soromox.systems.components.inertia import sectional_inertias
+
+    model = make_model(family)
+    partial = model.update_link_params(sectional_inertia_mask=jnp.array([True, False]))
+    # Use the shared resolver on known section geometry to test planar/spatial
+    # broadcasting independently of each backend's cached quadrature layout.
+    d = model.params.link.reference_strain.shape[1]
+    geometry = jnp.broadcast_to(jnp.eye(d), (2, 5, d, d))
+    resolved = sectional_inertias(partial.params.link, geometry)
+    assert_allclose(
+        resolved[0], jnp.broadcast_to(model.params.link.sectional_inertia[0], (5, d, d))
+    )
+    assert_allclose(resolved[1], geometry[1])
+    changed = partial.update_link_params(density=2 * partial.params.link.density)
+    q = jnp.zeros(partial.num_internal_dofs)
+    all_geometric = model.update_link_params(sectional_inertia=None)
+    # Only the unmasked second link responds to density updates.
+    second_only = all_geometric.update_link_params(
+        density=all_geometric.params.link.density.at[1].multiply(2)
+    )
+    assert_allclose(
+        changed.inertia_matrix(q) - partial.inertia_matrix(q),
+        second_only.inertia_matrix(q) - all_geometric.inertia_matrix(q),
+        rtol=1e-10,
+        atol=1e-12,
+    )
