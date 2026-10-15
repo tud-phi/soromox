@@ -214,8 +214,10 @@ class HelicoidalBackboneParams(BaseSystemParams):
         damping_time_constant: Kelvin-Voigt time constant [s], either a scalar
             shared by all strains or shape ``(6,)`` in backbone material-frame
             order ``[twist, bend_y, bend_z, extension, shear_y, shear_z]``.
-            Each value scales its corresponding sectional stiffness before
-            Gauss projection. Zero disables damping for that component.
+            Relates sectional viscous damping to sectional stiffness for each
+            strain component: ``D_i(s) = tau_i * K_i(s)``. Sectional damping is
+            projected onto the GVS basis using Gauss quadrature. Zero disables
+            damping for that component.
         admissible_strains: Six static flags in native strain order. Active basis
             strains must be admissible. Helix conversion marks inadmissible shear
             entries false; their endpoint values are finite padding. Numeric
@@ -391,8 +393,10 @@ class HelicoidalHelixParams(BaseSystemParams):
         damping_time_constant: Effective backbone Kelvin-Voigt time constant [s],
             either a scalar or shape ``(6,)`` ordered as
             ``[twist, bend_y, bend_z, extension, shear_y, shear_z]`` in the
-            backbone material frame. Passed through the reduction to scale each
-            fitted backbone sectional stiffness before Gauss projection.
+            backbone material frame. Relates sectional viscous damping to fitted
+            backbone sectional stiffness: ``D_i(s) = tau_i * K_i(s)``. Passed
+            through the helix reduction unchanged; sectional damping is then
+            projected onto the GVS basis using Gauss quadrature.
 
     References:
         CharlesQueen (2026). helicoid-toolkit, spec/identify.py,
