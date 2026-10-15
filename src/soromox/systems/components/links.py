@@ -77,13 +77,13 @@ class ContinuumLinkParams(BaseSystemParams):
     stiffness: Array
     damping: Array
     sectional_inertia: Array | None = None
-    tip_inertia: Array | None = None
     sectional_inertia_mask: Array | None = None
+    tip_inertia: Array | None = None
 
     def __check_init__(self) -> None:
         for name in ("length", "density", "reference_strain", "stiffness", "damping"):
             object.__setattr__(self, name, jnp.asarray(getattr(self, name)))
-        for name in ("sectional_inertia", "tip_inertia", "sectional_inertia_mask"):
+        for name in ("sectional_inertia", "sectional_inertia_mask", "tip_inertia"):
             if getattr(self, name) is not None:
                 value = jnp.asarray(getattr(self, name))
                 object.__setattr__(self, name, jnp.asarray(value, dtype=value.dtype))
@@ -94,7 +94,7 @@ class ContinuumLinkParams(BaseSystemParams):
         if name in ("length", "density", "reference_strain", "stiffness", "damping"):
             return jnp.asarray(value)
         if (
-            name in ("sectional_inertia", "tip_inertia", "sectional_inertia_mask")
+            name in ("sectional_inertia", "sectional_inertia_mask", "tip_inertia")
             and value is not None
         ):
             array = jnp.asarray(value)
