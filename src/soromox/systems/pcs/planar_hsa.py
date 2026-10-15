@@ -13,6 +13,11 @@ from soromox.execution import (
     PCSBackendParams,
 )
 from soromox.systems.components import CrossSectionGeometry
+from soromox.systems.components.inertia import (
+    assemble_inertia_terms,
+    mass_first_moment,
+    spatial_mass_action,
+)
 from soromox.systems.pcs.params import PlanarHSAParams
 from soromox.systems.pcs.planar_pcs import PlanarPCS
 from soromox.systems.pcs.structures import PlanarHSAStructure
@@ -125,6 +130,8 @@ class PlanarHSA(PlanarPCS):
     rod_strain_mapping: Array
     rod_transforms: Array
     rod_adjoint_inverses: Array
+    sectional_inertia: Array
+    tip_inertia: Array
     rod_mass_matrices: Array
     segment_masses: Array
     segment_inertias: Array
@@ -326,7 +333,19 @@ class PlanarHSA(PlanarPCS):
         )
 
     def _refresh_hsa_caches(self) -> None:
-        """Refresh HSA quantities that do not depend on the configuration."""
+        """Refresh geometry, inertia, and constitutive caches from HSA parameters.
+
+        Rod inertias are summed in each backbone material frame. Caps and
+        platforms are represented at segment tips, with the payload contribution
+        added to the final tip. Sectional and tip matrices have shape
+        ``(num_segments, 3, 3)`` in angular-first planar coordinates. Weighted
+        inertia has shape ``(num_segments, num_gauss_points + 1, 9)`` with
+        row-major matrix packing and the tip contribution in the final slot.
+        Stiffness and damping are also projected onto the active strain basis.
+
+        Returns:
+            None. Updates configuration-independent runtime arrays on this model.
+        """
         mapping = self._build_rod_strain_mapping()
         rod_transforms = vmap(
             lambda offsets: vmap(
@@ -375,6 +394,35 @@ class PlanarHSA(PlanarPCS):
         payload_adjoint_inverse = se2.adjoint_inverse(payload_transform)
         payload_mass_matrix = jnp.diag(
             jnp.array([0.0, self.platform_mass, self.platform_mass], dtype=self.L.dtype)
+        )
+
+        sectional_inertia = jnp.einsum(
+            "srji,srjk,srkl->sil",
+            rod_adjoint_inverses,
+            rod_mass_matrices,
+            rod_adjoint_inverses,
+        )
+        cog_inertia = vmap(jnp.diag)(
+            jnp.stack((segment_inertias, segment_masses, segment_masses), axis=-1)
+        )
+        tip_inertia = jnp.einsum(
+            "sji,sjk,skl->sil", cog_adjoint_inverses, cog_inertia, cog_adjoint_inverses
+        )
+        tip_inertia = tip_inertia.at[-1].add(
+            payload_adjoint_inverse.T @ payload_mass_matrix @ payload_adjoint_inverse
+        )
+        _, weights = self._quadrature()
+        weighted = jnp.concatenate(
+            (
+                weights[..., None, None] * sectional_inertia[:, None],
+                tip_inertia[:, None],
+            ),
+            axis=1,
+        )
+        object.__setattr__(self, "sectional_inertia", sectional_inertia)
+        object.__setattr__(self, "tip_inertia", tip_inertia)
+        object.__setattr__(
+            self, "weighted_inertias", weighted.reshape((*weighted.shape[:2], 9))
         )
 
         K_full = self._build_nominal_stiffness_full(mapping)
@@ -1519,6 +1567,82 @@ class PlanarHSA(PlanarPCS):
             payload_mass_matrix,
         )
 
+    def _inertia_sample_geometry(
+        self, geometry: tuple[Array, ...], *, full: bool = False
+    ) -> tuple[Array, Array]:
+        """Collect backbone quadrature and tip states from one geometry pass.
+
+        Args:
+            geometry: Tuple returned by ``_integration_geometry_full``. Uses its
+                quadrature transforms and full-strain body Jacobians, together
+                with segment-tip transforms and stored tip Jacobian histories.
+            full: Keep all virtual strain columns when true; otherwise project
+                onto the active internal strain basis.
+
+        Returns:
+            Pair ``(transforms, jacobians)`` with shapes ``(S, Q + 1, 3, 3)``
+            and ``(S, Q + 1, 3, n)``. S is ``num_segments``, Q is
+            ``num_gauss_points``, and n is ``num_strains`` when full, otherwise
+            ``num_internal_dofs``. Each segment's final sample is its tip.
+            Transforms map material frames into the kinematic reference frame;
+            Jacobians express angular-first velocities in those material frames.
+        """
+        _, points, jacobians, _, _, _, _, tips, tip_jacobians = geometry
+        indices = jnp.arange(self.num_segments)
+        tip_jacobians = tip_jacobians[indices, indices]
+        jacobians = jnp.concatenate((jacobians, tip_jacobians[:, None]), axis=1)
+        basis = jnp.eye(self.num_strains, dtype=jacobians.dtype) if full else self.B_xi
+        return jnp.concatenate((points, tips[:, None]), axis=1), jacobians @ basis
+
+    def _inertia_sample_kinematics(
+        self,
+        q: Array,
+        qd: Array,
+        *,
+        full: bool = False,
+        convective_only_jd: bool = False,
+    ) -> tuple[Array, Array, Array]:
+        """Collect backbone Jacobians and their time derivatives with tip states.
+
+        Args:
+            q: Active internal coordinates, shape ``(num_internal_dofs,)``.
+            qd: Active internal velocities, shape ``(num_internal_dofs,)``.
+            full: Keep all virtual strain columns when true; otherwise project
+                onto the active internal strain basis.
+            convective_only_jd: Use the simplified derivative expression needed
+                for the velocity product Jdot @ qd. Use false when the complete
+                derivative matrix is needed.
+
+        Returns:
+            Tuple ``(transforms, jacobians, derivatives)``. Transforms have shape
+            ``(S, Q + 1, 3, 3)``; both Jacobian arrays have shape
+            ``(S, Q + 1, 3, n)``. S is ``num_segments``, Q is
+            ``num_gauss_points``, and n is ``num_strains`` when full, otherwise
+            ``num_internal_dofs``. Tip states occupy the final sample slot.
+            Transforms map material frames into the kinematic reference frame;
+            Jacobians and derivatives use angular-first material-frame velocities.
+        """
+        _, points, jacobians, derivatives, tips, tip_jacobians, tip_derivatives = (
+            self._integration_kinematics_full(
+                q, qd, convective_only_jd, return_tips=True
+            )
+        )
+        indices = jnp.arange(self.num_segments)
+        basis = jnp.eye(self.num_strains, dtype=jacobians.dtype) if full else self.B_xi
+        jacobians = (
+            jnp.concatenate(
+                (jacobians, tip_jacobians[indices, indices][:, None]), axis=1
+            )
+            @ basis
+        )
+        derivatives = (
+            jnp.concatenate(
+                (derivatives, tip_derivatives[indices, indices][:, None]), axis=1
+            )
+            @ basis
+        )
+        return jnp.concatenate((points, tips[:, None]), axis=1), jacobians, derivatives
+
     def _assemble_dynamics_terms(
         self,
         q: Array,
@@ -1528,238 +1652,81 @@ class PlanarHSA(PlanarPCS):
         full: bool = False,
         return_matrix: bool = False,
     ) -> tuple[Array, Array, Array]:
-        """Assemble inertia, Coriolis, and gravity terms from mass geometry.
+        """Assemble dynamics from precomputed backbone and attached-body inertia.
 
-        ``full`` selects the complete virtual-strain coordinate space while
-        the default assembles directly in active coordinates. ``return_matrix``
-        returns the Coriolis matrix; otherwise it returns its product with the
-        current generalized velocity.
+        Args:
+            q: Configuration, shape ``(num_coordinates,)``, including the base
+                pose for floating-base models.
+            qd: Generalized velocity, shape ``(num_velocities,)``.
+            convective_only_jd: Use Jacobian derivatives simplified for the
+                velocity-bias product. Set false when requesting a full
+                Coriolis matrix. Floating-base assembly uses the product form.
+            full: Assemble in all virtual strain coordinates for fixed-base
+                models. The input q and qd still use active internal coordinates.
+            return_matrix: Return a Coriolis matrix for a fixed-base model;
+                otherwise return the velocity-dependent force vector.
+
+        Returns:
+            Tuple ``(M, C, G)`` when ``return_matrix`` is true, otherwise
+            ``(M, bias, G)``. Matrices have shape ``(n, n)`` and force vectors
+            have shape ``(n,)``, where n is ``num_strains`` when full, otherwise
+            ``num_velocities``. G is the gravity term on the left-hand side
+            of the equations of motion.
+
+        Raises:
+            ValueError: If full-strain or Coriolis-matrix assembly is requested
+                for a floating-base model.
         """
         if self.floating_base:
             if full or return_matrix:
                 raise ValueError(
-                    "Full-strain and matrix-valued Coriolis assembly are internal "
-                    "fixed-base HSA operations."
+                    "Full-strain and matrix-valued Coriolis assembly require fixed-base HSA."
                 )
             return self._assemble_floating_dynamics_terms_impl(q, qd)
-
-        (
-            Ws,
-            g_rods,
-            J_rods,
-            Jd_rods,
-            rod_mass_matrices,
-            g_cogs,
-            J_cogs,
-            Jd_cogs,
-            masses,
-            inertias,
-            J_payload,
-            Jd_payload,
-            g_payload,
-            payload_mass_matrix,
-        ) = self._mass_properties_kinematics(q, qd, convective_only_jd, full=full)
+        transforms, jacobians, derivatives = self._inertia_sample_kinematics(
+            q, qd, full=full, convective_only_jd=convective_only_jd
+        )
+        gravity_local = vmap(vmap(se2.adjoint_inverse))(transforms) @ self.g
         velocity = self.B_xi @ qd if full else qd
-
-        rod_eta = jnp.einsum("sqrad,d->sqra", J_rods, velocity)
-        rod_coad = vmap(vmap(vmap(se2.coadjoint)))(rod_eta)
-        rod_g_inv = vmap(vmap(vmap(se2.adjoint_inverse)))(g_rods)
-        rod_mj = jnp.einsum("srab,sqrbd->sqrad", rod_mass_matrices, J_rods)
-        rod_mjd = jnp.einsum("srab,sqrbd->sqrad", rod_mass_matrices, Jd_rods)
-        rod_local_gravity = jnp.einsum("sqrab,b->sqra", rod_g_inv, self.g)
-        rod_gravity_wrench = jnp.einsum(
-            "srab,sqrb->sqra", rod_mass_matrices, rod_local_gravity
-        )
-        B_rods = jnp.einsum(
-            "sq,sqrad,srab,sqrbe->de",
-            Ws,
-            J_rods,
-            rod_mass_matrices,
-            J_rods,
-        )
-        C_rods = jnp.einsum(
-            "sq,sqrad,sqrae->de",
-            Ws,
-            J_rods,
-            rod_mjd + jnp.einsum("sqrae,sqred->sqrad", rod_coad, rod_mj),
-        )
-        G_rods = -jnp.einsum("sq,sqrad,sqra->d", Ws, J_rods, rod_gravity_wrench)
-
-        cog_matrices = jnp.zeros((*masses.shape, 3, 3), dtype=Ws.dtype)
-        cog_matrices = cog_matrices.at[:, 0, 0].set(inertias)
-        cog_matrices = cog_matrices.at[:, 1, 1].set(masses)
-        cog_matrices = cog_matrices.at[:, 2, 2].set(masses)
-        cog_velocity = jnp.einsum("sad,d->sa", J_cogs, velocity)
-        cog_coad = vmap(se2.coadjoint)(cog_velocity)
-        cog_mj = jnp.einsum("sab,sbd->sad", cog_matrices, J_cogs)
-        cog_mjd = jnp.einsum("sab,sbd->sad", cog_matrices, Jd_cogs)
-        cog_g_inv = vmap(se2.adjoint_inverse)(g_cogs)
-        cog_local_gravity = jnp.einsum("sab,b->sa", cog_g_inv, self.g)
-        cog_gravity_wrench = jnp.einsum("sab,sb->sa", cog_matrices, cog_local_gravity)
-        B_cogs = jnp.einsum("sad,sab,sbe->de", J_cogs, cog_matrices, J_cogs)
-        C_cogs = jnp.einsum(
-            "sad,sae->de",
-            J_cogs,
-            cog_mjd + jnp.einsum("sab,sbe->sae", cog_coad, cog_mj),
-        )
-        G_cogs = -jnp.einsum("sad,sa->d", J_cogs, cog_gravity_wrench)
-
-        payload_velocity = J_payload @ velocity
-        payload_coad = se2.coadjoint(payload_velocity)
-        payload_mj = payload_mass_matrix @ J_payload
-        payload_mjd = payload_mass_matrix @ Jd_payload
-        payload_gravity_wrench = payload_mass_matrix @ (
-            se2.adjoint_inverse(g_payload) @ self.g
-        )
-        B_payload = J_payload.T @ payload_mass_matrix @ J_payload
-        C_payload = J_payload.T @ (payload_mjd + payload_coad @ payload_mj)
-        G_payload = -J_payload.T @ payload_gravity_wrench
-
-        B = B_rods + B_cogs + B_payload
-        C = C_rods + C_cogs + C_payload
-        return (
-            B,
-            C if return_matrix else C @ velocity,
-            G_rods + G_cogs + G_payload,
+        return assemble_inertia_terms(
+            self.weighted_inertias,
+            jacobians,
+            derivatives,
+            velocity,
+            gravity_local,
+            return_matrix=return_matrix,
         )
 
     def _assemble_floating_dynamics_terms_impl(
         self, q: Array, v: Array
     ) -> tuple[Array, Array, Array]:
-        """
-        Assemble floating HSA dynamics from one mass-property propagation.
-
-        Rod, platform, and payload contractions are accumulated separately so
-        their already-computed kinematics are neither concatenated nor
-        differentiated a second time.
+        """Assemble augmented HSA dynamics from the shared inertia distribution.
 
         Args:
-            q: Total floating-base configuration with shape
-                ``(num_coordinates,)``.
-            v: Total generalized velocity with shape ``(num_velocities,)``.
+            q: Floating-base configuration, shape ``(num_coordinates,)``.
+                Includes the planar base pose and active internal coordinates.
+            v: Generalized velocity, shape ``(num_velocities,)``, with base body
+                velocity followed by active internal velocities.
 
         Returns:
-            Tuple ``(M, Cv, G)`` in total generalized velocities.
+            Tuple ``(M, bias, G)`` with shapes ``(num_velocities, num_velocities)``,
+            ``(num_velocities,)``, and ``(num_velocities,)``. Includes base/internal
+            inertia coupling and velocity-dependent forces. G is the gravity
+            term on the left-hand side of the equations of motion.
         """
         q = self.normalize_configuration(q)
         _, q_internal = self.split_configuration(q)
-        _, qd_internal = self.split_velocity(v)
-        (
-            weights,
-            rod_transforms,
-            rod_jacobians_internal,
-            rod_jacobian_dot_velocity_internal,
-            rod_mass_matrices,
-            cog_transforms,
-            cog_jacobians_internal,
-            cog_jacobian_dot_velocity_internal,
-            masses,
-            inertias,
-            payload_jacobian_internal,
-            payload_jacobian_dot_velocity_internal,
-            payload_transform,
-            payload_mass_matrix,
-        ) = self._mass_properties_kinematics(
-            q_internal, qd_internal, convective_only_jd=True
+        _, v_internal = self.split_velocity(v)
+        transforms, jacobians, derivatives = self._inertia_sample_kinematics(
+            q_internal, v_internal, convective_only_jd=True
         )
-        rod_jacobian_dot_velocity_internal = jnp.einsum(
-            "sqrad,d->sqra",
-            rod_jacobian_dot_velocity_internal,
-            qd_internal,
-        )
-        cog_jacobian_dot_velocity_internal = jnp.einsum(
-            "sad,d->sa",
-            cog_jacobian_dot_velocity_internal,
-            qd_internal,
-        )
-        payload_jacobian_dot_velocity_internal = (
-            payload_jacobian_dot_velocity_internal @ qd_internal
-        )
-
-        rod_jacobians, rod_jacobian_dot_velocity, rod_velocities, rod_gravity = (
+        jacobians, derivative_velocity, _, gravity = (
             self._augment_floating_body_kinematics(
-                q,
-                v,
-                rod_transforms,
-                rod_jacobians_internal,
-                rod_jacobian_dot_velocity_internal,
+                q, v, transforms, jacobians, derivatives @ v_internal
             )
         )
-        cog_jacobians, cog_jacobian_dot_velocity, cog_velocities, cog_gravity = (
-            self._augment_floating_body_kinematics(
-                q,
-                v,
-                cog_transforms,
-                cog_jacobians_internal,
-                cog_jacobian_dot_velocity_internal,
-            )
-        )
-        (
-            payload_jacobian,
-            payload_jacobian_dot_velocity,
-            payload_velocity,
-            payload_gravity,
-        ) = self._augment_floating_body_kinematics(
-            q,
-            v,
-            payload_transform[None],
-            payload_jacobian_internal[None],
-            payload_jacobian_dot_velocity_internal[None],
-        )
-        payload_jacobian = payload_jacobian[0]
-        payload_jacobian_dot_velocity = payload_jacobian_dot_velocity[0]
-        payload_velocity = payload_velocity[0]
-        payload_gravity = payload_gravity[0]
-
-        rod_momentum = jnp.einsum("srab,sqrb->sqra", rod_mass_matrices, rod_velocities)
-        rod_wrench = jnp.einsum(
-            "srab,sqrb->sqra", rod_mass_matrices, rod_jacobian_dot_velocity
-        ) + vmap(vmap(vmap(se2.coadjoint_action)))(rod_velocities, rod_momentum)
-        rod_gravity_wrench = jnp.einsum(
-            "srab,sqrb->sqra", rod_mass_matrices, rod_gravity
-        )
-        inertia_rods = jnp.einsum(
-            "sq,sqrad,srab,sqrbe->de",
-            weights,
-            rod_jacobians,
-            rod_mass_matrices,
-            rod_jacobians,
-        )
-        coriolis_rods = jnp.einsum(
-            "sq,sqrad,sqra->d", weights, rod_jacobians, rod_wrench
-        )
-        gravity_rods = -jnp.einsum(
-            "sq,sqrad,sqra->d", weights, rod_jacobians, rod_gravity_wrench
-        )
-
-        cog_mass_matrices = jnp.zeros((*masses.shape, 3, 3), dtype=q.dtype)
-        cog_mass_matrices = cog_mass_matrices.at[:, 0, 0].set(inertias)
-        cog_mass_matrices = cog_mass_matrices.at[:, 1, 1].set(masses)
-        cog_mass_matrices = cog_mass_matrices.at[:, 2, 2].set(masses)
-        cog_momentum = jnp.einsum("sab,sb->sa", cog_mass_matrices, cog_velocities)
-        cog_wrench = jnp.einsum(
-            "sab,sb->sa", cog_mass_matrices, cog_jacobian_dot_velocity
-        ) + vmap(se2.coadjoint_action)(cog_velocities, cog_momentum)
-        cog_gravity_wrench = jnp.einsum("sab,sb->sa", cog_mass_matrices, cog_gravity)
-        inertia_cogs = jnp.einsum(
-            "sad,sab,sbe->de", cog_jacobians, cog_mass_matrices, cog_jacobians
-        )
-        coriolis_cogs = jnp.einsum("sad,sa->d", cog_jacobians, cog_wrench)
-        gravity_cogs = -jnp.einsum("sad,sa->d", cog_jacobians, cog_gravity_wrench)
-
-        payload_momentum = payload_mass_matrix @ payload_velocity
-        payload_wrench = (
-            payload_mass_matrix @ payload_jacobian_dot_velocity
-            + se2.coadjoint_action(payload_velocity, payload_momentum)
-        )
-        payload_gravity_wrench = payload_mass_matrix @ payload_gravity
-        inertia_payload = payload_jacobian.T @ payload_mass_matrix @ payload_jacobian
-        coriolis_payload = payload_jacobian.T @ payload_wrench
-        gravity_payload = -payload_jacobian.T @ payload_gravity_wrench
-        return (
-            inertia_rods + inertia_cogs + inertia_payload,
-            coriolis_rods + coriolis_cogs + coriolis_payload,
-            gravity_rods + gravity_cogs + gravity_payload,
+        return assemble_inertia_terms(
+            self.weighted_inertias, jacobians, derivative_velocity, v, gravity
         )
 
     def _gravitational_energy_full_from_xi(self, xi: Array) -> Array:
@@ -1814,130 +1781,65 @@ class PlanarHSA(PlanarPCS):
 
     @eqx.filter_jit
     def _gravitational_energy(self, q: Array) -> Array:
-        """
-        Compute fixed- or floating-base HSA gravitational potential energy.
-
-        Floating models contract native rod densities and discrete platform
-        masses with world positions directly. They do not evaluate Jacobians or
-        build spatial inertia matrices.
+        """Evaluate potential energy using precomputed mass and first moments.
 
         Args:
-            q: Fixed-base active coordinates or total floating-base
-                configuration.
+            q: Configuration, shape ``(num_coordinates,)``, including the base
+                pose for floating-base models.
 
         Returns:
-            Absolute gravitational potential energy as a scalar.
+            Scalar gravitational potential energy [J] of rods, caps, platforms,
+            and payload. Fixed-base models reference height to the base origin;
+            floating-base models use the world origin.
         """
-        if not self.floating_base:
-            return self._gravitational_energy_full_from_xi(self.strain(q))
-
-        _, q_internal = self.split_configuration(q)
-        xi = self.strain(q_internal)
-        points, weights = self._quadrature()
-        base_transform = self.base_transform_from_configuration(q)
-        rotation = base_transform[:2, :2]
-        translation = base_transform[:2, 2]
-        gravity = self.g[-2:]
-
-        def world_position(relative_position: Array) -> Array:
-            return rotation @ relative_position + translation
-
-        def segment_energy(segment_index: Array) -> Array:
-            def rod_energy(rod_index: Array) -> Array:
-                area = jnp.pi * (
-                    self.rod_outer_radius[segment_index, rod_index] ** 2
-                    - self.rod_inner_radius[segment_index, rod_index] ** 2
-                )
-                poses = vmap(
-                    lambda point: self._forward_rod_from_xi(xi, point, rod_index)
-                )(points[segment_index])
-                positions = vmap(world_position)(poses[:, 1:])
-                weighted_mass = (
-                    weights[segment_index]
-                    * self.rod_density[segment_index, rod_index]
-                    * area
-                )
-                return -jnp.sum(weighted_mass * (positions @ gravity))
-
-            rods = jnp.sum(
-                vmap(rod_energy)(jnp.arange(self.num_rods_per_segment, dtype=jnp.int32))
-            )
-            mass, _, relative_cog = self._platform_mass_properties(segment_index)
-            tip_transform = self._backbone_transform(xi, self.L_cum[segment_index + 1])
-            cog = (
-                tip_transform
-                @ jnp.concatenate(
-                    [relative_cog, jnp.ones((1,), dtype=relative_cog.dtype)]
-                )
-            )[:2]
-            return rods - mass * (world_position(cog) @ gravity)
-
-        energy = jnp.sum(
-            vmap(segment_energy)(jnp.arange(self.num_segments, dtype=jnp.int32))
+        q_internal = self.split_configuration(q)[1] if self.floating_base else q
+        transforms, _ = self._inertia_sample_geometry(
+            self._integration_geometry_full(q_internal)
         )
-        _, tip_transforms = self._segment_bases_and_tips(xi)
-        payload_cog = (tip_transforms[-1] @ self.payload_transform)[:2, 2]
-        return energy - self.platform_mass * (world_position(payload_cog) @ gravity)
+        mass, first = mass_first_moment(
+            self.weighted_inertias.reshape((*self.weighted_inertias.shape[:2], 3, 3))
+        )
+        positions = mass[..., None] * transforms[..., :2, 2] + jnp.einsum(
+            "...ij,...j->...i", transforms[..., :2, :2], first
+        )
+        if self.floating_base:
+            base = self.base_transform_from_configuration(q)
+            positions = positions @ base[:2, :2].T + mass[..., None] * base[:2, 2]
+        else:
+            positions = positions - mass[..., None] * self._kinematic_base_pose[1:]
+        return -jnp.sum(positions @ self.g[1:])
 
     def _assemble_gravity_force(self, q: Array, *, full: bool = False) -> Array:
-        """Assemble fixed- or floating-base gravity from one geometry pass."""
+        """Project gravity through backbone quadrature and attached-body inertia.
+
+        Args:
+            q: Configuration, shape ``(num_coordinates,)``, including the base
+                pose for floating-base models.
+            full: Project onto all virtual strain coordinates for a fixed-base
+                model; otherwise use the model's generalized velocities.
+
+        Returns:
+            Gravity term G on the left-hand side of the equations of motion,
+            shape ``(num_strains,)`` when full, otherwise ``(num_velocities,)``.
+
+        Raises:
+            ValueError: If full-strain gravity is requested for a floating base.
+        """
         if self.floating_base and full:
             raise ValueError("Full-strain gravity is only defined for fixed-base HSA.")
-        q = self.normalize_configuration(q)
         q_internal = self.split_configuration(q)[1] if self.floating_base else q
-        geometry = self._integration_geometry_full(q_internal)
-        (
-            weights,
-            rod_transforms,
-            rod_jacobians,
-            rod_mass_matrices,
-            cog_transforms,
-            cog_jacobians,
-            masses,
-            _,
-            payload_jacobian,
-            payload_transform,
-            payload_mass_matrix,
-        ) = self._mass_geometry_from_integration(geometry, full=full)
-
-        def project_gravity(
-            transforms: Array,
-            point_masses: Array,
-            jacobians_body: Array,
-        ) -> Array:
-            linear_jacobians = jnp.einsum(
-                "...ij,...jk->...ik",
-                transforms[..., :2, :2],
-                jacobians_body[..., 1:, :],
+        transforms, jacobians = self._inertia_sample_geometry(
+            self._integration_geometry_full(q_internal), full=full
+        )
+        if self.floating_base:
+            velocity = jnp.zeros(self.num_velocities, dtype=q.dtype)
+            jacobians, _, _, gravity = self._augment_floating_body_kinematics(
+                q, velocity, transforms, jacobians, jnp.zeros(jacobians.shape[:-1])
             )
-            if not self.floating_base:
-                return -jnp.einsum(
-                    "...,...ij,i->j", point_masses, linear_jacobians, self.g[1:]
-                )
-            return self._gravitational_force_from_base_relative_points(
-                q,
-                transforms[..., :2, 2],
-                point_masses,
-                linear_jacobians,
-            )
-
-        rod_weighted_masses = weights[..., None] * rod_mass_matrices[:, None, :, 1, 1]
-        gravity_rods = project_gravity(
-            rod_transforms,
-            rod_weighted_masses,
-            rod_jacobians,
-        )
-        gravity_cogs = project_gravity(
-            cog_transforms,
-            masses,
-            cog_jacobians,
-        )
-        gravity_payload = project_gravity(
-            payload_transform,
-            payload_mass_matrix[1, 1],
-            payload_jacobian,
-        )
-        return gravity_rods + gravity_cogs + gravity_payload
+        else:
+            gravity = vmap(vmap(se2.adjoint_inverse))(transforms) @ self.g
+        wrench = spatial_mass_action(self.weighted_inertias, gravity)
+        return -jnp.einsum("...ad,...a->d", jacobians, wrench)
 
     def inertia_matrix(self, q: Array) -> Array:
         """Return the active-coordinate generalized inertia matrix.
@@ -1960,61 +1862,54 @@ class PlanarHSA(PlanarPCS):
         )[0]
 
     def _inertia_derivative_matrix(self, q: Array) -> Array:
-        """Compute ``dB/dq`` from the analytical Jacobian derivatives."""
-        directions = jnp.eye(self.num_internal_dofs, dtype=q.dtype)
+        """Differentiate fixed-base inertia using analytic Jacobian derivatives.
+
+        Args:
+            q: Active internal coordinates, shape ``(num_internal_dofs,)``,
+                for a fixed-base model.
+
+        Returns:
+            Inertia derivatives of shape ``(n, n, n)``, with
+            ``result[i, j, k] = dM[i, j] / dq[k]`` and n equal to
+            ``num_internal_dofs``.
+        """
         geometry = self._integration_geometry_full(q)
-        (
-            Ws,
-            _,
-            J_rods,
-            rod_mass_matrices,
-            _,
-            J_cogs,
-            masses,
-            inertias,
-            J_payload,
-            _,
-            payload_mass_matrix,
-        ) = self._mass_geometry_from_integration(geometry, full=False)
-        velocity_basis = self.B_xi
+        _, jacobians = self._inertia_sample_geometry(geometry)
+        weighted = spatial_mass_action(self.weighted_inertias, jacobians)
+        indices = jnp.arange(self.num_segments)
 
         def directional_derivative(direction: Array) -> Array:
-            Jd_full, Jd_tips = self._integration_jacobian_time_derivative_from_geometry(
-                direction, geometry
-            )
-            Jd_ps = jnp.einsum("sqab,bd->sqad", Jd_full, velocity_basis)
-            Jd_rods = jnp.einsum("srab,sqbd->sqrad", self.rod_adjoint_inverses, Jd_ps)
-            tip_indices = jnp.arange(self.num_segments, dtype=jnp.int32)
-            Jd_tips = Jd_tips[tip_indices, tip_indices]
-            Jd_tips = jnp.einsum("sab,bd->sad", Jd_tips, velocity_basis)
-            Jd_cogs = jnp.einsum("sab,sbd->sad", self.cog_adjoint_inverses, Jd_tips)
-            Jd_payload = self.payload_adjoint_inverse @ Jd_tips[-1]
-            rod_term = jnp.einsum(
-                "sq,sqrad,srab,sqrbe->de",
-                Ws,
-                Jd_rods,
-                rod_mass_matrices,
-                J_rods,
-            ) + jnp.einsum(
-                "sq,sqrad,srab,sqrbe->de",
-                Ws,
-                J_rods,
-                rod_mass_matrices,
-                Jd_rods,
-            )
-            cog_matrices = jnp.zeros((*masses.shape, 3, 3), dtype=q.dtype)
-            cog_matrices = cog_matrices.at[:, 0, 0].set(inertias)
-            cog_matrices = cog_matrices.at[:, 1, 1].set(masses)
-            cog_matrices = cog_matrices.at[:, 2, 2].set(masses)
-            cog_term = jnp.einsum(
-                "sad,sab,sbe->de", Jd_cogs, cog_matrices, J_cogs
-            ) + jnp.einsum("sad,sab,sbe->de", J_cogs, cog_matrices, Jd_cogs)
-            payload_term = Jd_payload.T @ payload_mass_matrix @ J_payload + (
-                J_payload.T @ payload_mass_matrix @ Jd_payload
-            )
-            return rod_term + cog_term + payload_term
+            """Evaluate the inertia derivative along an internal direction.
 
-        return jnp.moveaxis(vmap(directional_derivative)(directions), 0, -1)
+            Args:
+                direction: Coordinate-space direction, shape
+                    ``(num_internal_dofs,)``.
+
+            Returns:
+                Directional inertia derivative, shape
+                ``(num_internal_dofs, num_internal_dofs)``.
+            """
+            derivatives, tip_derivatives = (
+                self._integration_jacobian_time_derivative_from_geometry(
+                    direction, geometry
+                )
+            )
+            derivatives = (
+                jnp.concatenate(
+                    (derivatives, tip_derivatives[indices, indices][:, None]), axis=1
+                )
+                @ self.B_xi
+            )
+            product = jnp.einsum("...ai,...aj->ij", derivatives, weighted)
+            return product + product.T
+
+        return jnp.moveaxis(
+            vmap(directional_derivative)(
+                jnp.eye(self.num_internal_dofs, dtype=q.dtype)
+            ),
+            0,
+            -1,
+        )
 
     def coriolis_matrix(self, q: Array, qd: Array) -> Array:
         """Return the Christoffel-consistent Coriolis matrix.

@@ -1,10 +1,16 @@
 # Renderer API
 
-API reference for SoRoMoX visualization and rendering backends.
+API reference for the shared renderer contract and general-purpose rendering
+backends.
 
 Start with the [Rendering overview](index.md) to compare output and choose a
 backend. Camera, color, base, ground-plane, multi-robot, and recording options
 are documented under [Shared Configuration](configuration.md).
+Robot-specific renderers are documented with their systems:
+[Planar HSA](../systems/pcs/planar-hsa.md#specialized-opencv-rendering),
+[I-Support](../systems/pcs/isupport.md#specialized-viser-rendering),
+[UMArm](../systems/articulated/mckibben-umarm.md), and
+[Helicoidal](../systems/gvs/helicoidal.md#specialized-viser-rendering).
 
 ## Shared Renderer Contract
 
@@ -17,8 +23,7 @@ BaseSoftRobotRenderer (abstract base)
 ├── MatplotlibRenderer         # Generic 2D and 3D plots
 ├── Open3DRenderer             # Interactive 3D visualization
 ├── ViserRenderer              # Browser-based interactive 3D visualization
-├── OpenCVPlanarRenderer       # Fast planar rendering
-└── OpenCVPlanarHSARenderer    # Planar HSA-specific rendering
+└── OpenCVPlanarRenderer       # Fast planar rendering
 ```
 
 | API | Shared behavior | Availability |
@@ -216,25 +221,11 @@ Visualization in Python. *arXiv preprint arXiv:2507.22885*.
 ## OpenCV Planar Renderer
 
 `OpenCVPlanarRenderer` provides lightweight single-frame rendering and fast
-video export for planar robots. Both OpenCV backends use a white canvas and
-ignore scene backgrounds, ground planes, backdrops, lighting and effects. Robot
+video export for planar robots. It uses a white canvas and ignores scene
+backgrounds, ground planes, backdrops, lighting and effects. Robot
 colors, geometry, output settings and the planar pixel projection apply.
 
 ::: soromox.rendering.opencv_planar_renderer.OpenCVPlanarRenderer
-    options:
-      show_root_heading: true
-      show_source: false
-      heading_level: 3
-      docstring_section_style: table
-      members_order: source
-
-## OpenCV Planar HSA Renderer
-
-`OpenCVPlanarHSARenderer` extends the planar OpenCV backend with HSA-specific
-geometry. Its system-level usage is documented with the
-[Planar HSA model](../systems/pcs/planar-hsa.md).
-
-::: soromox.rendering.planar_hsa.opencv_renderer.OpenCVPlanarHSARenderer
     options:
       show_root_heading: true
       show_source: false

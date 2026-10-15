@@ -85,6 +85,9 @@ circular, rectangular, and elliptical cross-sections.
 | `cross_section.coefficients` | `(N, max_coefficients)` | Packed geometry profiles |
 | `stiffness` | `(N, generalized_dimension, generalized_dimension)` | Generalized link stiffness |
 | `damping` | same as `stiffness` | Generalized link damping |
+| `sectional_inertia` | `(N, d, d)` or `(N, Q, d, d)`, optional | Angular-first inertia per reference length |
+| `sectional_inertia_mask` | `(N,)`, optional boolean | Select supplied sectional inertia per link; other links use geometry and density |
+| `tip_inertia` | `(N, d, d)`, optional | Attached-body inertia about each link tip |
 
 Stiffness and damping are finite symmetric matrices. They are not required to
 be diagonal or positive definite, which permits anisotropic, coupled, fitted,
@@ -100,6 +103,39 @@ The generalized dimension depends on the system:
 | GVS | `(N, max_dof, max_dof)` |
 
 GVS matrices are zero-padded beyond each link's active basis coordinates.
+
+## Distributed and attached-body inertia
+
+Optional `sectional_inertia` and `tip_inertia` matrices describe mass and
+rotational inertia in each link's local material frame, including an offset
+center of mass. Use angular-first order with `d=3` for planar mechanics and
+`d=6` for spatial mechanics. Sectional matrices are per unit reference length;
+tip matrices describe the whole attached body about the link tip. Omitting
+sectional inertia uses geometry and density; omitting tip inertia adds no attached
+body. With supplied sectional matrices, `sectional_inertia_mask` selects which
+links use them: `True` selects the override and `False` keeps geometry-and-density
+evaluation. Omitting the mask selects every supplied row. This allows mixed
+geometric and prepared inertia distributions, including subsequent density updates.
+
+A sectional matrix may be constant along a link or sampled at its interior
+Gauss nodes. Sampled arrays must match the model's quadrature grid, including
+GVS padding. Matrices must be finite, symmetric, positive semidefinite, and
+have an isotropic translational mass block.
+
+`spatial_inertia` constructs these matrices from mass, center of mass, and
+rotational inertia about that center, including parallel-axis and coupling terms:
+
+```python
+from soromox.systems import spatial_inertia
+
+tip = spatial_inertia(masses, centers_of_mass, inertias_about_centers)
+robot = robot.update_link_params(tip_inertia=tip)
+```
+
+Numeric updates preserve the model structure when shapes and optional-field
+presence remain fixed. Allocate zero tip matrices before compilation if masses
+will be attached later. See the helper's API reference below for input shapes
+and units.
 
 ## Isotropic material model
 

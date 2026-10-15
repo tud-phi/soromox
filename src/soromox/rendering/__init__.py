@@ -79,6 +79,17 @@ except ImportError:
     ISupportViserRenderer = None
     ISupportVisualConfig = None
 
+try:
+    from soromox.rendering.helicoidal import (
+        HelicoidalModuleVisual,
+        HelicoidalViserRenderer,
+        HelicoidalVisualConfig,
+    )
+except ImportError:
+    HelicoidalModuleVisual = None
+    HelicoidalViserRenderer = None
+    HelicoidalVisualConfig = None
+
 # Specialized OpenCV renderers are optional (require opencv-python)
 try:
     from soromox.rendering.opencv_planar_renderer import OpenCVPlanarRenderer
@@ -129,6 +140,9 @@ __all__ = [
     "MatplotlibRenderer",
     "Open3DRenderer",
     "ViserRenderer",
+    "HelicoidalModuleVisual",
+    "HelicoidalViserRenderer",
+    "HelicoidalVisualConfig",
     "ISupportViserRenderer",
     "ISupportVisualConfig",
     "UMArmViserRenderer",

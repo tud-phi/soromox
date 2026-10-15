@@ -1,5 +1,7 @@
 """Reusable link, joint, cross-section, and material components."""
 
+from soromox.systems.components.inertia import spatial_inertia
+
 from .cross_sections import (
     CrossSectionGeometry,
     CrossSectionParams,
@@ -13,6 +15,7 @@ from .links import ContinuumLinkParams, LinkSpec
 from .materials import IsotropicMaterialParams, shear_modulus_from_poisson_ratio
 
 __all__ = [
+    "spatial_inertia",
     "ContinuumLinkParams",
     "CrossSectionGeometry",
     "CrossSectionParams",

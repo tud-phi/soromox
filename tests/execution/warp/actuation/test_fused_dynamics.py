@@ -22,6 +22,7 @@ from soromox.execution.warp.pcs.actuation.operands import (
     PCSThreadlikeOperands,
 )
 from soromox.execution.warp.pcs.operands import PCSOperands
+from soromox.systems import spatial_inertia
 
 from .test_threadlike import _build_system
 
@@ -35,6 +36,9 @@ from .test_threadlike import _build_system
             for count in (1, 3, 5, 7, 9)
         ),
         ("gvs", 5),
+        ("planar_pcs_full_inertia", 5),
+        ("pcs_full_inertia", 5),
+        ("gvs_full_inertia", 5),
     ],
 )
 def test_fused_dynamics_actuation_executors_match_jax(
@@ -45,6 +49,8 @@ def test_fused_dynamics_actuation_executors_match_jax(
 ) -> None:
     """Match runtime-shaped dynamics and actuation from each fused executor."""
 
+    custom_inertia = family.endswith("_full_inertia")
+    family = family.removesuffix("_full_inertia")
     pytest.importorskip("warp")
     if family != "gvs" and jax.default_backend() != "gpu":
         pytest.skip("Fused PlanarPCS and PCS Warp dynamics require CUDA.")
@@ -58,6 +64,12 @@ def test_fused_dynamics_actuation_executors_match_jax(
         16,
         num_gauss_points=num_gauss_points,
     )
+    if custom_inertia:
+        planar = family == "planar_pcs"
+        center = jnp.array([0.02, -0.03]) if planar else jnp.array([0.01, 0.02, -0.03])
+        rotational = jnp.array(1e-4) if planar else 1e-4 * jnp.eye(3)
+        tip = spatial_inertia(jnp.array([0.04, 0.08]), center, rotational)
+        model = model.update_link_params(sectional_inertia=2 * tip, tip_inertia=tip)
     q = jnp.stack(
         (
             jnp.linspace(-0.025, 0.018, model.num_internal_dofs),
