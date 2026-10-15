@@ -14,8 +14,8 @@ import warp as wp
 from soromox.execution.warp.common.floating_base import _spatial_root_jacobian_entry
 from soromox.execution.warp.common.rotations import _quaternion_rotation_matrix
 from soromox.execution.warp.common.se3 import Vec6d, _ad_action
-from soromox.execution.warp.common.spatial import (
-    _coadjoint_wrench,
+from soromox.execution.warp.common.spatial import _coadjoint_wrench
+from soromox.execution.warp.common.spatial_inertia import (
     _mass_jacobian_action,
     _mass_vector_action,
 )
