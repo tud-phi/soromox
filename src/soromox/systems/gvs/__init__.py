@@ -2,7 +2,6 @@ from soromox.systems.gvs.params import (
     GVSParams,
     HelicoidalBackboneParams,
     HelicoidalHelixParams,
-    HelicoidalReduction,
 )
 from soromox.systems.gvs.structures import (
     GVSJointStructure,
@@ -29,5 +28,4 @@ __all__ = [
     "Helicoidal",
     "HelicoidalBackboneParams",
     "HelicoidalHelixParams",
-    "HelicoidalReduction",
 ]

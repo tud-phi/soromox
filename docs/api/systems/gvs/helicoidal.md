@@ -12,9 +12,21 @@ entry per link for `mass_per_length` [kg/m] and
 `tip_mass` [kg] adds translational tip inertia. For distributed and attached-body
 matrices, see the shared [inertia representation](../continuum-components.md#distributed-and-attached-body-inertia).
 
-Choose either backbone endpoint stiffnesses through `constitutive_law=`, or
-strand material and geometry through `helix_params=`. Both prepare the
-canonical generalized stiffness and damping in `robot.params.link`.
+Supply constitutive parameters through a mapping from segment indices to
+`HelicoidalBackboneParams` or `HelicoidalHelixParams`. Each object describes
+one segment; a mapping can mix the two types or reuse an object across segments:
+
+```python
+robot = Helicoidal.from_segments(
+    segments,
+    mass_per_length=mass_per_length,
+    rotational_inertia_per_length=rotational_inertia_per_length,
+    constitutive_params={1: helix, 3: backbone, 5: helix},
+)
+```
+
+Selected segments receive projected generalized stiffness and damping in
+`robot.params.link`. Other segments use the matrices in their `LinkSpec`.
 
 ### Backbone Parameters
 
@@ -30,18 +42,18 @@ law = HelicoidalBackboneParams(
     stiffness_tip=K_tip,
     damping_time_constant=tau,
 )
-robot = robot.with_constitutive_law(law)
+robot = robot.with_constitutive_params({1: law, 3: law, 5: law})
 ```
 
-Endpoint arrays have shape `(num_links, 6)`, with positive rotational stiffnesses
+Endpoint arrays have shape `(6,)`, with positive rotational stiffnesses
 in N m² and translational stiffnesses in N. Compliance interpolates linearly
 between their reciprocals; equal endpoint values give constant stiffness.
 The law is projected using the configured strain basis and Gauss rule.
-`damping_time_constant` has shape `(num_links,)` in seconds and gives
+`damping_time_constant` is a scalar in seconds and gives
 `D_link = tau * K_link`. Active strains are selected in `StrainBasisSpec`.
 
 `HelicoidalBackboneParams.from_compliance(...)` also accepts affine compliance
-coefficients and segment lengths; see its API reference below.
+coefficients and a segment length; see its API reference below.
 
 ### Helix Parameters
 
@@ -66,17 +78,18 @@ helix = HelicoidalHelixParams.circular(
     fusion_stiffness_multiplier=4.0,    # Scale the stiffness of fused strand crossings.
     damping_time_constant=0.02,
 )
-reduced = helix.reduce()
-# Construct each soft segment's basis using reduced.strain_selector.
-# Apply to a robot with matching segment lengths:
-robot = robot.with_helix_params({1: helix, 3: helix, 5: helix})
+backbone = helix.to_backbone()
+# Use backbone.admissible_strains to choose the soft segments' strain bases.
+robot = robot.with_constitutive_params({1: backbone, 3: backbone, 5: backbone})
 ```
 
 The reduction solves six unit-load cases at the soft segment tip relative to its
 fixed base and fits a diagonal backbone law. It includes deformation of the
-strand connections to the tip ring. `reduced` contains the tip compliance,
-backbone law, and admissible strain selector. Inadmissible fitted shear requires
-both shear strains to be deactivated in the segment basis.
+strand connections to the tip ring. The returned backbone parameters carry
+`admissible_strains`; the model checks this mask against each segment's basis.
+An inadmissible shear fit requires both shear strains to be deactivated.
+`helix.reduction_diagnostics()` reruns the reduction to report the full tip
+compliance, residual shear compliance, and numerical asymmetry.
 
 For noncircular strands, the constructor accepts area, principal area moments,
 torsion constant, and shear correction factors. The parameter reference below
@@ -94,10 +107,16 @@ The example uses square-root sectional damping and Tsit5 at 250 µs.
 
 ## Parameter Updates
 
-Reapply `with_constitutive_law(law)` after updating lengths or endpoint
-stiffnesses. For helix inputs, update the corresponding geometry or material
-parameters and call `with_helix_params(...)` again. Shared parameter objects are
-reduced once per call; helix lengths must match their selected GVS segments.
+Use the same method for either input type:
+
+```python
+robot = robot.with_constitutive_params({1: helix.replace(young_modulus=35e6)})
+robot = robot.with_constitutive_params({3: backbone.replace(stiffness_tip=K_tip)})
+```
+
+Reapply the parameters after changing segment lengths or constitutive inputs.
+Helix lengths must match their selected GVS segments. Shared helix objects are
+reduced once per call. Numeric backbone updates preserve `admissible_strains`.
 
 Helix reduction runs eagerly on the CPU during preparation. Use backbone
 parameters for differentiation through constitutive inputs. Prepared models
@@ -143,12 +162,6 @@ updates. Image and video capture use a connected Viser browser client.
       heading_level: 3
 
 ::: soromox.systems.gvs.params.HelicoidalHelixParams
-    options:
-      show_root_heading: true
-      show_source: false
-      heading_level: 3
-
-::: soromox.systems.gvs.params.HelicoidalReduction
     options:
       show_root_heading: true
       show_source: false

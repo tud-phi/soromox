@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, ClassVar, Self
 
 import equinox as eqx
@@ -24,7 +23,6 @@ __all__ = [
     "GVSParams",
     "HelicoidalBackboneParams",
     "HelicoidalHelixParams",
-    "HelicoidalReduction",
 ]
 
 
@@ -188,7 +186,7 @@ def _as_strong_array(value: object) -> Array:
 
 
 class HelicoidalBackboneParams(BaseSystemParams):
-    """Endpoint sectional stiffnesses in the local backbone material frame.
+    """Endpoint sectional stiffnesses for one segment in its backbone material frame.
 
     The coefficients describe the equivalent rod's effective lattice response.
     Local x is longitudinal and y/z are transverse, with component order
@@ -196,39 +194,47 @@ class HelicoidalBackboneParams(BaseSystemParams):
     strands' properties must first be reduced to this backbone constitutive law.
 
     Compliance varies linearly over normalized reference backbone arc length
-    ``u = s/L``, measured from each link's proximal end:
+    ``u = s/L``, measured from the segment's proximal end:
     ``C(u) = (1-u)/stiffness_base + u/stiffness_tip``. The sectional stiffness
     is ``diag(1/C(u))``. Equal endpoint values give constant stiffness.
     All six endpoint entries must be finite and positive. Active strains are
     selected by the segment's strain basis.
 
-    Pass this object to ``with_constitutive_law`` for Gauss projection.
+    Pass this object to ``with_constitutive_params`` for Gauss projection.
     Reapplying it after a length change preserves the endpoint stiffnesses and
     stretches the profile over the new length. Numeric updates reuse compilation
     with fixed shapes and dtypes.
 
     Attributes:
-        stiffness_base: Diagonal sectional stiffness at each link's proximal
-            end, shape ``(num_links, 6)``. Rotational entries have units N m²;
+        stiffness_base: Diagonal sectional stiffness at the segment's proximal
+            end, shape ``(6,)``. Rotational entries have units N m²;
             translational entries have units N.
-        stiffness_tip: Diagonal sectional stiffness at each link's distal end,
+        stiffness_tip: Diagonal sectional stiffness at the segment's distal end,
             with the same shape, component order, frame, and units.
-        damping_time_constant: Scalar Kelvin-Voigt time constant per link,
-            shape ``(num_links,)`` [s]. It is frame independent and scales the
-            backbone stiffness: ``D_section(u) = tau * K_section(u)`` and
+        damping_time_constant: Scalar Kelvin-Voigt time constant [s].
+            It is frame independent and scales backbone stiffness: ``D_section(u) = tau * K_section(u)`` and
             ``D_link = tau * K_link`` after projection. Zero disables damping.
+        admissible_strains: Six static flags in native strain order. Active basis
+            strains must be admissible. Helix conversion marks inadmissible shear
+            entries false; their endpoint values are finite padding. Numeric
+            replacements preserve these restrictions.
     """
 
     stiffness_base: Array
     stiffness_tip: Array
     damping_time_constant: Array
+    admissible_strains: tuple[bool, ...] = eqx.field(static=True, default=(True,) * 6)
 
     def __check_init__(self) -> None:
-        for name in HelicoidalBackboneParams.__annotations__:
+        for name in ("stiffness_base", "stiffness_tip", "damping_time_constant"):
             object.__setattr__(self, name, _as_strong_array(getattr(self, name)))
         self.validate_for_update()
 
     def _normalize_replacement(self, name: str, value: object) -> object:
+        if name == "admissible_strains":
+            raise ValueError(
+                "admissible_strains is fixed when constructing the parameters."
+            )
         return _as_strong_array(value)
 
     @classmethod
@@ -237,51 +243,52 @@ class HelicoidalBackboneParams(BaseSystemParams):
         *,
         compliance: Array,
         compliance_gradient: Array,
-        lengths: Array,
+        length: Array,
         damping_time_constant: Array,
+        admissible_strains: tuple[bool, ...] = (True,) * 6,
     ) -> Self:
         """Convert an affine compliance law to endpoint stiffnesses.
 
         Evaluates ``C(s) = compliance + (L-s)*compliance_gradient`` at both
-        ends. The supplied lengths are used for conversion; the returned
+        ends. The supplied length is used for conversion; the returned
         object stores endpoint stiffnesses. Subsequent length changes preserve
         those values when the law is reprojected.
 
         Args:
-            compliance: Distal backbone-frame compliance, shape ``(num_links, 6)``.
+            compliance: Distal backbone-frame compliance, shape ``(6,)``.
                 Rotational entries have units 1/(N m²), translational entries 1/N.
             compliance_gradient: Compliance variation per unit reference distance
-                from the distal end, shape ``(num_links, 6)``. Units are compliance
+                from the distal end, shape ``(6,)``. Units are compliance
                 units per metre, and ``dC/ds = -compliance_gradient``.
-            lengths: Positive reference backbone lengths, shape ``(num_links,)`` [m].
-            damping_time_constant: Effective backbone time constants,
-                shape ``(num_links,)`` [s].
+            length: Positive scalar reference backbone length [m].
+            damping_time_constant: Scalar effective backbone time constant [s].
+            admissible_strains: Static flags identifying admissible basis strains.
 
         Returns:
-            Endpoint parameters reproducing the supplied law at these lengths.
+            Endpoint parameters reproducing the supplied law at this length.
 
         Raises:
-            ValueError: If shapes are incompatible, lengths are invalid, compliance
+            ValueError: If shapes are incompatible, length is invalid, compliance
                 is not finite and positive throughout a link, or damping is invalid.
         """
         compliance = _as_strong_array(compliance)
         compliance_gradient = _as_strong_array(compliance_gradient)
-        lengths = _as_strong_array(lengths)
-        if compliance.ndim != 2 or compliance.shape[1] != 6 or not compliance.shape[0]:
-            raise ValueError("compliance must have shape (num_links, 6).")
+        length = _as_strong_array(length)
+        if compliance.shape != (6,):
+            raise ValueError("compliance must have shape (6,).")
         if compliance_gradient.shape != compliance.shape:
             raise ValueError(
                 "compliance_gradient must have the same shape as compliance."
             )
-        if lengths.shape != (compliance.shape[0],):
-            raise ValueError("lengths must have shape (num_links,).")
-        if not _contains_tracer((compliance, compliance_gradient, lengths)):
+        if length.shape != ():
+            raise ValueError("length must be scalar.")
+        if not _contains_tracer((compliance, compliance_gradient, length)):
             with ensure_compile_time_eval():
-                if not bool(jnp.all(jnp.isfinite(lengths) & (lengths > 0))):
-                    raise ValueError("lengths must be finite and positive.")
+                if not bool(jnp.all(jnp.isfinite(length) & (length > 0))):
+                    raise ValueError("length must be finite and positive.")
                 if not bool(jnp.all(jnp.isfinite(compliance_gradient))):
                     raise ValueError("compliance_gradient must be finite.")
-                proximal = compliance + lengths[:, None] * compliance_gradient
+                proximal = compliance + length * compliance_gradient
                 if not bool(
                     jnp.all(
                         jnp.isfinite(compliance)
@@ -294,24 +301,28 @@ class HelicoidalBackboneParams(BaseSystemParams):
                         "Compliance must be finite and positive throughout each link."
                     )
         return cls(
-            stiffness_base=1 / (compliance + lengths[:, None] * compliance_gradient),
+            stiffness_base=1 / (compliance + length * compliance_gradient),
             stiffness_tip=1 / compliance,
             damping_time_constant=damping_time_constant,
+            admissible_strains=admissible_strains,
         )
 
     def validate_structure(self) -> None:
-        if (
-            self.stiffness_base.ndim != 2
-            or self.stiffness_base.shape[1] != 6
-            or not self.stiffness_base.shape[0]
-        ):
-            raise ValueError("stiffness_base must have shape (num_links, 6).")
+        if self.stiffness_base.shape != (6,):
+            raise ValueError("stiffness_base must have shape (6,).")
         if self.stiffness_tip.shape != self.stiffness_base.shape:
             raise ValueError(
                 "stiffness_tip must have the same shape as stiffness_base."
             )
-        if self.damping_time_constant.shape != (self.stiffness_base.shape[0],):
-            raise ValueError("damping_time_constant must contain one value per link.")
+        if self.damping_time_constant.shape != ():
+            raise ValueError("damping_time_constant must be scalar.")
+
+        if (
+            not isinstance(self.admissible_strains, tuple)
+            or len(self.admissible_strains) != 6
+            or any(type(flag) is not bool for flag in self.admissible_strains)
+        ):
+            raise ValueError("admissible_strains must be a tuple of six booleans.")
 
     def validate_values(self) -> None:
         for name in ("stiffness_base", "stiffness_tip"):
@@ -336,7 +347,7 @@ class HelicoidalHelixParams(BaseSystemParams):
     tangent, y along the projected outward radial direction, and z completing a
     right-handed frame. All lengths are in metres and angles in radians.
 
-    ``reduce()`` linearizes the unloaded lattice, solves six unit-load cases at
+    ``to_backbone()`` linearizes the unloaded lattice, solves six unit-load cases at
     the soft segment tip relative to its fixed base, then fits the reference
     toolkit's affine bending-compliance and constant torsion/extension law. Both
     compliance measurement points are the soft segment ends.
@@ -466,42 +477,37 @@ class HelicoidalHelixParams(BaseSystemParams):
                     f"{name} must be {'nonnegative' if name == 'damping_time_constant' else 'positive'}."
                 )
 
-    def reduce(self) -> HelicoidalReduction:
-        """Return segment-tip compliance, fitted backbone law and active strains.
+    def to_backbone(self) -> HelicoidalBackboneParams:
+        """Fit endpoint stiffnesses and admissible strains for this segment.
 
-        An inadmissible residual shear compliance deactivates both shear channels
-        in the returned selector.
-        An inadmissible bending/torsion/extension fit raises ``ValueError``.
-        See ``HelicoidalReduction`` for fit diagnostics and frame conventions.
+        Run eagerly on the CPU after material or geometry updates. The returned
+        ``admissible_strains`` identifies which strains the fitted law supports;
+        use it when choosing the segment's strain basis. Inadmissible residual
+        shear constrains both shear strains. An inadmissible bending, torsion,
+        or extension fit raises ``ValueError``.
         """
         from soromox.systems.gvs._helicoidal_reduction import reduce_helix
 
-        return reduce_helix(self)
+        return reduce_helix(self).backbone
 
+    def reduction_diagnostics(self) -> dict[str, Array | float]:
+        """Run the reduction and return diagnostics for inspecting the fit.
 
-@dataclass(frozen=True)
-class HelicoidalReduction:
-    """Result of eager helix-to-backbone constitutive preparation.
+        Returns:
+            A dictionary containing ``tip_compliance``, the symmetric 6×6
+            compliance at the soft tip relative to its fixed base, in native
+            ``[rotation_x/y/z, translation_x/y/z]`` order. Columns correspond
+            to tip moments/forces; block units are 1/(N m), 1/N and m/N.
+            ``shear_compliance_residual`` is the mean transverse tip compliance
+            after subtracting fitted bending [m/N]; values <= 1e-9 constrain
+            shear. ``relative_asymmetry`` is the relative antisymmetric norm
+            before symmetrization, measuring numerical solve accuracy.
+        """
+        from soromox.systems.gvs._helicoidal_reduction import reduce_helix
 
-    Attributes:
-        backbone: Single-row endpoint stiffness law in the native backbone frame.
-            Entries for inactive shear are finite padding and must not be activated.
-        tip_compliance: Symmetric 6×6 soft-tip compliance relative to the fixed
-            soft base, in native ``[rotation_x/y/z, translation_x/y/z]`` order.
-            Columns correspond to moments/forces at the soft tip. Its blocks have
-            units 1/(N m), 1/N and m/N.
-        strain_selector: Admissible ``[twist, bend_y, bend_z, extension, shear_y,
-            shear_z]`` flags. The fit averages both bending and shear directions;
-            other tip couplings are discarded, following the reference toolkit.
-        shear_compliance_residual: Mean transverse tip compliance remaining after
-            subtracting fitted bending compliance [m/N]. Values <= 1e-9 deactivate
-            shear, following the reference threshold.
-        relative_asymmetry: Relative antisymmetric norm before symmetrization;
-            a diagnostic of the numerical linear solves.
-    """
-
-    backbone: HelicoidalBackboneParams
-    tip_compliance: Array
-    strain_selector: tuple[bool, ...]
-    shear_compliance_residual: float
-    relative_asymmetry: float
+        result = reduce_helix(self)
+        return {
+            "tip_compliance": result.tip_compliance,
+            "shear_compliance_residual": result.shear_compliance_residual,
+            "relative_asymmetry": result.relative_asymmetry,
+        }

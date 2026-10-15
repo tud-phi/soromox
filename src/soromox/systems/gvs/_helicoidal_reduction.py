@@ -14,6 +14,8 @@ exactly. Inadmissible fitted shear requires an inactive shear strain basis.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -23,10 +25,19 @@ from scipy.sparse.linalg import splu
 from soromox.systems.gvs.params import (
     HelicoidalBackboneParams,
     HelicoidalHelixParams,
-    HelicoidalReduction,
 )
 from soromox.systems.params import _contains_tracer
 from soromox.utils.lie_algebra import se3
+
+
+@dataclass(frozen=True)
+class _HelicoidalReduction:
+    """Internal fitted law and diagnostics from the six-load reduction."""
+
+    backbone: HelicoidalBackboneParams
+    tip_compliance: jax.Array
+    shear_compliance_residual: float
+    relative_asymmetry: float
 
 
 def _frame(s, phase, rate, length, radius_base, radius_tip):
@@ -241,24 +252,30 @@ def _fit_backbone(compliance, length, damping_time_constant):
     )
     gradient = np.array([0.0, b, b, 0.0, 0.0, 0.0])
     law = HelicoidalBackboneParams.from_compliance(
-        compliance=distal[None],
-        compliance_gradient=gradient[None],
-        lengths=np.array([length]),
-        damping_time_constant=np.array([damping_time_constant]),
+        compliance=distal,
+        compliance_gradient=gradient,
+        length=length,
+        damping_time_constant=damping_time_constant,
+        admissible_strains=(
+            True,
+            True,
+            True,
+            True,
+            bool(shear_active),
+            bool(shear_active),
+        ),
     )
-    return law, residual, (True, True, True, True, shear_active, shear_active)
+    return law, residual
 
 
-def reduce_helix(params: HelicoidalHelixParams) -> HelicoidalReduction:
+def reduce_helix(params: HelicoidalHelixParams) -> _HelicoidalReduction:
     if _contains_tracer(params):
         raise ValueError(
             "Helix reduction is eager model preparation; call it outside JAX transformations."
         )
     params.validate_for_update()
     compliance, asymmetry = _tip_compliance(params)
-    law, residual, selector = _fit_backbone(
+    law, residual = _fit_backbone(
         compliance, float(params.length), float(params.damping_time_constant)
     )
-    return HelicoidalReduction(
-        law, jnp.asarray(compliance), selector, residual, asymmetry
-    )
+    return _HelicoidalReduction(law, jnp.asarray(compliance), residual, asymmetry)
