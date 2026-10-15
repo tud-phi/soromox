@@ -13,11 +13,11 @@ from __future__ import annotations
 import warp as wp
 
 from soromox.execution.warp.gvs.actuation.threadlike import (
-    launch_gvs_threadlike_actuation_force,
+    launch_homogeneous_gvs_threadlike_actuation_force,
 )
 from soromox.execution.warp.common.floating_base import launch_prepend_zeros
 from soromox.execution.warp.gvs.floating_chain import (
-    launch_floating_persistent_chain,
+    launch_homogeneous_floating_persistent_chain,
 )
 
 wp.set_module_options({"enable_backward": False})
@@ -84,7 +84,7 @@ def launch_gvs_floating_dynamics_and_threadlike_actuation_force(
         None. Caller-owned augmented dynamics and actuator-force buffers are
         updated without JAX-side padding or device transfers.
     """
-    launch_floating_persistent_chain(
+    launch_homogeneous_floating_persistent_chain(
         joint_adjoint,
         joint_adjoint_dot,
         joint_tangent,
@@ -119,7 +119,7 @@ def launch_gvs_floating_dynamics_and_threadlike_actuation_force(
         coriolis_qd,
         gravity_force,
     )
-    launch_gvs_threadlike_actuation_force(
+    launch_homogeneous_gvs_threadlike_actuation_force(
         q_internal,
         controls,
         link_local_to_global,

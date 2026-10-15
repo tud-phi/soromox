@@ -13,6 +13,10 @@ and include benchmark baseline and measurement context for performance claims.
 
 ### Added
 
+- Native Warp GVS kernels for heterogeneous worlds, with FP64 dynamics,
+  kinematics and actuation across different joints and strain bases; see
+  [PR #227](https://github.com/tud-phi/soromox/pull/227).
+
 - Python 3.15 support, with numerical tests and patched Open3D source-build
   and rendering checks in Ubuntu CI.
 
@@ -26,6 +30,13 @@ and include benchmark baseline and measurement context for performance claims.
 ### Deprecated
 
 ### Breaking changes
+
+- Renamed direct GVS Warp kernels and launchers to `homogeneous_*_kernel`
+  and `launch_homogeneous_*`; homogeneous kernels take the shared `*Data`
+  structs, while host launchers retain array arguments. Integration callers
+  must use the explicit names and updated kernel signatures.
+  See the [batch layout contracts](../api/execution/warp/gvs.md#batch-layouts-and-naming)
+  and [PR #227](https://github.com/tud-phi/soromox/pull/227).
 
 ### Fixed
 
