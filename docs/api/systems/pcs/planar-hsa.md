@@ -31,6 +31,26 @@ underactuation, and optional Bouc--Wen hysteresis.
 - Optional Bouc--Wen hysteresis
 - JAX-native kinematics, Jacobians, energies, and dynamics
 
+## Specialized OpenCV Rendering
+
+`OpenCVPlanarHSARenderer` extends the planar OpenCV backend with HSA rod and
+platform geometry. It uses the [shared renderer configuration](../../rendering/configuration.md).
+
+```python
+from soromox.rendering import OpenCVPlanarHSARenderer
+
+renderer = OpenCVPlanarHSARenderer(robot)
+renderer.show(q)
+```
+
+::: soromox.rendering.planar_hsa.opencv_renderer.OpenCVPlanarHSARenderer
+    options:
+      show_root_heading: true
+      show_source: false
+      heading_level: 3
+      docstring_section_style: table
+      members_order: source
+
 ## Reference
 
 Stölzle, M., Rus, D., & Della Santina, C. (2024). An experimental study of
