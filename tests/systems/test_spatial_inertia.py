@@ -19,8 +19,59 @@ from soromox.systems import (
     StrainBasisSpec,
     spatial_inertia,
 )
+from soromox.systems.components import ContinuumLinkParams, CrossSectionParams
 
 jax.config.update("jax_enable_x64", True)
+
+
+@pytest.mark.parametrize("double", [False, True])
+@pytest.mark.parametrize("dimension", [3, 6])
+@pytest.mark.parametrize(
+    ("field", "sampled"),
+    [("tip_inertia", False), ("sectional_inertia", False), ("sectional_inertia", True)],
+)
+def test_inertia_validation_handles_roundoff_at_each_matrix_scale(
+    double, dimension, field, sampled
+):
+    with jax.enable_x64(double):
+        scales = jnp.array([0.0, 1e-6, 1.0, 1e6])
+        center = jnp.array([0.01, 0.02] if dimension == 3 else [0.01, 0.02, 0.03])
+        rotation = jnp.array(0.0) if dimension == 3 else jnp.zeros((3, 3))
+        point_masses = spatial_inertia(0.04 * scales, center, rotation)
+        # Include a zero sample alongside each offset point mass.
+        inertias = (
+            jnp.stack((jnp.zeros_like(point_masses), point_masses), axis=1)
+            if sampled
+            else point_masses
+        )
+        link = ContinuumLinkParams(
+            length=jnp.full(4, 0.12),
+            density=jnp.full(4, 1000.0),
+            reference_strain=jnp.zeros((4, dimension)),
+            cross_section=CrossSectionParams(coefficients=jnp.full((4, 1), 0.02)),
+            stiffness=jnp.broadcast_to(jnp.eye(dimension), (4, dimension, dimension)),
+            damping=jnp.zeros((4, dimension, dimension)),
+            **{field: inertias},
+        )
+        # Validation must accept the matrix without perturbing its zero modes.
+        assert_allclose(getattr(link, field), inertias, rtol=0, atol=0)
+        link.replace(**{field: inertias})
+
+        for index in (1, 2, 3):
+            # A negative principal rotational inertia is invalid at every scale,
+            # even when other matrices in the batch have much larger masses.
+            invalid = jnp.diag(
+                jnp.full(dimension, 0.04 * scales[index]).at[0].multiply(-0.001)
+            )
+            changed = (
+                inertias.at[index, 1].set(invalid)
+                if sampled
+                else inertias.at[index].set(invalid)
+            )
+            with pytest.raises(
+                ValueError, match=f"{field} must be positive semidefinite"
+            ):
+                link.replace(**{field: changed})
 
 
 def make_model(family, floating=False):
