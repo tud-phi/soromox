@@ -17,8 +17,8 @@ from soromox.execution.warp.common.se3 import (
     _left_total_derivative_action,
     _translation,
 )
-from soromox.execution.warp.common.spatial import (
-    _coadjoint_wrench,
+from soromox.execution.warp.common.spatial import _coadjoint_wrench
+from soromox.execution.warp.common.spatial_inertia import (
     _mass_jacobian_action,
     _mass_vector_action,
 )
