@@ -14,8 +14,8 @@ and include benchmark baseline and measurement context for performance claims.
 ### Added
 
 - GVS-based `Helicoidal` models for trimmed-helicoid robots, with analytic
-  sectional mechanics, helix-domain material inputs, a simulation example,
-  and a dedicated Viser renderer;
+  sectional mechanics, helix-domain material inputs and strand-derived inertia,
+  a simulation example, and a dedicated Viser renderer;
   see [PR #229](https://github.com/tud-phi/soromox/pull/229).
 - Python 3.15 support, with numerical tests and patched Open3D source-build
   and rendering checks in Ubuntu CI.

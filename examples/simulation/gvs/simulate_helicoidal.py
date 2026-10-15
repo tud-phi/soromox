@@ -5,7 +5,8 @@ examples/simulation/gvs/simulate_helicoidal.py --duration 0.02``.
 Use ``--duration 0`` to inspect the model without a rollout. Tension is in newtons.
 The fixture describes the toolkit's illustrative cylindrical arm. Pass
 ``--parameter-domain helix`` to prepare its stiffness from strand material and
-geometry using ``HelicoidalHelixParams``.
+geometry using ``HelicoidalHelixParams``. Both parameter modes derive module
+inertia from strand geometry and density; crossings use additive strand volumes.
 This example uses normalized square-root sectional damping and fixed-step Tsit5
 at 250 microseconds. The damping is an illustrative choice, not an identified
 material law: it preserves the selected law's bending/extension damping and reduces
@@ -58,7 +59,7 @@ def _merge_rigid_interfaces(source_links):
     Each internal cylinder includes the upstream module's platform mass and the
     following transition's distributed mass. This preserves the fixture's total
     mass while replacing its point-mass and thin-ring inertia approximations for
-    rigid parts. Deformable module inertia retains the source distribution.
+    rigid parts. Each rigid assembly gets its own effective cylinder density.
     """
     links, source_to_link = [], []
     for source in source_links:
@@ -81,10 +82,9 @@ def _merge_rigid_interfaces(source_links):
         source_to_link.append(len(links) - 1)
     for link in links:
         if link["role"] != "module":
-            # Solid circular section about native x; longitudinal spread is
-            # integrated by GVS, including the transverse m L^2 / 12 term.
-            polar = link["mass_per_length"] * link["radius"] ** 2 / 2
-            link["rotational_inertia_per_length"] = [polar, polar / 2, polar / 2]
+            # Preserve the known assembly mass with an effective solid-cylinder
+            # density. GVS computes its sectional inertia from this geometry.
+            link["density"] = link["mass_per_length"] / (np.pi * link["radius"] ** 2)
     return links, source_to_link
 
 
@@ -98,6 +98,7 @@ def build_helix_params() -> HelicoidalHelixParams:
         helices_per_direction=3,
         winding_family_phase_offset=np.pi / 6,
         strand_radius=0.002,
+        density=1220.0,
         young_modulus=30e6,
         shear_modulus=30e6 / (2 * (1 + 0.48)),
         fusion_stiffness_multiplier=4.0,
@@ -114,8 +115,8 @@ def build_robot(
     """Build three modules from backbone or helix inputs with square-root damping."""
     if parameter_domain not in {"backbone", "helix"}:
         raise ValueError("parameter_domain must be 'backbone' or 'helix'.")
-    helix = build_helix_params() if parameter_domain == "helix" else None
-    backbone = helix.to_backbone() if helix is not None else None
+    helix = build_helix_params()
+    backbone = helix.to_backbone() if parameter_domain == "helix" else None
     data = json.loads(FIXTURE.read_text())
     links, source_to_link = _merge_rigid_interfaces(data["links"])
     segments = []
@@ -138,7 +139,7 @@ def build_robot(
                 link=LinkSpec.circular(
                     length=link["length"],
                     radius=link["radius"],
-                    density=1.0,
+                    density=float(helix.density) if active else link["density"],
                     reference_strain=[0.0, 0.0, 0.0, 1.0, 0.0, 0.0],
                     stiffness=jnp.zeros((dof, dof)),
                     damping=jnp.zeros((dof, dof)),
@@ -196,18 +197,14 @@ def build_robot(
     )
     robot = Helicoidal.from_segments(
         segments,
-        mass_per_length=jnp.array([link["mass_per_length"] for link in links]),
-        rotational_inertia_per_length=jnp.array(
-            [link["rotational_inertia_per_length"] for link in links]
-        ),
-        tip_mass=jnp.array([link["tip_mass"] for link in links]),
         constitutive_params=laws,
         gravity=jnp.array(data["gravity"]),
         base_pose=jnp.array(data["base_pose"]),
         actuators=ThreadlikeActuator.tendons(routing),
         backend="jax",
     )
-    # The terminal ring/plate extends beyond the backbone tip. Attach its full
+    robot = robot.with_helix_inertia(dict.fromkeys(laws, helix))
+    # The terminal rigid assembly extends beyond the backbone tip. Attach its full
     # cylinder inertia there, with its center halfway along the extension.
     tip = links[-1]
     mass, radius, length = tip["tip_mass"], tip["radius"], tip["tip_body_length"]

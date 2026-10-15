@@ -86,6 +86,7 @@ circular, rectangular, and elliptical cross-sections.
 | `stiffness` | `(N, generalized_dimension, generalized_dimension)` | Generalized link stiffness |
 | `damping` | same as `stiffness` | Generalized link damping |
 | `sectional_inertia` | `(N, d, d)` or `(N, Q, d, d)`, optional | Angular-first inertia per reference length |
+| `sectional_inertia_mask` | `(N,)`, optional boolean | Select supplied sectional inertia per link; other links use geometry and density |
 | `tip_inertia` | `(N, d, d)`, optional | Attached-body inertia about each link tip |
 
 Stiffness and damping are finite symmetric matrices. They are not required to
@@ -111,7 +112,10 @@ center of mass. Use angular-first order with `d=3` for planar mechanics and
 `d=6` for spatial mechanics. Sectional matrices are per unit reference length;
 tip matrices describe the whole attached body about the link tip. Omitting
 sectional inertia uses geometry and density; omitting tip inertia adds no attached
-body.
+body. With supplied sectional matrices, `sectional_inertia_mask` selects which
+links use them: `True` selects the override and `False` keeps geometry-and-density
+evaluation. Omitting the mask selects every supplied row. This allows mixed
+geometric and prepared inertia distributions, including subsequent density updates.
 
 A sectional matrix may be constant along a link or sampled at its interior
 Gauss nodes. Sampled arrays must match the model's quadrature grid, including

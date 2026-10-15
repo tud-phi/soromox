@@ -12,6 +12,7 @@ from examples.simulation.gvs.simulate_helicoidal import (
     build_helix_params,
     build_robot,
 )
+from soromox.systems.components.inertia import sectional_inertias
 
 jax.config.update("jax_enable_x64", True)
 
@@ -147,9 +148,11 @@ def test_rigid_cylinders_preserve_total_mass_and_sectional_moments():
         link["length"] * link["mass_per_length"] + link["tip_mass"]
         for link in data["links"]
     )
+    sections = np.asarray(
+        sectional_inertias(robot.params.link, robot.inner_mass_matrices)
+    )
     actual_mass = (
-        np.asarray(robot.params.link.sectional_inertia)[:, 3, 3]
-        @ np.asarray(robot.segment_lengths)
+        np.sum(sections[:, :, 3, 3] * np.asarray(robot.inner_integration_weights))
         + np.asarray(robot.params.link.tip_inertia)[:, 3, 3].sum()
     )
     assert_allclose(actual_mass, expected_mass, rtol=1e-13)
@@ -166,7 +169,13 @@ def test_rigid_cylinders_preserve_total_mass_and_sectional_moments():
             / length
             * np.array([radius**2 / 2, radius**2 / 4, radius**2 / 4, 1, 1, 1])
         )
-        assert_allclose(robot.params.link.sectional_inertia[index], np.diag(expected))
+        assert_allclose(
+            sections[index], np.broadcast_to(np.diag(expected), sections[index].shape)
+        )
+        assert not robot.params.link.sectional_inertia_mask[index]
+        assert_allclose(
+            robot.params.link.density[index], mass / (length * np.pi * radius**2)
+        )
         assert_allclose(robot.params.link.tip_inertia[index], 0.0)
 
 

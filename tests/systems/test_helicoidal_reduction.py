@@ -28,6 +28,7 @@ def helix():
         radius_tip=0.025,
         num_turns=3.0,
         strand_radius=0.002,
+        density=1220.0,
         young_modulus=30e6,
         shear_modulus=30e6 / 2.96,
         damping_time_constant=0.02,
@@ -140,8 +141,6 @@ def make_model(helix, active=(True, True, True, True, False, False), **kwargs):
     ]
     return Helicoidal.from_segments(
         segments,
-        mass_per_length=jnp.full(3, 0.2),
-        rotational_inertia_per_length=jnp.full((3, 3), 1e-4),
         constitutive_params={2: helix},
         **kwargs,
     )
@@ -227,6 +226,7 @@ def test_shared_inputs_reduce_once_and_match_sequential_updates(helix, monkeypat
     "field,value",
     [
         ("strand_area", -1),
+        ("density", 0),
         ("radius_tip", 0),
         ("fusion_stiffness_multiplier", np.nan),
         ("damping_time_constant", -1),

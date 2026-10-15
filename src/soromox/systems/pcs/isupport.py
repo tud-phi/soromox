@@ -380,6 +380,11 @@ def _expand_isupport_layout(
             stiffness=jnp.stack(expanded_stiffness),
             damping=jnp.stack(expanded_damping_blocks),
             sectional_inertia=sectional_inertia,
+            sectional_inertia_mask=(
+                None
+                if params.link.sectional_inertia_mask is None
+                else params.link.sectional_inertia_mask[sources]
+            ),
             tip_inertia=tip_inertia,
         ),
         chamber_inner_radius=jnp.stack(expanded_chamber_inner_radius),

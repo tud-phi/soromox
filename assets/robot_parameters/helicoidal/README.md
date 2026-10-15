@@ -33,7 +33,7 @@ Native local x is the backbone tangent. Local vectors are converted by
 `P = [[0,0,1], [1,0,0], [0,1,0]]`; the base orientation is `P.T` to preserve the
 source world frame. Consequently, the undeformed tip is `[0,0,0.6446] m` and world
 gravity is `[0,0,9.81] m/s²`. Both angular and linear strain blocks use P.
-Rotational inertia is reordered from source x/y/z to native z/x/y.
+The fixture records source rotational inertia reordered into native x/y/z.
 
 The example uses quadratic twist/bending and linear extension in each module,
 with module shear inactive, giving 33 coordinates in total. The base ring is
@@ -46,8 +46,9 @@ The example approximates each rigid assembly as a uniform solid cylinder with
 the fixture's 25 mm radius. Each 18.3 mm junction contains both the upstream
 platform mass and the following transition's distributed mass. The base ring
 retains its source mass over 8 mm. This preserves the fixture's total mass while
-redistributing it over the rigid spans. Its inherited mass allocation is not a
-new estimate from CAD or measured densities.
+redistributing it over the rigid spans. Each assembly uses an effective density
+computed from its known mass and cylindrical volume; GVS evaluates its sectional
+inertia from this density and geometry.
 
 Rigid-link sectional inertia uses `J_xx = mu*r^2/2` and
 `J_yy = J_zz = mu*r^2/4`, where `mu` is mass per unit length. GVS integrates the
@@ -55,8 +56,13 @@ longitudinal distribution. The terminal ring/plate cylinder extends 10.3 mm
 beyond the last module, using the source 8 mm ring and 2.3 mm plate dimensions
 recorded as `tip_body_length`. Its full attached-body inertia includes the
 5.15 mm center-of-mass offset and transverse `m*L^2/12` contribution. The uniform
-cylinders approximate the ring-and-plate geometry; deformable modules retain the
-source thin-ring sectional inertia.
+cylinders approximate the combined ring-and-plate geometry.
+
+Both example parameter modes derive module inertia from the strands at the
+reference material density of 1220 kg/m³. The calculation includes strand arc
+length, cross-sectional inertia, strand orientation, and offset from the backbone.
+Strand volumes are summed, neglecting overlap at fused crossings. It preserves
+the source line mass while replacing its thin-ring rotational approximation.
 
 Inactive law rows use finite positive padding that contributes nothing to the
 projected stiffness or damping because their basis rows are zero.
@@ -79,4 +85,4 @@ JAX_PLATFORMS=cpu python examples/simulation/gvs/simulate_helicoidal.py --durati
 Use `--duration 0` to inspect construction, `--output trajectory.npz` to save a
 rollout, or `--viser` to display the helicoidal lattice with the standard neutral
 Studio preset. A positive duration with `--viser` plays the simulated trajectory.
-The example uses implicit Euler to handle the stiff, damped modes.
+The example uses fixed-step Tsit5 at 250 µs and normalized square-root damping.

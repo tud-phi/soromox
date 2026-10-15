@@ -30,7 +30,9 @@ class Helicoidal(GVS):
 
     Supply an effective ``HelicoidalBackboneParams`` law directly, or prepare it
     from strand geometry and material using ``HelicoidalHelixParams`` and
-    ``with_constitutive_params``.
+    ``with_constitutive_params``. Helix inputs also derive sectional inertia from
+    strand geometry and density; ordinary GVS segments use their own geometry
+    and density.
 
     The local x-axis follows the backbone, with strains ordered as
     ``[twist, bend_y, bend_z, extension, shear_y, shear_z]``. Generalized
@@ -58,8 +60,8 @@ class Helicoidal(GVS):
         cls,
         segments: list[GVSSegment] | tuple[GVSSegment, ...],
         *,
-        mass_per_length: Array,
-        rotational_inertia_per_length: Array,
+        mass_per_length: Array | None = None,
+        rotational_inertia_per_length: Array | None = None,
         tip_mass: Array | None = None,
         constitutive_params: Mapping[
             int, HelicoidalBackboneParams | HelicoidalHelixParams
@@ -71,17 +73,22 @@ class Helicoidal(GVS):
         scale_rotational_basis_by_length: bool = False,
         **kwargs: Any,
     ) -> Self:
-        """Construct from native segment specs and independent lattice inertia.
+        """Construct from segment specs and optional helix material/geometry inputs.
 
         Args:
             segments: GVS segment specifications.
-            mass_per_length: One constant line mass per link [kg/m].
-            rotational_inertia_per_length: Principal local x/y/z inertias,
-                shape ``(num_links, 3)`` [kg m].
+            mass_per_length: Optional constant line-mass override per link [kg/m].
+                Supply together with ``rotational_inertia_per_length``. These
+                overrides take precedence over geometry-derived inertia.
+            rotational_inertia_per_length: Optional principal local x/y/z inertia
+                override, shape ``(num_links, 3)`` [kg m]. By default, helix inputs
+                derive strand inertia; other segments use their GVS geometry and
+                density.
             tip_mass: One point mass per link tip [kg]; defaults to zeros.
             constitutive_params: Optional mapping from zero-based segment indices
                 to backbone or helix parameters. Replaces stiffness and damping
-                for selected segments; see ``with_constitutive_params``.
+                for selected segments. Helix inputs also derive distributed inertia;
+                see ``with_constitutive_params``.
             gravity: Optional world-frame acceleration, shape ``(3,)``.
             max_dof: Optional common padded link/joint matrix dimension.
             max_num_gauss_points: Optional common quadrature padding.
@@ -99,34 +106,52 @@ class Helicoidal(GVS):
             max_num_gauss_points=max_num_gauss_points,
             scale_rotational_basis_by_length=scale_rotational_basis_by_length,
         )
-        diagonal = jnp.concatenate(
-            (
-                jnp.asarray(rotational_inertia_per_length),
-                jnp.repeat(jnp.asarray(mass_per_length)[:, None], 3, axis=1),
-            ),
-            axis=1,
+        if (mass_per_length is None) != (rotational_inertia_per_length is None):
+            raise ValueError(
+                "Supply mass_per_length and rotational_inertia_per_length together."
+            )
+        count = len(segments)
+        points = structure.max_num_gauss_points or max(
+            s.num_gauss_points for s in segments
         )
+        dtype = params.link.stiffness.dtype
         tip_mass = (
-            jnp.zeros_like(params.link.length)
-            if tip_mass is None
-            else jnp.asarray(tip_mass)
+            jnp.zeros(count, dtype=dtype) if tip_mass is None else jnp.asarray(tip_mass)
         )
         tip_diagonal = jnp.concatenate(
-            (jnp.zeros((len(segments), 3)), jnp.repeat(tip_mass[:, None], 3, axis=1)),
+            (
+                jnp.zeros((count, 3), dtype=dtype),
+                jnp.repeat(tip_mass[:, None], 3, axis=1),
+            ),
             axis=1,
         )
         params = params.replace(
             link=params.link.replace(
-                sectional_inertia=jax.vmap(jnp.diag)(diagonal),
+                sectional_inertia=jnp.zeros((count, points, 6, 6), dtype=dtype),
+                sectional_inertia_mask=jnp.zeros(count, dtype=bool),
                 tip_inertia=jax.vmap(jnp.diag)(tip_diagonal),
             )
         )
         model = cls(params, structure, **kwargs)
-        return (
-            model
-            if constitutive_params is None
-            else model.with_constitutive_params(constitutive_params)
-        )
+        if constitutive_params is not None:
+            model = model.with_constitutive_params(constitutive_params)
+        if mass_per_length is not None:
+            mass = jnp.asarray(mass_per_length)
+            rotation = jnp.asarray(rotational_inertia_per_length)
+            if mass.shape != (count,) or rotation.shape != (count, 3):
+                raise ValueError(
+                    "Inertia overrides require shapes (num_links,) and (num_links, 3)."
+                )
+            diagonal = jnp.concatenate(
+                (rotation, jnp.repeat(mass[:, None], 3, axis=1)), axis=1
+            )
+            model = model.update_link_params(
+                sectional_inertia=jnp.broadcast_to(
+                    jax.vmap(jnp.diag)(diagonal)[:, None], (count, points, 6, 6)
+                ),
+                sectional_inertia_mask=jnp.ones(count, dtype=bool),
+            )
+        return model
 
     def with_constitutive_params(
         self,
@@ -137,7 +162,10 @@ class Helicoidal(GVS):
         Each mapping entry describes one segment. Helix inputs are converted
         to backbone parameters using six unit loads at the soft segment tip.
         Shared helix objects are reduced once per call. Their reference lengths
-        must match the selected GVS segments.
+        must match the selected GVS segments. Their geometry and density also
+        refresh the selected segments' distributed inertia. Backbone inputs
+        update stiffness and damping. For density-only updates, use
+        ``with_helix_inertia`` to prepare inertia directly.
 
         Backbone compliance is evaluated at each segment's Gauss nodes and
         projected as ``integral B.T @ diag(1/C(s)) @ B ds`` (paper Eq. 25).
@@ -154,7 +182,8 @@ class Helicoidal(GVS):
                 parameters. Unselected segments retain their stiffness and damping.
 
         Returns:
-            A model with updated canonical stiffness and damping in ``params.link``.
+            A model with updated stiffness, damping, and derived helix inertia
+            in ``params.link``.
 
         Raises:
             TypeError: If a value has an unsupported parameter type.
@@ -232,10 +261,85 @@ class Helicoidal(GVS):
         )
         damping = damping_times[:, None, None] * stiffness
         mask = jnp.array([i in laws for i in range(self.num_segments)])[:, None, None]
+        helix_inputs = {
+            i: value
+            for i, value in params.items()
+            if isinstance(value, HelicoidalHelixParams)
+        }
+        inertia_updates = (
+            self._helix_inertia_updates(helix_inputs) if helix_inputs else {}
+        )
         return self.update_link_params(
             stiffness=jnp.where(mask, stiffness, self.params.link.stiffness),
             damping=jnp.where(mask, damping, self.params.link.damping),
+            **inertia_updates,
         )
+
+    def with_helix_inertia(self, params: Mapping[int, HelicoidalHelixParams]) -> Self:
+        """Derive distributed strand inertia for selected segments.
+
+        Use this for density-only updates or with explicitly converted backbone
+        laws. Geometry and density are evaluated at the existing Gauss points;
+        strand contributions include cross-sectional inertia, offsets and the
+        strand-to-backbone arc-length factor. Volumes add at fused crossings.
+        Other segments retain their inertia selection, including ordinary GVS
+        geometry/density evaluation. Attached bodies retain their own inertia.
+
+        Args:
+            params: Segment indices mapped to helix inputs with matching lengths.
+
+        Returns:
+            A model with updated sectional inertia. Numeric updates support JAX
+            differentiation and reuse compilation at fixed shapes and dtypes.
+        """
+        if not params:
+            return self
+        return self.update_link_params(**self._helix_inertia_updates(params))
+
+    def _helix_inertia_updates(
+        self, params: Mapping[int, HelicoidalHelixParams]
+    ) -> dict[str, Array]:
+        shape = (self.num_segments, self.max_num_gauss_points, 6, 6)
+        inertia = self.params.link.sectional_inertia
+        if inertia is None:
+            inertia = jnp.zeros(shape, dtype=self.params.link.stiffness.dtype)
+            mask = jnp.zeros(self.num_segments, dtype=bool)
+        else:
+            inertia = jnp.broadcast_to(
+                inertia[:, None] if inertia.ndim == 3 else inertia, shape
+            )
+            mask = self.params.link.sectional_inertia_mask
+            if mask is None:
+                mask = jnp.ones(self.num_segments, dtype=bool)
+        for index, value in params.items():
+            if (
+                isinstance(index, bool)
+                or not isinstance(index, int)
+                or not 0 <= index < self.num_segments
+            ):
+                raise ValueError(f"Invalid helix segment index: {index!r}.")
+            if not isinstance(value, HelicoidalHelixParams):
+                raise TypeError(
+                    "Helix inertia inputs must be HelicoidalHelixParams instances."
+                )
+            value.validate_for_update()
+            if not _contains_tracer(
+                (value.length, self.segment_lengths)
+            ) and not np.isclose(
+                float(value.length),
+                float(self.segment_lengths[index]),
+                rtol=1e-6,
+                atol=0,
+            ):
+                raise ValueError(
+                    f"Helix length must match soft segment {index} length."
+                )
+            positions = (
+                self.integration_points[index, 1:-1] * self.segment_lengths[index]
+            )
+            inertia = inertia.at[index].set(value.sectional_inertia(positions))
+            mask = mask.at[index].set(True)
+        return {"sectional_inertia": inertia, "sectional_inertia_mask": mask}
 
     def with_isotropic_material(self, material: IsotropicMaterialParams) -> Self:
         """Require an effective sectional constitutive law for helicoidal lattice mechanics."""

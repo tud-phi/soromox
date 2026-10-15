@@ -61,6 +61,9 @@ class ContinuumLinkParams(BaseSystemParams):
             ``(num_links, num_gauss_points, d, d)`` at interior quadrature nodes,
             with ``d=3`` for planar models and ``d=6`` for spatial models.
             Omitting it derives inertia from density and cross-section geometry.
+        sectional_inertia_mask: Optional boolean array of shape ``(num_links,)``.
+            True selects the supplied sectional inertia; False derives it from
+            the link's density and geometry. Omission selects all supplied rows.
         tip_inertia: Optional attached-body spatial inertia about each link tip,
             shape ``(num_links, d, d)``. Use :func:`spatial_inertia` for masses
             with an offset center of mass and rotational inertia. Zero matrices
@@ -75,11 +78,12 @@ class ContinuumLinkParams(BaseSystemParams):
     damping: Array
     sectional_inertia: Array | None = None
     tip_inertia: Array | None = None
+    sectional_inertia_mask: Array | None = None
 
     def __check_init__(self) -> None:
         for name in ("length", "density", "reference_strain", "stiffness", "damping"):
             object.__setattr__(self, name, jnp.asarray(getattr(self, name)))
-        for name in ("sectional_inertia", "tip_inertia"):
+        for name in ("sectional_inertia", "tip_inertia", "sectional_inertia_mask"):
             if getattr(self, name) is not None:
                 value = jnp.asarray(getattr(self, name))
                 object.__setattr__(self, name, jnp.asarray(value, dtype=value.dtype))
@@ -89,7 +93,10 @@ class ContinuumLinkParams(BaseSystemParams):
         """Normalize replacement link-array values to JAX arrays."""
         if name in ("length", "density", "reference_strain", "stiffness", "damping"):
             return jnp.asarray(value)
-        if name in ("sectional_inertia", "tip_inertia") and value is not None:
+        if (
+            name in ("sectional_inertia", "tip_inertia", "sectional_inertia_mask")
+            and value is not None
+        ):
             array = jnp.asarray(value)
             return jnp.asarray(array, dtype=array.dtype)
         return value
@@ -139,6 +146,17 @@ class ContinuumLinkParams(BaseSystemParams):
             raise ValueError(
                 f"damping must have shape {stiffness.shape}, got {damping.shape}."
             )
+
+        if self.sectional_inertia_mask is not None:
+            if self.sectional_inertia is None:
+                raise ValueError("sectional_inertia_mask requires sectional_inertia.")
+            if (
+                self.sectional_inertia_mask.shape != (num_links,)
+                or self.sectional_inertia_mask.dtype != jnp.bool_
+            ):
+                raise ValueError(
+                    "sectional_inertia_mask must be boolean with shape (num_links,)."
+                )
 
         for name in ("sectional_inertia", "tip_inertia"):
             value = getattr(self, name)

@@ -9,7 +9,7 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array, ensure_compile_time_eval
 
-from soromox.systems.components import ContinuumLinkParams, JointParams
+from soromox.systems.components import ContinuumLinkParams, JointParams, spatial_inertia
 from soromox.systems.params import (
     BaseSoftRobotParams,
     BaseSystemParams,
@@ -363,6 +363,8 @@ class HelicoidalHelixParams(BaseSystemParams):
         num_turns: Number of revolutions each strand makes around the backbone
             over ``length``. One turn is 2π radians; positive fractional values
             are supported. The two families wind in opposite directions.
+        density: Strand material mass density [kg/m³]. Strand volumes are summed
+            additively, neglecting overlap at fused crossings.
         young_modulus: Strand material Young's modulus [Pa].
         shear_modulus: Strand material shear modulus [Pa].
         strand_area: Strand-normal sectional area [m²].
@@ -400,6 +402,7 @@ class HelicoidalHelixParams(BaseSystemParams):
     radius_base: Array
     radius_tip: Array
     num_turns: Array
+    density: Array
     young_modulus: Array
     shear_modulus: Array
     strand_area: Array
@@ -476,6 +479,72 @@ class HelicoidalHelixParams(BaseSystemParams):
                 raise ValueError(
                     f"{name} must be {'nonnegative' if name == 'damping_time_constant' else 'positive'}."
                 )
+
+    def sectional_inertia(self, s: Array) -> Array:
+        """Evaluate strand inertia per reference backbone length at positions ``s``.
+
+        Sum strand-normal section inertias after rotating into the backbone
+        frame and shifting to its centreline. The arc-length factor converts
+        strand length to backbone length. Each section moves with its backbone
+        material frame. Strand volumes are additive at crossings.
+
+        Args:
+            s: Reference backbone arc positions [m], scalar or array, in [0, length].
+
+        Returns:
+            Angular-first spatial inertia, shape ``(*s.shape, 6, 6)``. Rotational,
+            coupling and translational blocks have units kg m, kg and kg/m.
+            Supports JAX differentiation and compilation.
+        """
+        self.validate_for_update()
+        s = jnp.asarray(s)
+        slope = (self.radius_tip - self.radius_base) / self.length
+        radius = self.radius_base + slope * s
+        angles = (
+            self.phase
+            + 2
+            * jnp.pi
+            * jnp.arange(self.helices_per_direction)
+            / self.helices_per_direction
+        )
+        phases = jnp.concatenate((angles, angles + self.winding_family_phase_offset))
+        rates = (
+            2
+            * jnp.pi
+            * self.num_turns
+            / self.length
+            * jnp.repeat(jnp.array([-1.0, 1.0]), self.helices_per_direction)
+        )
+        theta = phases + s[..., None] * rates
+        cosine, sine = jnp.cos(theta), jnp.sin(theta)
+        zero, one = jnp.zeros_like(theta), jnp.ones_like(theta)
+        radius = radius[..., None]
+        radial = jnp.stack((zero, cosine, sine), axis=-1)
+        tangent = jnp.stack(
+            (
+                one,
+                slope * cosine - radius * rates * sine,
+                slope * sine + radius * rates * cosine,
+            ),
+            axis=-1,
+        )
+        arc_factor = jnp.linalg.norm(tangent, axis=-1)
+        tangent = tangent / arc_factor[..., None]
+        normal = radial - jnp.sum(radial * tangent, axis=-1, keepdims=True) * tangent
+        normal = normal / jnp.linalg.norm(normal, axis=-1, keepdims=True)
+        frame = jnp.stack((tangent, normal, jnp.cross(tangent, normal)), axis=-1)
+        iy, iz = self.strand_second_moments
+        # Polar area moment Iy+Iz determines mass inertia; Saint-Venant's
+        # torsion constant describes elasticity and can differ for noncircles.
+        section = jnp.diag(jnp.stack((iy + iz, iy, iz)))
+        inertia = (
+            self.density
+            * arc_factor[..., None, None]
+            * (frame @ section @ jnp.swapaxes(frame, -1, -2))
+        )
+        mass = self.density * self.strand_area * arc_factor
+        center = radius[..., None] * radial
+        return jnp.sum(spatial_inertia(mass, center, inertia), axis=-3)
 
     def to_backbone(self) -> HelicoidalBackboneParams:
         """Fit endpoint stiffnesses and admissible strains for this segment.

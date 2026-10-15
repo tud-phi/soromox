@@ -814,7 +814,8 @@ def test_isupport_layout_validation_and_updates():
     )
 
 
-def test_isupport_inertia_overrides_follow_physical_link_subdivision():
+@pytest.mark.parametrize("selected", [True, False])
+def test_isupport_inertia_overrides_follow_physical_link_subdivision(selected):
     from soromox.systems import spatial_inertia
 
     params = make_isupport_params()
@@ -823,7 +824,11 @@ def test_isupport_inertia_overrides_follow_physical_link_subdivision():
     ]
     tip = spatial_inertia(0.05, jnp.array([0.01, -0.02, 0.0]), jnp.eye(3) * 1e-5)[None]
     params = params.replace(
-        link=params.link.replace(sectional_inertia=section, tip_inertia=tip)
+        link=params.link.replace(
+            sectional_inertia=section,
+            tip_inertia=tip,
+            sectional_inertia_mask=jnp.array([selected]),
+        )
     )
     robot = ISupport(
         params,
@@ -833,6 +838,9 @@ def test_isupport_inertia_overrides_follow_physical_link_subdivision():
     )
     assert jnp.allclose(
         robot.pcs_params.link.sectional_inertia, jnp.repeat(section, 2, axis=0)
+    )
+    assert jnp.array_equal(
+        robot.pcs_params.link.sectional_inertia_mask, jnp.array([selected, selected])
     )
     assert jnp.allclose(robot.pcs_params.link.tip_inertia[0], 0.0)
     assert jnp.allclose(robot.pcs_params.link.tip_inertia[1], tip[0])
