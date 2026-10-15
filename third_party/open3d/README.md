@@ -98,12 +98,29 @@ PyPI. Install SoRoMoX normally:
 python -m pip install -e ".[rendering]"
 ```
 
+## Troubleshooting
+
+### macOS OpenMP runtimes
+
+Homebrew OpenBLAS (used by Open3D) and PyTorch can load separate copies of
+`libomp.dylib`, causing `OMP: Error #15` when imported in the same process.
+Launch that process with PyTorch's library directory first in the loader
+search path so both use one runtime. This can affect any Python version.
+For example, from the repository root after syncing the `paper_results` and
+`test` extras:
+
+```bash
+soromox_torch_lib="$(uv run --no-sync python -c 'from importlib.util import find_spec; from pathlib import Path; print(Path(find_spec("torch").origin).parent / "lib")')"
+DYLD_LIBRARY_PATH="$soromox_torch_lib${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}" \
+  uv run --no-sync python -m pytest tests/paper_results
+```
+
 ## Validation
 
 The release-tag pin is `b6c5e196384ad71e75b6e6f9c5da22d046221f1d`.
 Patched wheels report `0.20.0+b6c5e19.soromox3`.
 
-Python 3.15.0rc2 was source-built and tested on Apple Silicon (M4 Max).
+Python 3.15.0 final was source-built and tested on Apple Silicon (M4 Max).
 The frozen rendering/test installation, Metal color-grading check, PNG and
 60-frame H.264 export, and modern-window lifecycle all passed. Ubuntu CI also
 includes a Python 3.15 x86-64 source-build and native-rendering job.

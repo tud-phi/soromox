@@ -12,15 +12,12 @@
 
 !!! warning "Python Version Compatibility"
     - **Python 3.15**: Use current numerical dependencies or the updated
-      repository lockfile. Until Python 3.15 final is released, CI uses the
-      available release candidate. Some rendering and test dependencies build
+      repository lockfile. Python 3.15.0 final is available; CI can still fall
+      back to a release candidate until GitHub publishes its final builds.
+      Some rendering and test dependencies build
       from source and require C/C++ and, for some packages, Rust build tools.
-    - **PyTorch extras on Python 3.15**: PyTorch currently has no 3.15 wheels.
-      The `cuda13`, `rl`, `paper_results`, and `all` extras include PyTorch
-      directly or through Stable-Baselines3. Core simulation and the `warp`
-      extra can be installed independently.
     - **Open3D Rendering**: Patched Open3D 0.20 source builds are tested
-      with Python 3.11–3.14 on Ubuntu x86-64. Python 3.12–3.14 and 3.15.0rc2
+      with Python 3.11–3.14 on Ubuntu x86-64. Python 3.12–3.14 and 3.15.0
       are tested on Apple Silicon; Ubuntu CI also covers Python 3.15.
     - **Python 3.14 on Windows**: There may currently exist an incompatibility of Python 3.14 on Windows with the package
 
@@ -73,6 +70,18 @@
 
 SoRoMoX provides several optional dependency groups for different use cases:
 
+!!! note "PyTorch extras with pip on Python 3.15"
+    Source-checkout `uv sync` commands already select the required PyTorch index.
+    With pip, first install PyTorch before the `rl`, `cuda13`, `paper_results`,
+    or `all` extra, since Python 3.15 wheels are not yet on PyPI:
+
+    ```bash
+    python -m pip install "torch==2.14.1" --index-url https://download.pytorch.org/whl/cpu
+    ```
+
+    For Linux CUDA 13, replace `/cpu` with `/cu130`, then follow the usual
+    installation commands for your extra.
+
 ### 🎨 Rendering Dependencies
 
 For 3D visualization and animation, install from a source checkout:
@@ -107,9 +116,12 @@ uv sync --extra rendering
     and other platforms. On Ubuntu 26.04 x86-64, Python 3.11–3.14 pass real
     Vulkan image and MP4 export plus modern and animated viewers under Xvfb.
     Apple Silicon image, video, and modern-window checks pass with Python
-    3.12–3.14 and 3.15.0rc2. Native Windows builds are validated in CI. Plain
+    3.12–3.14 and 3.15.0. Native Windows builds are validated in CI. Plain
     `pip install soromox[rendering]` uses PyPI and does not include the required
     Open3D patches.
+
+    If importing Open3D and PyTorch together on macOS causes an OpenMP error,
+    see the [Open3D troubleshooting instructions](https://github.com/tud-phi/soromox/tree/main/third_party/open3d#macos-openmp-runtimes).
 
     The patched Open3D source build is required for all supported Python
     versions. In a source checkout, use `uv sync --extra rendering`, or install
