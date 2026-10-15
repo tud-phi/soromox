@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, ClassVar, Self
 
+import equinox as eqx
 import jax.numpy as jnp
+import numpy as np
 from jax import Array, ensure_compile_time_eval
 
 from soromox.systems.components import ContinuumLinkParams, JointParams
@@ -17,7 +20,12 @@ from soromox.systems.params import (
 if TYPE_CHECKING:
     from soromox.systems.gvs.structures import GVSStructure
 
-__all__ = ["GVSParams", "HelicoidalBackboneParams"]
+__all__ = [
+    "GVSParams",
+    "HelicoidalBackboneParams",
+    "HelicoidalHelixParams",
+    "HelicoidalReduction",
+]
 
 
 class GVSParams(BaseSoftRobotParams):
@@ -317,3 +325,183 @@ class HelicoidalBackboneParams(BaseSystemParams):
             )
         ):
             raise ValueError("damping_time_constant must be finite and nonnegative.")
+
+
+class HelicoidalHelixParams(BaseSystemParams):
+    """Helix-domain material and geometry for one soft helicoidal segment.
+
+    Two equally spaced winding families share a constant strand cross-section
+    normal to each strand's tangent. The segment backbone is straight along local
+    x in its printed reference configuration. Each strand frame has x along its
+    tangent, y along the projected outward radial direction, and z completing a
+    right-handed frame. All lengths are in metres and angles in radians.
+
+    ``reduce()`` linearizes the unloaded lattice, solves six unit-load cases at
+    the soft segment tip relative to its fixed base, then fits the reference
+    toolkit's affine bending-compliance and constant torsion/extension law. Both
+    compliance measurement points are the soft segment ends.
+    This eager preparation step is independent of the runtime GVS strain basis.
+    Recompute it after material or geometry updates; prepared matrices can be
+    installed with compilation reuse when structure/shapes/dtypes stay fixed.
+    Run the sparse reduction eagerly, outside JAX transformations.
+
+    Attributes:
+        length: Soft segment's reference backbone length [m].
+        radius_base: Helix centreline radius at the base [m].
+        radius_tip: Helix centreline radius at the tip [m]; linear taper in between.
+        num_turns: Number of revolutions each strand makes around the backbone
+            over ``length``. One turn is 2π radians; positive fractional values
+            are supported. The two families wind in opposite directions.
+        young_modulus: Strand material Young's modulus [Pa].
+        shear_modulus: Strand material shear modulus [Pa].
+        strand_area: Strand-normal sectional area [m²].
+        strand_second_moments: Principal area moments about local strand y/z,
+            shape ``(2,)`` [m⁴]. The principal directions follow the strand frame.
+        strand_torsion_constant: Strand-normal Saint-Venant torsion constant [m⁴].
+        strand_shear_factors: Shear correction factors along strand y/z,
+            shape ``(2,)``; the reference uses 0.9 for both.
+        helices_per_direction: Positive number of strands in each winding family.
+        phase: Base azimuth of the first negative-winding strand [rad].
+        winding_family_phase_offset: Base azimuth of the first positive-winding
+            strand relative to the first negative-winding strand [rad]. For
+            example, π/6 separates the two families by 30° at the segment base.
+        fusion_stiffness_multiplier: Dimensionless multiplier of the stiffness
+            of fused strand crossings, computed from material moduli and a
+            square contact patch of side sqrt(strand_area). Larger values
+            make the connections stiffer; 1 uses the contact-patch estimate.
+        tip_attachment_stiffness_multiplier: Stiffness of each strand's
+            attachment to the tip ring relative to a fused crossing. The
+            reference uses 10; strand bases are rigidly attached.
+        damping_time_constant: Effective backbone Kelvin-Voigt time constant [s].
+            Scales the fitted backbone sectional stiffness.
+
+    References:
+        CharlesQueen (2026). helicoid-toolkit, spec/identify.py,
+        lattice/assembly2.py and rod/equiv_rod.py, revision 76c659d.
+        https://github.com/CharlesQueen/helicoid-toolkit
+
+        Qin et al. (2026). Cosserat Modeling of Trimmed Helicoid Soft Arms
+        with a Separated-Section Constitutive Law. arXiv:2609.25264.
+        https://arxiv.org/abs/2609.25264
+    """
+
+    length: Array
+    radius_base: Array
+    radius_tip: Array
+    num_turns: Array
+    young_modulus: Array
+    shear_modulus: Array
+    strand_area: Array
+    strand_second_moments: Array
+    strand_torsion_constant: Array
+    strand_shear_factors: Array
+    helices_per_direction: int = eqx.field(static=True, default=3)
+    phase: Array = 0.0
+    winding_family_phase_offset: Array = np.pi / 6
+    fusion_stiffness_multiplier: Array = 4.0
+    tip_attachment_stiffness_multiplier: Array = 10.0
+    damping_time_constant: Array = 0.0
+
+    def __check_init__(self) -> None:
+        for name in HelicoidalHelixParams.__annotations__:
+            if name != "helices_per_direction":
+                object.__setattr__(self, name, _as_strong_array(getattr(self, name)))
+        self.validate_for_update()
+
+    def _normalize_replacement(self, name: str, value: object) -> object:
+        return value if name == "helices_per_direction" else _as_strong_array(value)
+
+    @classmethod
+    def circular(cls, *, strand_radius: float, **kwargs) -> Self:
+        """Construct circular strand sections from their radius [m].
+
+        Remaining keyword arguments specify geometry, material and fusion as in
+        the constructor. Shear correction defaults to the reference's 0.9.
+        """
+        radius = float(strand_radius)
+        if not np.isfinite(radius) or radius <= 0:
+            raise ValueError("strand_radius must be finite and positive.")
+        moment = np.pi * radius**4 / 4
+        kwargs.setdefault("strand_shear_factors", jnp.full(2, 0.9))
+        return cls(
+            strand_area=np.pi * radius**2,
+            strand_second_moments=jnp.full(2, moment),
+            strand_torsion_constant=2 * moment,
+            **kwargs,
+        )
+
+    def validate_structure(self) -> None:
+        if (
+            isinstance(self.helices_per_direction, bool)
+            or not isinstance(self.helices_per_direction, int)
+            or self.helices_per_direction < 1
+        ):
+            raise ValueError("helices_per_direction must be a positive integer.")
+        for name in HelicoidalHelixParams.__annotations__:
+            if name == "helices_per_direction":
+                continue
+            shape = (
+                (2,)
+                if name in {"strand_second_moments", "strand_shear_factors"}
+                else ()
+            )
+            if getattr(self, name).shape != shape:
+                raise ValueError(f"{name} must have shape {shape}.")
+
+    def validate_values(self) -> None:
+        for name in HelicoidalHelixParams.__annotations__:
+            if name == "helices_per_direction":
+                continue
+            values = np.asarray(getattr(self, name))
+            if not np.isfinite(values).all():
+                raise ValueError(f"{name} must be finite.")
+            if name in {"phase", "winding_family_phase_offset"}:
+                continue
+            if name == "damping_time_constant":
+                valid = (values >= 0).all()
+            else:
+                valid = (values > 0).all()
+            if not valid:
+                raise ValueError(
+                    f"{name} must be {'nonnegative' if name == 'damping_time_constant' else 'positive'}."
+                )
+
+    def reduce(self) -> HelicoidalReduction:
+        """Return segment-tip compliance, fitted backbone law and active strains.
+
+        An inadmissible residual shear compliance deactivates both shear channels
+        in the returned selector.
+        An inadmissible bending/torsion/extension fit raises ``ValueError``.
+        See ``HelicoidalReduction`` for fit diagnostics and frame conventions.
+        """
+        from soromox.systems.gvs._helicoidal_reduction import reduce_helix
+
+        return reduce_helix(self)
+
+
+@dataclass(frozen=True)
+class HelicoidalReduction:
+    """Result of eager helix-to-backbone constitutive preparation.
+
+    Attributes:
+        backbone: Single-row endpoint stiffness law in the native backbone frame.
+            Entries for inactive shear are finite padding and must not be activated.
+        tip_compliance: Symmetric 6×6 soft-tip compliance relative to the fixed
+            soft base, in native ``[rotation_x/y/z, translation_x/y/z]`` order.
+            Columns correspond to moments/forces at the soft tip. Its blocks have
+            units 1/(N m), 1/N and m/N.
+        strain_selector: Admissible ``[twist, bend_y, bend_z, extension, shear_y,
+            shear_z]`` flags. The fit averages both bending and shear directions;
+            other tip couplings are discarded, following the reference toolkit.
+        shear_compliance_residual: Mean transverse tip compliance remaining after
+            subtracting fitted bending compliance [m/N]. Values <= 1e-9 deactivate
+            shear, following the reference threshold.
+        relative_asymmetry: Relative antisymmetric norm before symmetrization;
+            a diagnostic of the numerical linear solves.
+    """
+
+    backbone: HelicoidalBackboneParams
+    tip_compliance: Array
+    strain_selector: tuple[bool, ...]
+    shear_compliance_residual: float
+    relative_asymmetry: float
