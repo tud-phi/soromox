@@ -27,7 +27,15 @@ from trajectory_primitives import (
 
 from soromox.control import OperationalSpaceImpedanceControlTracker
 from soromox.coordinate_transformations import OperationalSpaceDynamics
-from soromox.systems import PCS, LinkSpec, PCSParams, SystemState
+from soromox.systems import (
+    PCS,
+    LinkSpec,
+    PCSParams,
+    RectangularTorsionModel,
+    RodConstitutiveLaw,
+    SystemState,
+    TransverseShearModel,
+)
 
 jax.config.update("jax_enable_x64", True)
 
@@ -115,6 +123,10 @@ def build_problem(trajectory_config: TaskSpaceTrajectoryConfig) -> PCSImpedanceP
     )
     links = [
         LinkSpec.circular(
+            constitutive_law=RodConstitutiveLaw(
+                transverse_shear=TransverseShearModel.UNIFORM,
+                rectangular_torsion=RectangularTorsionModel.SAINT_VENANT_SERIES,
+            ),
             length=float(segment_lengths[index]),
             radius=2e-2,
             density=float(rho[index]),

@@ -18,7 +18,10 @@ from soromox.systems import (
     JointSpec,
     LinearProfile,
     LinkSpec,
+    RectangularTorsionModel,
+    RodConstitutiveLaw,
     StrainBasisSpec,
+    TransverseShearModel,
 )
 
 jax.config.update("jax_enable_x64", True)
@@ -457,6 +460,10 @@ if __name__ == "__main__":
     # 2 link version
     # Link 1
     link1 = LinkSpec.circular(
+        constitutive_law=RodConstitutiveLaw(
+            transverse_shear=TransverseShearModel.UNIFORM,
+            rectangular_torsion=RectangularTorsionModel.SAINT_VENANT_SERIES,
+        ),
         length=0.0250 + 0.2550 + 0.0250,
         radius=LinearProfile(base=0.01541, tip=0.00642),
         density=1500.0,
@@ -468,6 +475,10 @@ if __name__ == "__main__":
 
     # Link 2
     link2 = LinkSpec.circular(
+        constitutive_law=RodConstitutiveLaw(
+            transverse_shear=TransverseShearModel.UNIFORM,
+            rectangular_torsion=RectangularTorsionModel.SAINT_VENANT_SERIES,
+        ),
         length=0.0550,
         radius=LinearProfile(base=0.00642, tip=0.00480),
         density=1500.0,
@@ -760,6 +771,10 @@ if __name__ == "__main__":
 
     # Markers comparison visualization
     link1_hat = LinkSpec.circular(
+        constitutive_law=RodConstitutiveLaw(
+            transverse_shear=TransverseShearModel.UNIFORM,
+            rectangular_torsion=RectangularTorsionModel.SAINT_VENANT_SERIES,
+        ),
         length=0.0250 + 0.2550 + 0.0250,
         radius=LinearProfile(base=0.01541, tip=0.00642),
         density=float(rho_hat),
@@ -769,6 +784,10 @@ if __name__ == "__main__":
         reference_strain=[0, 0, 0, 1, 0, 0],
     )
     link2_hat = LinkSpec.circular(
+        constitutive_law=RodConstitutiveLaw(
+            transverse_shear=TransverseShearModel.UNIFORM,
+            rectangular_torsion=RectangularTorsionModel.SAINT_VENANT_SERIES,
+        ),
         length=0.0550,
         radius=LinearProfile(base=0.00642, tip=0.00480),
         density=float(rho_hat),

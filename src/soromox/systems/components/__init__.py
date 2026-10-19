@@ -1,6 +1,11 @@
 """Reusable link, joint, cross-section, and material components."""
 
 from soromox.systems.components.inertia import spatial_inertia
+from soromox.systems.components.rod_constitutive_laws import (
+    RectangularTorsionModel,
+    RodConstitutiveLaw,
+    TransverseShearModel,
+)
 
 from .cross_sections import (
     CrossSectionGeometry,
@@ -16,6 +21,9 @@ from .materials import IsotropicMaterialParams, shear_modulus_from_poisson_ratio
 from .strand_sections import StrandSection
 
 __all__ = [
+    "RodConstitutiveLaw",
+    "TransverseShearModel",
+    "RectangularTorsionModel",
     "spatial_inertia",
     "ContinuumLinkParams",
     "CrossSectionGeometry",

@@ -70,6 +70,7 @@ nav:
       - Systems:
           - Overview: api/systems/index.md
           - Continuum Robot Components: api/systems/continuum-components.md
+          - Rod Constitutive Laws: api/systems/rod-constitutive-laws.md
           - Articulated Systems:
             - Overview: api/systems/articulated/index.md
             - Pendulum: api/systems/pendulum/pendulum.md

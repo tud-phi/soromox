@@ -24,8 +24,11 @@ from soromox.systems import (
     GVSSegment,
     JointSpec,
     LinkSpec,
+    RectangularTorsionModel,
+    RodConstitutiveLaw,
     StrainBasisSpec,
     SystemState,
+    TransverseShearModel,
 )
 
 jax.config.update("jax_enable_x64", True)
@@ -50,6 +53,10 @@ if __name__ == "__main__":
     num_gauss_points: list[int] = []
 
     link1 = LinkSpec.circular(
+        constitutive_law=RodConstitutiveLaw(
+            transverse_shear=TransverseShearModel.UNIFORM,
+            rectangular_torsion=RectangularTorsionModel.SAINT_VENANT_SERIES,
+        ),
         length=0.3,
         radius=0.03,
         density=1000,
@@ -70,6 +77,10 @@ if __name__ == "__main__":
     num_gauss_points.append(5)  # Number of Gauss points for the first link
 
     link2 = LinkSpec.circular(
+        constitutive_law=RodConstitutiveLaw(
+            transverse_shear=TransverseShearModel.UNIFORM,
+            rectangular_torsion=RectangularTorsionModel.SAINT_VENANT_SERIES,
+        ),
         length=0.3,
         radius=0.03,
         density=1000,

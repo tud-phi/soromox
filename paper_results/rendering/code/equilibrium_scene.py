@@ -18,7 +18,10 @@ from soromox.systems import (
     JointSpec,
     LinearProfile,
     LinkSpec,
+    RectangularTorsionModel,
+    RodConstitutiveLaw,
     StrainBasisSpec,
+    TransverseShearModel,
 )
 
 jax.config.update("jax_enable_x64", True)
@@ -32,6 +35,10 @@ def make_robot():
     E, nu, rho = [float(np.load(DATA / f"{n}_hat.npy")) for n in ("E", "nu", "rho")]
     links = [
         LinkSpec.circular(
+            constitutive_law=RodConstitutiveLaw(
+                transverse_shear=TransverseShearModel.UNIFORM,
+                rectangular_torsion=RectangularTorsionModel.SAINT_VENANT_SERIES,
+            ),
             length=length,
             radius=LinearProfile(base=base, tip=tip),
             density=rho,

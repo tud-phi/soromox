@@ -41,7 +41,7 @@ The supported solid cross-sections are circular, rectangular, and elliptical.
 calculate area and second moments of area. Geometry dimensions are finite and
 strictly positive. `robot.cross_section_geometry(q, s)` returns
 `(geometry, outer_dimensions, inner_dimensions)`, with `None` for entirely
-solid models.
+solid models and zero inner dimensions at solid links in mixed models.
 Shared evaluators and this query use
 `[height, width]` for rectangular sections and `[semi_major, semi_minor]` for
 elliptical sections. Height and semi-major radius span local material y; width
@@ -76,7 +76,18 @@ tapered_rectangle = LinkSpec.rectangular(
 ```
 
 PCS currently accepts constant solid circular links. GVS accepts constant or
-linear solid circular, rectangular, and elliptical cross-sections.
+linear circular, rectangular, and elliptical cross-sections. Add
+`wall_thickness=0.001` or `wall_thickness=LinearProfile(0.002, 0.001)` to
+`LinkSpec.circular(...)` or `LinkSpec.rectangular(...)` for a tube, together
+with an explicit [rod constitutive law](rod-constitutive-laws.md). Elliptical
+sections are currently solid only.
+
+Wall thickness must be positive and leave an open cavity throughout the link.
+The same geometry supplies rendering, inertia, and material-derived stiffness
+and damping. Tubes require effective shear areas; rectangular tubes also
+require Marshall torsion.
+Switching between solid and hollow sections requires constructing a new model.
+For geometry updates, follow the [material update guidance](#isotropic-material-model).
 
 ## Continuum links
 
@@ -184,6 +195,14 @@ D_i = \eta_i D_{i,\eta}\quad\text{or}\quad 0,
 For the Young/Poisson parameterization,
 \(G_i = E_i / (2 (1 + \nu_i))\) is evaluated inside this mapping so gradients
 propagate through both \(E_i\) and \(\nu_i\).
+
+GVS links select shear and torsion assumptions using `LinkSpec.constitutive_law`
+(or `GVSLinkStructure.constitutive_law` for direct parameter construction).
+The default retains uniform shear for solids. With Cowper circular shear,
+`link_matrices_from_material()` reevaluates the operators at the supplied
+Poisson ratio; cached operators on the robot are reference values at zero
+Poisson ratio. See [rod constitutive laws](rod-constitutive-laws.md) for the
+formulas, supported geometries, and approximation limits.
 
 Equivalently, the unit operators represent the discretized integrals
 

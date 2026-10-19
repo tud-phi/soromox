@@ -14,7 +14,14 @@ from soromox.rendering.config import (
     RendererConfig,
     SceneConfig,
 )
-from soromox.systems import PCS, LinkSpec, SystemState
+from soromox.systems import (
+    PCS,
+    LinkSpec,
+    RectangularTorsionModel,
+    RodConstitutiveLaw,
+    SystemState,
+    TransverseShearModel,
+)
 
 jax.config.update("jax_enable_x64", True)  # double precision
 
@@ -42,6 +49,10 @@ if __name__ == "__main__":
     )
     links = [
         LinkSpec.circular(
+            constitutive_law=RodConstitutiveLaw(
+                transverse_shear=TransverseShearModel.UNIFORM,
+                rectangular_torsion=RectangularTorsionModel.SAINT_VENANT_SERIES,
+            ),
             length=float(segment_lengths[index]),
             radius=3e-2,
             density=float(rho[index]),
