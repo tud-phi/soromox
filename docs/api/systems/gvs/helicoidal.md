@@ -176,7 +176,7 @@ Basis choices, quadrature counts, and tendon spans define the static structure.
 
 ## Specialized Viser Rendering
 
-`HelicoidalViserRenderer` displays both winding families, end rings, connectors,
+`HelicoidalViserRenderer` displays both winding families, connectors,
 and tendon routes, following the GVS material frames through deformation.
 
 ```python
@@ -185,7 +185,7 @@ from soromox.rendering import HelicoidalModuleVisual, HelicoidalViserRenderer
 renderer = HelicoidalViserRenderer(
     robot,
     modules=tuple(
-        HelicoidalModuleVisual.from_helix_params(i, helix, ring_radius=0.002)
+        HelicoidalModuleVisual.from_helix_params(i, helix)
         for i in (1, 3, 5)
     ),
 )
@@ -200,9 +200,7 @@ phases. Property-only helix inputs have no recoverable shape; pass an explicit
 inputs; reduced backbone matrices do not retain the original geometry.
 
 `HelicoidalModuleVisual` also accepts `strand_section` directly, defaulting to
-`StrandSection.circular(0.002)`. `ring_radius` independently controls circular
-end rings, defaults to 2 mm, and is validated against the lattice radius at both
-ends.
+`StrandSection.circular(0.002)`.
 The shared contour/sweep code builds cavity walls and annular caps for hollow
 sections. Rebuild the renderer after changing section geometry or winding inputs.
 

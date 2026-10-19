@@ -1,7 +1,6 @@
 """Helix geometry, material-frame motion, and Viser handle lifecycle."""
 
 from contextlib import contextmanager
-from dataclasses import replace
 
 import jax
 import jax.numpy as jnp
@@ -70,8 +69,6 @@ def renderer_for(robot, strand_section=None):
     [
         {"turns": 0},
         {"turns": np.nan},
-        {"ring_radius": -1},
-        {"ring_radius": np.nan},
         {"strands_per_family": 1.5},
         {"segment_index": -1},
         {"phase": np.inf},
@@ -112,13 +109,12 @@ def test_adapter_copies_geometry_and_winding_parameters():
         phase=0.3,
         winding_family_phase_offset=0.4,
     )
-    module = HelicoidalModuleVisual.from_helix_params(1, helix, ring_radius=0.001)
+    module = HelicoidalModuleVisual.from_helix_params(1, helix)
     assert module.strand_section is helix.strand_section
     assert module.turns == 2.5
     assert module.strands_per_family == helix.helices_per_direction
     assert module.phase == 0.3
     assert module.family_phase == 0.4
-    assert module.ring_radius == 0.001
     assert module.strand_radial_extent == 0.001
     properties_only = helix.replace(strand_section=None)
     with pytest.raises(ValueError, match="no strand geometry"):
@@ -129,20 +125,6 @@ def test_adapter_copies_geometry_and_winding_parameters():
     assert explicit.strand_section is section
     circular = HelicoidalModuleVisual.from_helix_params(1, build_helix_params())
     assert_allclose(circular.strand_section.outer_dimensions, [0.002])
-    assert circular.ring_radius == 0.002
-
-
-def test_section_replacement_preserves_independent_ring_radius():
-    module = replace(
-        HelicoidalModuleVisual(1), strand_section=StrandSection.circular(0.003)
-    )
-    assert module.strand_radial_extent == pytest.approx(0.003)
-    assert module.ring_radius == 0.002
-    explicit_ring = replace(module, ring_radius=0.001)
-    assert (
-        replace(explicit_ring, strand_section=StrandSection.circular(0.004)).ring_radius
-        == 0.001
-    )
 
 
 def test_module_requires_a_section_object():
@@ -150,23 +132,9 @@ def test_module_requires_a_section_object():
         HelicoidalModuleVisual(1, strand_section=None)
 
 
-@pytest.mark.parametrize("ring_radius", [0.025, 0.03])
-def test_hollow_strands_still_validate_circular_end_rings(robot, ring_radius):
+def test_strand_extent_is_validated(robot):
     module = HelicoidalModuleVisual(
         1,
-        ring_radius=ring_radius,
-        strand_section=StrandSection.rectangular_hollow(
-            width=0.004, height=0.002, wall_thickness=0.0002
-        ),
-    )
-    with pytest.raises(ValueError, match="ring_radius"):
-        HelicoidalViserRenderer(robot, modules=(module,), auto_start=False)
-
-
-def test_strand_extent_is_validated_independently_of_rings(robot):
-    module = HelicoidalModuleVisual(
-        1,
-        ring_radius=0.001,
         strand_section=StrandSection.rectangular_hollow(
             width=0.002, height=0.06, wall_thickness=0.0002
         ),
@@ -183,7 +151,7 @@ def test_helix_radius_turns_tube_thickness_and_mesh_indices(robot):
     )
     curve, frame = np.asarray(curves[0]), np.asarray(frames[0])
     meshes = list(renderer._meshes(curve, frame))
-    assert len(meshes) == 3 * (6 + 2) + 3
+    assert len(meshes) == 3 * 6 + 3
     starts, ends = renderer._segment_bounds(renderer.num_points)
     for module in renderer.modules:
         start, end = starts[module.segment_index], ends[module.segment_index]
@@ -260,7 +228,7 @@ def test_batched_deformation_updates_handles_and_rebuild_removes_old_meshes(
         np.asarray, renderer.compute_backbone_curves_and_frames_batched(q_next, offsets)
     )
     renderer._update_robot_geometry(curves_next, frames_next)
-    assert len(renderer._server.meshes) == 54
+    assert len(renderer._server.meshes) == 42
     assert renderer._server.atomic_calls == 1
     assert any(not np.allclose(h.vertices, v) for h, v in zip(handles[0], old_vertices))
     for handle, expected in zip(
