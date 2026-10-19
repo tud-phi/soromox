@@ -114,15 +114,11 @@ and the strand-to-backbone arc-length factor. It is sampled at the existing
 Gauss points, supporting tapered geometries. Strand volumes add at crossings;
 overlap is neglected. Each strand section moves with its backbone material frame.
 
-`StrandSection` supports solid and hollow circles and rectangles through
-`circular`, `circular_hollow`, `rectangular`, and `rectangular_hollow` constructors.
-Rectangular height follows strand **y** (projected outward radial direction),
-and width follows **z**, matching GVS links. Hollow constructors take a uniform
-`wall_thickness`.
-The same section supplies mechanical properties and viewer geometry. You may
-also supply measured area, moments, torsion constant, and shear factors directly
-or override the estimates in `from_section`. `damping_time_constant` applies to
-the fitted **backbone** stiffness.
+`StrandSection` defines solid or hollow circular and rectangular strands for
+both mechanics and rendering. Hollow sections take a uniform `wall_thickness`;
+rectangular height spans strand **y** (radial) and width spans **z**.
+Measured sectional properties can override the estimates in `from_section`.
+`damping_time_constant` applies to the fitted **backbone** stiffness.
 
 Run the cylindrical example with strand-derived mechanics using:
 
@@ -152,18 +148,9 @@ conversion with `to_backbone()`, use the differentiable `with_helix_inertia`:
 robot = robot.with_helix_inertia({1: helix.replace(density=1250.0)})
 ```
 
-To change strand shape, replace `strand_section` and reapply the helix inputs:
-
-```python
-section = StrandSection.rectangular_hollow(
-    width=0.004, height=0.002, wall_thickness=0.0002,
-)
-helix = helix.replace(strand_section=section)
-robot = robot.with_constitutive_params({1: helix})
-```
-
-This rederives sectional properties; supply calibrated overrides in the same
-`replace` call. Material-only updates preserve existing sectional properties.
+Use `helix.replace(strand_section=section)` to change strand shape, then reapply
+the helix inputs as above. This rederives sectional properties; include any
+calibrated overrides in the same call.
 
 Ordinary cylinder density updates use `update_link_params(density=...)`.
 Stored helix inertia is refreshed through the helix input; constitutive-only
@@ -194,15 +181,9 @@ renderer.show(q)
 
 Each module selects a link whose cross-section radius sets the helix centreline
 radius. Keep the link's radius profile consistent with the helix inputs.
-`from_helix_params` copies the strand section, turns, strand count, and both
-phases. Property-only helix inputs have no recoverable shape; pass an explicit
-`strand_section` to the adapter in that case. The adapter reads the preparation
-inputs; reduced backbone matrices do not retain the original geometry.
-
-`HelicoidalModuleVisual` also accepts `strand_section` directly, defaulting to
-`StrandSection.circular(0.002)`.
-The shared contour/sweep code builds cavity walls and annular caps for hollow
-sections. Rebuild the renderer after changing section geometry or winding inputs.
+`from_helix_params` reuses the strand and winding geometry; supply `strand_section`
+explicitly when the helix inputs contain only measured sectional properties.
+Rebuild the renderer after changing section geometry or winding inputs.
 
 `HelicoidalVisualConfig` controls colors and mesh resolution. The renderer
 supports batched configurations, `render_sequence`, `render_frame`, and live

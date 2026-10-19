@@ -36,13 +36,6 @@ link. The static system structure determines how each row is interpreted:
 - rows are zero-padded when different GVS links require different numbers of
   coefficients.
 
-Hollow circular and rectangular GVS links append a `wall_thickness` profile
-after their outer dimensions. The static `hollow` flag distinguishes this
-layout from a solid section. Wall thickness must be positive and leave an open
-cavity at both ends; constant and linear profiles then remain valid throughout
-the link. Switching between solid and hollow layouts changes the static
-structure and requires constructing a new model.
-
 The supported solid cross-sections are circular, rectangular, and elliptical.
 `CrossSectionGeometry` identifies the family, while shared geometry utilities
 calculate area and second moments of area. Geometry dimensions are finite and
@@ -88,19 +81,11 @@ linear circular, rectangular, and elliptical cross-sections. Add
 `LinkSpec.circular(...)` or `LinkSpec.rectangular(...)` for a tube. Elliptical
 sections are currently solid only.
 
-For tubes, the same outer dimensions and wall profile supply rendering, area,
-area moments, stiffness, damping, and inertia. Rectangular tubes use Bredt's
-thin-wall torsion approximation and shear areas `2*height*t` and `2*width*t`
-along y/z. Circular tubes use exact annular area moments and torsion, with
-Cowper's approximate shear factor evaluated at zero Poisson ratio. These
-constitutive estimates can be replaced with calibrated matrices. Solid GVS
-links retain uncorrected shear areas; solid rectangular and elliptical torsion
-use their Saint-Venant constants rather than polar area moments.
-
-Changing geometry with `update_link_params(cross_section=...)` refreshes mass
-and material operators, while preserving explicit stiffness, damping, and
-sectional-inertia overrides. Reapply `with_isotropic_material(material)` to
-regenerate material-derived stiffness and damping after a geometry change.
+Wall thickness must be positive and leave an open cavity throughout the link.
+The same geometry supplies rendering, inertia, and material-derived stiffness
+and damping. Rectangular tubes use thin-wall torsion and shear approximations.
+Switching between solid and hollow sections requires constructing a new model.
+For geometry updates, follow the [material update guidance](#isotropic-material-model).
 
 ## Continuum links
 
