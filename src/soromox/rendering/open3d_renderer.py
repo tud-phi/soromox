@@ -73,6 +73,27 @@ from soromox.systems.soft_robot import SoftRobot
 # ======================================================================================
 
 
+def _initialize_missing_triangle_uvs(geometry) -> None:
+    """Initialize texture coordinates before sending meshes to Filament.
+
+    Stock Open3D builds can upload uninitialized UV data for untextured meshes,
+    causing white surface artifacts even with materials that have no textures.
+
+    Args:
+        geometry: Open3D mesh or line set. Existing mesh UVs are preserved.
+
+    Returns:
+        None. Adds zero UVs to triangle meshes that have none.
+    """
+    if (
+        isinstance(geometry, o3d.geometry.TriangleMesh)
+        and not geometry.has_triangle_uvs()
+    ):
+        geometry.triangle_uvs = o3d.utility.Vector2dVector(
+            np.zeros((3 * len(geometry.triangles), 2), dtype=np.float64)
+        )
+
+
 def _make_polyline_lineset(
     points_np: np.ndarray,
     color: tuple[float, float, float] = (0.9, 0.15, 0.15),
@@ -1407,6 +1428,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             Returns:
                 None.
             """
+            _initialize_missing_triangle_uvs(geometry)
             scene.add_geometry(name, geometry, material)
             geometry_names.append(name)
 
@@ -1703,6 +1725,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         )
         mesh.compute_vertex_normals()
         mesh.paint_uniform_color(self.scene_config.ground.color)
+        _initialize_missing_triangle_uvs(mesh)
         return mesh
 
     def _configure_modern_scene(
