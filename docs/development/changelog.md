@@ -30,10 +30,8 @@ Describe the delta from the last release, not intermediate development changes.
 - Configurable GVS `RodConstitutiveLaw` with independent `TransverseShearRodModel`
   and `RectangularTorsionRodModel` choices. Effective shear uses
   material-dependent Cowper factors for circles and Jourawski shear energy for
-  rectangles; Marshall
-  torsion supports rectangular tubes and a continuous solid extension. Existing
-  solid-link defaults are preserved and paper configurations select them
-  explicitly. See
+  rectangles; Marshall torsion supports rectangular tubes and a continuous
+  solid extension. Paper configurations select their models explicitly. See
   [rod constitutive laws](../api/systems/continuum-components.md#rod-constitutive-laws).
 - Python 3.15 support, with numerical tests and patched Open3D source-build
   and rendering checks in Ubuntu CI.
@@ -50,6 +48,13 @@ Describe the delta from the last release, not intermediate development changes.
 ### Deprecated
 
 ### Breaking changes
+
+- Material-derived GVS torsional stiffness and damping for solid rectangles
+  and ellipses now use Saint-Venant torsion constants instead of polar area
+  moments; see [PR #234](https://github.com/tud-phi/soromox/pull/234).
+  This changes the default noncircular constitutive response. Uniform shear,
+  circular torsion, mass inertia, and explicit constitutive matrices are
+  unchanged. Paper configurations explicitly select their constitutive models.
 
 - `SoftRobot.cross_section_geometry(q, s)` now returns
   `(geometry, outer_dimensions, inner_dimensions)` instead of a pair.
@@ -69,10 +74,6 @@ Describe the delta from the last release, not intermediate development changes.
   robot batch removes obsolete meshes.
 - Open3D scene meshes explicitly initialize missing texture coordinates,
   preventing white surface artifacts with unpatched Open3D wheels.
-- GVS material-derived torsional stiffness and damping for solid rectangles
-  and ellipses now use their Saint-Venant torsion constants instead of polar
-  area moments. Rotational mass inertia still uses the polar moment; explicit
-  constitutive matrices retain their supplied values.
 - Corrected rectangular cross-section orientation in Open3D and Viser: height
   now spans local material y and width spans z, matching the existing GVS
   bending stiffness and inertia. Both swept surfaces and discrete boxes use

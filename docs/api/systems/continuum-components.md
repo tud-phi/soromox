@@ -180,6 +180,11 @@ PyTree structure and requires recompilation.
 
 ### Rod constitutive laws
 
+The default uses uniform transverse shear and Saint-Venant torsion. For solid
+rectangles and ellipses, the latter changes material-derived torsional stiffness
+and damping from the earlier polar-moment formula. Circular torsion and mass
+inertia are unchanged. See the [breaking change](../../development/changelog.md#breaking-changes).
+
 A GVS link's `RodConstitutiveLaw` selects how the isotropic material and
 cross-section produce rod stiffness. For strain order
 `[twist, bend_y, bend_z, extension, shear_y, shear_z]`, the local matrix is

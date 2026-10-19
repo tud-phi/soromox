@@ -171,7 +171,9 @@ class RodConstitutiveLaw:
 
     Axial and bending stiffness always use EA, EIy and EIz. Rotational mass
     inertia always uses area moments, independently of these choices. The
-    defaults preserve the existing solid-link stiffness and damping.
+    defaults retain uniform shear but use Saint-Venant torsion for noncircular
+    solids, changing their material-derived torsional stiffness and damping
+    from the earlier polar-moment approximation.
     """
 
     transverse_shear: TransverseShearRodModel = TransverseShearRodModel.UNIFORM

@@ -157,7 +157,7 @@ def test_static_law_validation_and_hollow_rejection():
 
 
 @pytest.mark.parametrize("kind", ["circular", "rectangular", "elliptical"])
-def test_default_solid_matrices_preserve_uniform_shear_and_torsion(kind):
+def test_default_solid_matrices_use_uniform_shear_and_saint_venant_torsion(kind):
     robot = model(link_spec(kind, wall=None))
     geometry, outer, _ = robot.cross_section_geometry(jnp.zeros(6), LENGTH / 2)
     geometry = Geometry(int(geometry))
