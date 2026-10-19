@@ -299,6 +299,87 @@ class FakeViserActuatorServer:
         return 8080
 
 
+@pytest.mark.parametrize("from_static", [False, True])
+def test_live_mode_initializes_editable_geometry_and_camera(from_static):
+    from soromox.rendering.viser_renderer import SceneHandles, ViserRenderer
+
+    class MovingRobot(DummySpatialRobot):
+        def forward_kinematics_abscissa_batched(self, q, s_points):
+            transforms = super().forward_kinematics_abscissa_batched(q, s_points)
+            return transforms.at[:, 1, 3].add(q[0] * s_points)
+
+    robot = MovingRobot(jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]))
+    renderer = ViserRenderer(
+        robot,
+        auto_start=False,
+        config=RendererConfig(
+            geometry=GeometryConfig(num_points=4),
+            scene=SceneConfig(ground=GroundPlaneConfig(visible=False)),
+        ),
+    )
+    renderer._server = FakeViserActuatorServer()
+    renderer._scene_handles = SceneHandles()
+    renderer._setup_camera = Mock()
+    if from_static:
+        renderer._static_scene = True
+        curves, frames = map(
+            np.asarray,
+            renderer.compute_backbone_curves_and_frames_batched(
+                jnp.zeros((1, 1)), jnp.zeros((1, 3))
+            ),
+        )
+        renderer._build_robot_geometry(
+            curves,
+            np.ones((1, 4, 4)),
+            material_frames=frames,
+            base_plate_color=(0.5, 0.5, 0.5),
+        )
+        assert not renderer._server.scene.simple_meshes
+
+    live = renderer.start_live_mode()
+    try:
+        live.push_state(np.zeros(1))
+        handle = renderer._scene_handles.backbone_points[0][0]
+        assert handle in renderer._server.scene.simple_meshes
+        initial_vertices = handle.vertices.copy()
+        live.push_state(np.array([0.25]))
+        assert renderer._scene_handles.backbone_points[0][0] is handle
+        assert not np.allclose(handle.vertices, initial_vertices)
+        renderer._setup_camera.assert_called_once()
+    finally:
+        live.stop()
+
+
+@pytest.mark.parametrize("backbone_style", ["swept", "discrete"])
+def test_live_batch_resize_removes_previous_robot_meshes(backbone_style):
+    from soromox.rendering.viser_renderer import SceneHandles, ViserRenderer
+
+    renderer = ViserRenderer(
+        DummySpatialRobot(jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0])),
+        auto_start=False,
+        config=RendererConfig(
+            geometry=GeometryConfig(num_points=4, backbone_style=backbone_style),
+            scene=SceneConfig(ground=GroundPlaneConfig(visible=False)),
+        ),
+    )
+    renderer._server = FakeViserActuatorServer()
+    renderer._scene_handles = SceneHandles()
+    renderer._setup_camera = Mock()
+    live = renderer.start_live_mode()
+    try:
+        live.push_state(np.zeros((2, 0)))
+        previous = [
+            handle
+            for group in renderer._scene_handles.backbone_points
+            for handle in group
+        ] + renderer._scene_handles.base_plates
+        live.push_state(np.zeros((1, 0)))
+        assert renderer._scene_handles.num_robots == 1
+        assert all(handle.remove_count == 1 for handle in previous)
+    finally:
+        live.stop()
+
+
 def test_viser_server_uses_world_positive_z_as_scene_up(monkeypatch):
     import soromox.rendering.viser_renderer as viser_module
 

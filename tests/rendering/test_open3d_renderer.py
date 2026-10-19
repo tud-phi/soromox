@@ -497,6 +497,43 @@ def test_general_open3d_scene_keeps_cavity_walls_through_smoothing():
     assert_allclose(radial.max(), 0.05)
 
 
+def test_modern_scene_initializes_missing_texture_coordinates():
+    renderer = Open3DRenderer(
+        _AnimatingSpatialRobot(),
+        config=RendererConfig(
+            geometry=GeometryConfig(num_points=4, cross_section_resolution=8),
+            scene=SceneConfig(ground=GroundPlaneConfig(visible=False)),
+        ),
+    )
+    curves, frames = renderer.compute_backbone_curves_and_frames_batched(
+        jnp.zeros((1, 3)), jnp.zeros((1, 3))
+    )
+    data = open3d_renderer_module.SceneData(
+        curves=np.asarray(curves)[:, None],
+        material_frames=np.asarray(frames)[:, None],
+        q_ts=np.zeros((1, 1, 3)),
+        ts=np.zeros(1),
+        layout=renderer._compute_segment_layout(4),
+        segment_colors_rgba=np.ones((1, 1, 4)),
+    )
+    scene = Mock()
+    renderer._populate_rendering_scene(scene, data, frame_idx=0)
+    assert scene.add_geometry.call_count > 0
+    for call in scene.add_geometry.call_args_list:
+        mesh = call.args[1]
+        assert mesh.has_triangle_uvs()
+        assert_array_equal(np.asarray(mesh.triangle_uvs), 0.0)
+
+
+def test_modern_mesh_preparation_preserves_existing_texture_coordinates():
+    o3d = open3d_renderer_module.o3d
+    mesh = o3d.geometry.TriangleMesh.create_box()
+    uvs = np.linspace(0, 1, 6 * len(mesh.triangles)).reshape(-1, 2)
+    mesh.triangle_uvs = o3d.utility.Vector2dVector(uvs)
+    open3d_renderer_module._initialize_missing_triangle_uvs(mesh)
+    assert_array_equal(np.asarray(mesh.triangle_uvs), uvs)
+
+
 @pytest.mark.parametrize("count", [0, 1, 3])
 def test_swept_normal_batch_preserves_exterior_caps(count):
     """Join a chain in one batch without removing its two exterior caps."""
