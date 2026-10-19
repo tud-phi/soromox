@@ -31,9 +31,9 @@ from soromox.coordinate_transformations import (
 from soromox.systems import (
     PCS,
     LinkSpec,
-    RectangularTorsionRodModel,
     RodConstitutiveLaw,
     SystemState,
+    TorsionRodModel,
     TransverseShearRodModel,
 )
 from soromox.utils.geometry.rotations import rotation_matrix_to_rotation_vector
@@ -90,7 +90,7 @@ def build_sec_vd_robot() -> tuple[PCS, ThreadlikeRouting, float]:
         LinkSpec.circular(
             constitutive_law=RodConstitutiveLaw(
                 transverse_shear=TransverseShearRodModel.UNIFORM,
-                rectangular_torsion=RectangularTorsionRodModel.SAINT_VENANT_SERIES,
+                torsion=TorsionRodModel.POLAR_MOMENT,
             ),
             length=float(segment_lengths[index]),
             radius=radius,

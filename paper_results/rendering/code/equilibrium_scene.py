@@ -18,9 +18,9 @@ from soromox.systems import (
     JointSpec,
     LinearProfile,
     LinkSpec,
-    RectangularTorsionRodModel,
     RodConstitutiveLaw,
     StrainBasisSpec,
+    TorsionRodModel,
     TransverseShearRodModel,
 )
 
@@ -37,7 +37,7 @@ def make_robot():
         LinkSpec.circular(
             constitutive_law=RodConstitutiveLaw(
                 transverse_shear=TransverseShearRodModel.UNIFORM,
-                rectangular_torsion=RectangularTorsionRodModel.SAINT_VENANT_SERIES,
+                torsion=TorsionRodModel.POLAR_MOMENT,
             ),
             length=length,
             radius=LinearProfile(base=base, tip=tip),

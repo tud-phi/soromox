@@ -18,9 +18,9 @@ from soromox.systems import (
     JointSpec,
     LinearProfile,
     LinkSpec,
-    RectangularTorsionRodModel,
     RodConstitutiveLaw,
     StrainBasisSpec,
+    TorsionRodModel,
     TransverseShearRodModel,
 )
 
@@ -462,7 +462,7 @@ if __name__ == "__main__":
     link1 = LinkSpec.circular(
         constitutive_law=RodConstitutiveLaw(
             transverse_shear=TransverseShearRodModel.UNIFORM,
-            rectangular_torsion=RectangularTorsionRodModel.SAINT_VENANT_SERIES,
+            torsion=TorsionRodModel.POLAR_MOMENT,
         ),
         length=0.0250 + 0.2550 + 0.0250,
         radius=LinearProfile(base=0.01541, tip=0.00642),
@@ -477,7 +477,7 @@ if __name__ == "__main__":
     link2 = LinkSpec.circular(
         constitutive_law=RodConstitutiveLaw(
             transverse_shear=TransverseShearRodModel.UNIFORM,
-            rectangular_torsion=RectangularTorsionRodModel.SAINT_VENANT_SERIES,
+            torsion=TorsionRodModel.POLAR_MOMENT,
         ),
         length=0.0550,
         radius=LinearProfile(base=0.00642, tip=0.00480),
@@ -773,7 +773,7 @@ if __name__ == "__main__":
     link1_hat = LinkSpec.circular(
         constitutive_law=RodConstitutiveLaw(
             transverse_shear=TransverseShearRodModel.UNIFORM,
-            rectangular_torsion=RectangularTorsionRodModel.SAINT_VENANT_SERIES,
+            torsion=TorsionRodModel.POLAR_MOMENT,
         ),
         length=0.0250 + 0.2550 + 0.0250,
         radius=LinearProfile(base=0.01541, tip=0.00642),
@@ -786,7 +786,7 @@ if __name__ == "__main__":
     link2_hat = LinkSpec.circular(
         constitutive_law=RodConstitutiveLaw(
             transverse_shear=TransverseShearRodModel.UNIFORM,
-            rectangular_torsion=RectangularTorsionRodModel.SAINT_VENANT_SERIES,
+            torsion=TorsionRodModel.POLAR_MOMENT,
         ),
         length=0.0550,
         radius=LinearProfile(base=0.00642, tip=0.00480),

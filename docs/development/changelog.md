@@ -28,10 +28,13 @@ Describe the delta from the last release, not intermediate development changes.
   constitutive law supporting their geometry. See
   [continuum components](../api/systems/continuum-components.md).
 - Configurable GVS `RodConstitutiveLaw` with independent `TransverseShearRodModel`
-  and `RectangularTorsionRodModel` choices. Effective shear uses
+  and `TorsionRodModel` choices. Effective shear uses
   material-dependent Cowper factors for circles and Jourawski shear energy for
-  rectangles; Marshall torsion supports rectangular tubes and a continuous
-  solid extension. Paper configurations select their models explicitly. See
+  rectangles. Saint-Venant torsion uses Marshall for rectangular solids/tubes
+  and exact formulas for circles, annuli, and solid ellipses. Defaults preserve
+  the released uniform shear and polar-moment torsion for solids; hollow links
+  require effective shear and Saint-Venant torsion. Paper configurations select
+  the released models explicitly. See
   [rod constitutive laws](../api/systems/continuum-components.md#rod-constitutive-laws).
 - Python 3.15 support, with numerical tests and patched Open3D source-build
   and rendering checks in Ubuntu CI.
@@ -48,13 +51,6 @@ Describe the delta from the last release, not intermediate development changes.
 ### Deprecated
 
 ### Breaking changes
-
-- Material-derived GVS torsional stiffness and damping for solid rectangles
-  and ellipses now use Saint-Venant torsion constants instead of polar area
-  moments; see [PR #234](https://github.com/tud-phi/soromox/pull/234).
-  This changes the default noncircular constitutive response. Uniform shear,
-  circular torsion, mass inertia, and explicit constitutive matrices are
-  unchanged. Paper configurations explicitly select their constitutive models.
 
 - `SoftRobot.cross_section_geometry(q, s)` now returns
   `(geometry, outer_dimensions, inner_dimensions)` instead of a pair.

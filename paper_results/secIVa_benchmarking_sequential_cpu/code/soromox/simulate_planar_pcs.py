@@ -19,9 +19,9 @@ from soromox.rendering.config import (
 from soromox.systems import (
     LinkSpec,
     PlanarPCS,
-    RectangularTorsionRodModel,
     RodConstitutiveLaw,
     SystemState,
+    TorsionRodModel,
     TransverseShearRodModel,
 )
 
@@ -59,7 +59,7 @@ if __name__ == "__main__":
         LinkSpec.circular(
             constitutive_law=RodConstitutiveLaw(
                 transverse_shear=TransverseShearRodModel.UNIFORM,
-                rectangular_torsion=RectangularTorsionRodModel.SAINT_VENANT_SERIES,
+                torsion=TorsionRodModel.POLAR_MOMENT,
             ),
             length=float(segment_lengths[index]),
             radius=3e-2,

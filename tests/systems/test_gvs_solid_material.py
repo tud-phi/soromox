@@ -34,26 +34,10 @@ def _properties(kind, dimensions):
     return area, iy, iz
 
 
-def _torsion(kind, dimensions, polar):
-    """Independent Saint-Venant reference for this PR's noncircular law."""
-    if kind == "circular":
-        return polar
-    a, b = dimensions.T
-    if kind == "elliptical":
-        return np.pi * a**3 * b**3 / (a**2 + b**2)
-    long, short = np.maximum(a, b), np.minimum(a, b)
-    odd = np.arange(1, 20000, 2, dtype=float)
-    correction = np.sum(
-        np.tanh(np.pi * long[:, None] * odd / (2 * short[:, None])) / odd**5,
-        axis=-1,
-    )
-    return long * short**3 / 3 * (1 - 192 * short * correction / (np.pi**5 * long))
-
-
 @pytest.mark.parametrize("kind", ["circular", "rectangular", "elliptical"])
 @pytest.mark.parametrize("tapered", [False, True])
 def test_gvs_solid_material_matrices_at_construction_and_after_updates(kind, tapered):
-    """Pin all six stiffness/damping entries, including Saint-Venant torsion."""
+    """Pin all six stiffness/damping entries, including polar-moment torsion."""
     length, density = 0.3, 1200.0
     start = np.array([0.02] if kind == "circular" else [0.02, 0.06])
     end = (
@@ -112,10 +96,9 @@ def test_gvs_solid_material_matrices_at_construction_and_after_updates(kind, tap
             )
         area, iy, iz = _properties(kind, start + points[:, None] * (end - start))
         polar = iy + iz
-        torsion = _torsion(kind, start + points[:, None] * (end - start), polar)
         stiffness = np.stack(
             [
-                shear * torsion,
+                shear * polar,
                 young * iy,
                 young * iz,
                 young * area,
@@ -125,17 +108,17 @@ def test_gvs_solid_material_matrices_at_construction_and_after_updates(kind, tap
             axis=-1,
         )
         damping_diagonal = damping * np.stack(
-            [torsion, 3 * iy, 3 * iz, 3 * area, area, area], axis=-1
+            [polar, 3 * iy, 3 * iz, 3 * area, area, area], axis=-1
         )
         assert_allclose(
             robot.params.link.stiffness[0],
             np.diag(length * weights @ stiffness),
-            rtol=1e-8,
+            rtol=1e-12,
         )
         assert_allclose(
             robot.params.link.damping[0],
             np.diag(length * weights @ damping_diagonal),
-            rtol=1e-8,
+            rtol=1e-12,
         )
         count = int(robot.num_integration_points[0])
         mass_points = np.asarray(robot.integration_points[0, :count])
@@ -144,5 +127,5 @@ def test_gvs_solid_material_matrices_at_construction_and_after_updates(kind, tap
         assert_allclose(
             robot.mass_matrices[0, :count],
             jax.vmap(jnp.diag)(jnp.asarray(mass)),
-            rtol=1e-8,
+            rtol=1e-12,
         )

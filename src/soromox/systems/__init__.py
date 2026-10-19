@@ -21,8 +21,8 @@ from soromox.systems.components import (
 )
 from soromox.systems.components.inertia import spatial_inertia
 from soromox.systems.components.rod_constitutive_laws import (
-    RectangularTorsionRodModel,
     RodConstitutiveLaw,
+    TorsionRodModel,
     TransverseShearRodModel,
 )
 from soromox.systems.dynamical_system import DynamicalSystem
@@ -77,7 +77,7 @@ from .pendulum import Pendulum
 __all__ = [
     "RodConstitutiveLaw",
     "TransverseShearRodModel",
-    "RectangularTorsionRodModel",
+    "TorsionRodModel",
     "spatial_inertia",
     # base classes
     "DEFAULT_GRAVITY_MAGNITUDE",

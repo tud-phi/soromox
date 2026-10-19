@@ -31,7 +31,7 @@ class GVSLinkStructure(eqx.Module):
         cross_section_profile_parameter_counts: Number of packed coefficients
             consumed by each geometry dimension.
         hollow: Whether an additional wall-thickness profile defines a cavity.
-        constitutive_law: Static transverse-shear and rectangular-torsion choices.
+        constitutive_law: Static transverse-shear and torsion choices.
     """
 
     cross_section_geometry: CrossSectionGeometry = eqx.field(static=True)

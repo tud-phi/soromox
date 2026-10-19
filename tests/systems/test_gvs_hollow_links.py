@@ -20,15 +20,14 @@ from soromox.systems import (
     LinearProfile,
     LinkSpec,
     PlanarPCS,
-    RectangularTorsionRodModel,
     RodConstitutiveLaw,
     StrainBasisSpec,
+    TorsionRodModel,
     TransverseShearRodModel,
 )
 from soromox.systems.components.cross_sections import (
     CrossSectionGeometry,
     section_properties,
-    section_torsion_constant,
 )
 from soromox.systems.components.inertia import sectional_inertias
 
@@ -52,7 +51,7 @@ def link_spec(kind, *, wall=0.002, tapered=False):
     if wall is not None and kind != "elliptical":
         kwargs["constitutive_law"] = RodConstitutiveLaw(
             transverse_shear=TransverseShearRodModel.EFFECTIVE_AREA,
-            rectangular_torsion=RectangularTorsionRodModel.MARSHALL,
+            torsion=TorsionRodModel.SAINT_VENANT,
         )
     if kind == "circular":
         return LinkSpec.circular(
@@ -326,16 +325,13 @@ def test_geometry_updates_preserve_explicit_constitutive_and_inertia_overrides()
 @pytest.mark.parametrize(
     "geometry,dimensions,expected",
     [
-        (CrossSectionGeometry.RECTANGULAR, [1.0, 1.0], 0.140577014955),
+        (CrossSectionGeometry.RECTANGULAR, [1.0, 1.0], 7 / 48),
         (CrossSectionGeometry.ELLIPTICAL, [2.0, 1.0], 8 * np.pi / 5),
     ],
 )
 def test_non_circular_torsion_is_distinct_from_polar_mass_moment(
     geometry, dimensions, expected
 ):
-    assert_allclose(
-        section_torsion_constant(geometry, jnp.array(dimensions)), expected, rtol=1e-8
-    )
     assert not np.isclose(
         expected, section_properties(geometry, jnp.array(dimensions))[0]
     )
@@ -344,10 +340,13 @@ def test_non_circular_torsion_is_distinct_from_polar_mass_moment(
     )
     robot = model(
         replace(
-            link_spec(kind, wall=None), cross_section_coefficients=tuple(dimensions)
+            link_spec(kind, wall=None),
+            cross_section_coefficients=tuple(dimensions),
+            constitutive_law=RodConstitutiveLaw(torsion=TorsionRodModel.SAINT_VENANT),
         )
     )
     assert_allclose(robot.K[0, 0], LENGTH * SHEAR * expected, rtol=1e-8)
+    assert_allclose(robot.D_active[0, 0], LENGTH * DAMPING * expected, rtol=1e-8)
     assert_allclose(
         robot.mass_matrices[0, 0, 0, 0],
         DENSITY * section_properties(geometry, jnp.array(dimensions))[0],

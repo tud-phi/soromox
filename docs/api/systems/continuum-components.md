@@ -84,8 +84,8 @@ sections are currently solid only.
 
 Wall thickness must be positive and leave an open cavity throughout the link.
 The same geometry supplies rendering, inertia, and material-derived stiffness
-and damping. Tubes require effective shear areas; rectangular tubes also
-require Marshall torsion.
+and damping. Tubes require effective shear areas and Saint-Venant torsion; rectangular
+tubes use Marshall within that choice.
 Switching between solid and hollow sections requires constructing a new model.
 For geometry updates, follow the [material update guidance](#isotropic-material-model).
 
@@ -180,10 +180,9 @@ PyTree structure and requires recompilation.
 
 ### Rod constitutive laws
 
-The default uses uniform transverse shear and Saint-Venant torsion. For solid
-rectangles and ellipses, the latter changes material-derived torsional stiffness
-and damping from the earlier polar-moment formula. Circular torsion and mass
-inertia are unchanged. See the [breaking change](../../development/changelog.md#breaking-changes).
+The defaults preserve the released GVS law: uniform transverse shear and
+polar-moment torsion for solid sections. Shear and torsion can be selected
+independently. Hollow links require effective shear and Saint-Venant torsion.
 
 A GVS link's `RodConstitutiveLaw` selects how the isotropic material and
 cross-section produce rod stiffness. For strain order
@@ -202,14 +201,14 @@ differ from \(J\).
 |---|---|
 | `TransverseShearRodModel.UNIFORM` (default) | Solid sections; shear stiffness is \(GA\). |
 | `TransverseShearRodModel.EFFECTIVE_AREA` | Solid/hollow circles use material-dependent Cowper factors; solid/hollow rectangles use Jourawski shear-energy matching. |
-| `RectangularTorsionRodModel.SAINT_VENANT_SERIES` (default) | Solid rectangular torsion from the Saint-Venant series. |
-| `RectangularTorsionRodModel.MARSHALL` | Rectangular tubes and a continuous engineering extension to solid rectangles. |
+| `TorsionRodModel.POLAR_MOMENT` (default) | Solid sections; torsional stiffness is \(G(I_y+I_z)\), preserving the released law. |
+| `TorsionRodModel.SAINT_VENANT` | Marshall for solid/hollow rectangles; exact circular/annular and solid elliptical torsion. |
 
 For a rectangular tube, select both alternatives explicitly:
 
 ```python
 from soromox.systems import (
-    LinkSpec, RectangularTorsionRodModel, RodConstitutiveLaw,
+    LinkSpec, TorsionRodModel, RodConstitutiveLaw,
     TransverseShearRodModel,
 )
 
@@ -219,14 +218,14 @@ link = LinkSpec.rectangular(
     reference_strain=[0, 0, 0, 1, 0, 0],
     constitutive_law=RodConstitutiveLaw(
         transverse_shear=TransverseShearRodModel.EFFECTIVE_AREA,
-        rectangular_torsion=RectangularTorsionRodModel.MARSHALL,
+        torsion=TorsionRodModel.SAINT_VENANT,
     ),
 )
 ```
 
 These choices are retained in `GVSLinkStructure`; reconstruct the model to
-change them. Hollow links require effective shear areas, and rectangular tubes
-also require Marshall torsion. PCS/PlanarPCS currently accept only the default
+change them. Hollow links require effective shear areas and Saint-Venant
+torsion, using Marshall for rectangles. PCS/PlanarPCS currently accept only the default
 law and solid circular geometry. Helicoidal strands retain their own
 [sectional assumptions](gvs/helicoidal.md).
 
@@ -239,7 +238,7 @@ Marshall approaches Bredt for thin walls; its solid-square extension is about
 redistribution, and neither torsion option models restrained warping or wall
 buckling. See the
 [transverse-shear][soromox.systems.components.TransverseShearRodModel] and
-[rectangular-torsion][soromox.systems.components.RectangularTorsionRodModel]
+[torsion][soromox.systems.components.TorsionRodModel]
 API references below for formulas, limits, and publications.
 
 The scalar Kelvin–Voigt damping convention uses

@@ -17,7 +17,7 @@ from .cross_sections import (
 __all__ = [
     "RodConstitutiveLaw",
     "TransverseShearRodModel",
-    "RectangularTorsionRodModel",
+    "TorsionRodModel",
 ]
 
 
@@ -61,12 +61,18 @@ class TransverseShearRodModel(Enum):
     EFFECTIVE_AREA = "effective_area"
 
 
-class RectangularTorsionRodModel(Enum):
-    r"""Free-warping rectangular torsion in an isotropic rod constitutive law.
+class TorsionRodModel(Enum):
+    r"""Torsion assumptions in an isotropic rod constitutive law.
 
-    ``SAINT_VENANT_SERIES`` evaluates the solid rectangular solution using
-    64 odd terms. ``MARSHALL`` supports centred, uniform-wall tubes with
-    sharp corners and a continuous extension to solid rectangles:
+    ``POLAR_MOMENT`` uses $J=I_y+I_z$ for solid sections, preserving the
+    released GVS constitutive law. It is exact for circular solids but neglects
+    cross-sectional warping for noncircular sections. Hollow sections require
+    ``SAINT_VENANT``.
+
+    ``SAINT_VENANT`` accounts for free warping through geometry-specific
+    torsion constants: exact circular/annular and solid elliptical formulas,
+    and Marshall's approximation for rectangles. Marshall supports centred,
+    uniform-wall tubes with sharp corners and a continuous solid extension:
 
     $$
     J=\frac{4tA_m^2}{P_m}+\frac{P_mt^3}{3}.
@@ -83,9 +89,10 @@ class RectangularTorsionRodModel(Enum):
     exact solid solution: +3.739% for a square, and approximately -2.065%,
     -1.882%, and -1.078% for side ratios 2, 5, and 10. A nonsquare uniform-wall
     cavity closes to a line; this extension does not establish an exact
-    elasticity limit. Neither choice models restrained warping or wall buckling.
+    elasticity limit. This model does not describe restrained warping or wall
+    buckling.
 
-    Circular torsion is independently exact for solids and annuli,
+    For ``SAINT_VENANT``, circular torsion is exact for solids and annuli,
     $J=\pi(R^4-r^4)/2$. Solid ellipses use $J=\pi a^3b^3/(a^2+b^2)$.
 
     References:
@@ -96,8 +103,8 @@ class RectangularTorsionRodModel(Enum):
         Equation (1) gives Marshall's approximation used here for tubes.
     """
 
-    SAINT_VENANT_SERIES = "saint_venant_series"
-    MARSHALL = "marshall"
+    POLAR_MOMENT = "polar_moment"
+    SAINT_VENANT = "saint_venant"
 
 
 def _rectangular_shear_areas(outer: Array, inner: Array | None) -> Array:
@@ -164,28 +171,25 @@ class RodConstitutiveLaw:
         transverse_shear: Uniform shear (solid sections only), or effective
             areas from Cowper's circular formula and rectangular Jourawski
             shear energy. Effective areas do not currently support ellipses.
-        rectangular_torsion: Saint-Venant series for solid rectangles, or
-            Marshall's approximation for both solid and hollow rectangles.
-            Circular torsion is exact for either choice; solid ellipses use
-            their exact Saint-Venant constant.
+        torsion: Polar area moment for solid sections, or free-warping
+            Saint-Venant torsion using Marshall for rectangles and exact
+            constants for circular/annular and solid elliptical sections.
 
     Axial and bending stiffness always use EA, EIy and EIz. Rotational mass
     inertia always uses area moments, independently of these choices. The
-    defaults retain uniform shear but use Saint-Venant torsion for noncircular
-    solids, changing their material-derived torsional stiffness and damping
-    from the earlier polar-moment approximation.
+    defaults preserve the released solid-link stiffness and damping: uniform
+    shear and polar-moment torsion. Hollow links require EFFECTIVE_AREA shear
+    and SAINT_VENANT torsion.
     """
 
     transverse_shear: TransverseShearRodModel = TransverseShearRodModel.UNIFORM
-    rectangular_torsion: RectangularTorsionRodModel = (
-        RectangularTorsionRodModel.SAINT_VENANT_SERIES
-    )
+    torsion: TorsionRodModel = TorsionRodModel.POLAR_MOMENT
 
     def __post_init__(self) -> None:
         if not isinstance(self.transverse_shear, TransverseShearRodModel):
             raise TypeError("transverse_shear must be a TransverseShearRodModel.")
-        if not isinstance(self.rectangular_torsion, RectangularTorsionRodModel):
-            raise TypeError("rectangular_torsion must be a RectangularTorsionRodModel.")
+        if not isinstance(self.torsion, TorsionRodModel):
+            raise TypeError("torsion must be a TorsionRodModel.")
 
     def validate_geometry(self, geometry: CrossSectionGeometry, hollow: bool) -> None:
         """Reject unsupported geometry/law combinations at construction and update.
@@ -211,12 +215,10 @@ class RodConstitutiveLaw:
             raise ValueError(
                 "EFFECTIVE_AREA currently supports circular and rectangular sections."
             )
-        if (
-            hollow
-            and geometry == CrossSectionGeometry.RECTANGULAR
-            and self.rectangular_torsion != RectangularTorsionRodModel.MARSHALL
-        ):
-            raise ValueError("Hollow rectangular links require MARSHALL torsion.")
+        if hollow and self.torsion == TorsionRodModel.POLAR_MOMENT:
+            raise ValueError(
+                "POLAR_MOMENT torsion requires solid geometry; choose SAINT_VENANT for hollow links."
+            )
 
     def requires_poisson_ratio(self, geometry: CrossSectionGeometry) -> bool:
         """Check whether shear areas depend on the elastic Poisson ratio.
@@ -291,17 +293,17 @@ class RodConstitutiveLaw:
             inner: Optional centred uniform-wall cavity dimensions, in metres.
 
         Returns:
-            J for use in GJ. Marshall adds Pm*t³/3 to Bredt's 4*Am²*t/Pm.
-            Its solid extension evaluates the same expression at
+            J for use in GJ: the polar moment for POLAR_MOMENT, or a
+            geometry-specific constant for SAINT_VENANT. For rectangles,
+            Marshall adds Pm*t³/3 to Bredt's 4*Am²*t/Pm. Its solid extension
+            evaluates the same expression at
             t=min(height,width)/2, ensuring continuity as the cavity closes.
         """
         self.validate_geometry(geometry, inner is not None)
         outer = jnp.asarray(outer)
-        if (
-            geometry != CrossSectionGeometry.RECTANGULAR
-            or self.rectangular_torsion
-            == RectangularTorsionRodModel.SAINT_VENANT_SERIES
-        ):
+        if self.torsion == TorsionRodModel.POLAR_MOMENT:
+            return section_properties(geometry, outer)[0]
+        if geometry != CrossSectionGeometry.RECTANGULAR:
             return section_torsion_constant(geometry, outer, inner)
         thickness = (
             jnp.min(outer, axis=-1) / 2

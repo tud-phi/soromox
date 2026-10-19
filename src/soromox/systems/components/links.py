@@ -490,7 +490,8 @@ class LinkSpec:
             damping: Explicit generalized damping matrix.
             constitutive_law: Static shear and torsion assumptions. Defaults
                 preserve solid-link mechanics; hollow links require effective
-                shear areas, and rectangular tubes require Marshall torsion.
+                shear areas and Saint-Venant torsion, which uses Marshall for
+                rectangles.
 
         Returns:
             A circular :class:`LinkSpec` ready for PCS or GVS construction.
@@ -559,7 +560,8 @@ class LinkSpec:
             damping: Explicit generalized damping matrix.
             constitutive_law: Static shear and torsion assumptions. Defaults
                 preserve solid-link mechanics; hollow links require effective
-                shear areas, and rectangular tubes require Marshall torsion.
+                shear areas and Saint-Venant torsion, which uses Marshall for
+                rectangles.
 
         Returns:
             A rectangular :class:`LinkSpec` ready for GVS construction.
@@ -625,7 +627,8 @@ class LinkSpec:
             damping: Explicit generalized damping matrix.
             constitutive_law: Static shear and torsion assumptions. Defaults
                 preserve solid-link mechanics; hollow links require effective
-                shear areas, and rectangular tubes require Marshall torsion.
+                shear areas and Saint-Venant torsion, which uses Marshall for
+                rectangles.
 
         Returns:
             An elliptical :class:`LinkSpec` ready for GVS construction.

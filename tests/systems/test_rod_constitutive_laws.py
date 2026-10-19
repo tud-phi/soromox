@@ -18,8 +18,8 @@ from systems.test_gvs_hollow_links import (
 from soromox.systems import (
     GVSLinkStructure,
     IsotropicMaterialParams,
-    RectangularTorsionRodModel,
     RodConstitutiveLaw,
+    TorsionRodModel,
     TransverseShearRodModel,
 )
 from soromox.systems.components import CrossSectionGeometry as Geometry
@@ -28,7 +28,7 @@ from soromox.systems.components.cross_sections import section_properties
 jax.config.update("jax_enable_x64", True)
 EFFECTIVE = RodConstitutiveLaw(
     transverse_shear=TransverseShearRodModel.EFFECTIVE_AREA,
-    rectangular_torsion=RectangularTorsionRodModel.MARSHALL,
+    torsion=TorsionRodModel.SAINT_VENANT,
 )
 
 
@@ -89,8 +89,8 @@ def test_rectangular_shear_and_marshall_have_continuous_solid_limits(ratio):
 )
 def test_marshall_solid_error_against_series(ratio, relative_error):
     outer = jnp.array([1.0, ratio])
-    # Independent high-order Saint-Venant reference, rather than the production
-    # 64-term implementation. This quantifies the deliberate solid extension.
+    # Independent high-order Saint-Venant reference, used only for validation
+    # of Marshall's engineering extension to solid rectangles.
     n = np.arange(1, 20000, 2)
     exact = (
         ratio
@@ -123,7 +123,7 @@ def test_static_law_validation_and_hollow_rejection():
     for kind in ["circular", "rectangular"]:
         with pytest.raises(ValueError, match="UNIFORM"):
             replace(link_spec(kind), constitutive_law=RodConstitutiveLaw())
-    with pytest.raises(ValueError, match="MARSHALL"):
+    with pytest.raises(ValueError, match="SAINT_VENANT"):
         replace(
             link_spec("rectangular"),
             constitutive_law=RodConstitutiveLaw(
@@ -139,7 +139,23 @@ def test_static_law_validation_and_hollow_rejection():
             cross_section_profile_parameter_counts=(1, 1),
             hollow=True,
         )
-    robot = model(link_spec("circular"))
+
+
+@pytest.mark.parametrize("kind", ["circular", "rectangular"])
+@pytest.mark.parametrize(
+    "invalid_law,message",
+    [
+        (RodConstitutiveLaw(), "UNIFORM"),
+        (
+            RodConstitutiveLaw(transverse_shear=TransverseShearRodModel.EFFECTIVE_AREA),
+            "POLAR_MOMENT",
+        ),
+    ],
+)
+def test_updates_reject_incompatible_hollow_laws_even_under_jit(
+    kind, invalid_law, message
+):
+    robot = model(link_spec(kind))
     # Static structure choices are revalidated even if changed through a low-level
     # dataclass replacement that bypasses a LinkSpec factory.
     invalid_link = object.__new__(GVSLinkStructure)
@@ -147,22 +163,29 @@ def test_static_law_validation_and_hollow_rejection():
         object.__setattr__(
             invalid_link, name, getattr(robot.structure.segments[0].link, name)
         )
-    object.__setattr__(invalid_link, "constitutive_law", RodConstitutiveLaw())
+    object.__setattr__(invalid_link, "constitutive_law", invalid_law)
     invalid_structure = replace(
         robot.structure,
         segments=(replace(robot.structure.segments[0], link=invalid_link),),
     )
-    with pytest.raises(ValueError, match="UNIFORM"):
+    with pytest.raises(ValueError, match=message):
         robot.params.validate_for_update_against_structure(invalid_structure)
+
+    with pytest.raises(ValueError, match=message):
+        eqx.filter_jit(
+            lambda params: params.validate_for_update_against_structure(
+                invalid_structure
+            )
+        )(robot.params)
 
 
 @pytest.mark.parametrize("kind", ["circular", "rectangular", "elliptical"])
-def test_default_solid_matrices_use_uniform_shear_and_saint_venant_torsion(kind):
+def test_default_solid_matrices_preserve_released_uniform_shear_and_polar_torsion(kind):
     robot = model(link_spec(kind, wall=None))
     geometry, outer, _ = robot.cross_section_geometry(jnp.zeros(6), LENGTH / 2)
     geometry = Geometry(int(geometry))
     ix, iy, iz, area = section_properties(geometry, outer)
-    torsion = RodConstitutiveLaw().torsion_constant(geometry, outer)
+    torsion = ix  # Released GVS law uses the polar area moment for every solid.
     expected_k = LENGTH * jnp.array(
         [4e5 * torsion, 1e6 * iy, 1e6 * iz, 1e6 * area, 4e5 * area, 4e5 * area]
     )
@@ -294,3 +317,62 @@ def test_invalid_eager_poisson_ratios_remain_rejected(nu):
         EFFECTIVE.shear_areas(
             Geometry.CIRCULAR, jnp.array([0.02]), poisson_ratio=jnp.array(nu)
         )
+
+
+@pytest.mark.parametrize("geometry", list(Geometry))
+@pytest.mark.parametrize("hollow", [False, True])
+@pytest.mark.parametrize("shear", list(TransverseShearRodModel))
+@pytest.mark.parametrize("torsion", list(TorsionRodModel))
+def test_law_geometry_support_matrix_including_jit(geometry, hollow, shear, torsion):
+    """All public model combinations obey the same restrictions at every layer."""
+    law = RodConstitutiveLaw(transverse_shear=shear, torsion=torsion)
+    supported = (
+        not hollow
+        or (
+            shear == TransverseShearRodModel.EFFECTIVE_AREA
+            and torsion == TorsionRodModel.SAINT_VENANT
+        )
+    ) and (
+        geometry != Geometry.ELLIPTICAL
+        or (not hollow and shear == TransverseShearRodModel.UNIFORM)
+    )
+    outer = jnp.array([0.03] if geometry == Geometry.CIRCULAR else [0.04, 0.06])
+    inner = (
+        outer - (0.002 if geometry == Geometry.CIRCULAR else 0.004) if hollow else None
+    )
+    count = len(outer) + int(hollow)
+
+    def structure():
+        return GVSLinkStructure(
+            cross_section_geometry=geometry,
+            cross_section_profile_types=("constant",) * count,
+            cross_section_profile_parameter_counts=(1,) * count,
+            hollow=hollow,
+            constitutive_law=law,
+        )
+
+    def areas(x):
+        return law.shear_areas(geometry, x, inner)
+
+    def twist(x):
+        return law.torsion_constant(geometry, x, inner)
+
+    calls = (
+        lambda: law.validate_geometry(geometry, hollow),
+        structure,
+        lambda: areas(outer),
+        lambda: twist(outer),
+        lambda: jax.jit(areas)(outer),
+        lambda: jax.jit(twist)(outer),
+    )
+    for call in calls:
+        if supported:
+            call()
+        else:
+            with pytest.raises(ValueError):
+                call()
+
+
+def test_torsion_choice_requires_enum():
+    with pytest.raises(TypeError, match="torsion"):
+        RodConstitutiveLaw(torsion="saint_venant")

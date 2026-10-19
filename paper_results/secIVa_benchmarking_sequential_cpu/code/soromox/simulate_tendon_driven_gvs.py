@@ -14,10 +14,10 @@ from soromox.systems import (
     GVSSegment,
     JointSpec,
     LinkSpec,
-    RectangularTorsionRodModel,
     RodConstitutiveLaw,
     StrainBasisSpec,
     SystemState,
+    TorsionRodModel,
     TransverseShearRodModel,
 )
 
@@ -59,7 +59,7 @@ DATA_DIR = Path(__file__).resolve().parents[2] / "data"
 link1 = LinkSpec.circular(
     constitutive_law=RodConstitutiveLaw(
         transverse_shear=TransverseShearRodModel.UNIFORM,
-        rectangular_torsion=RectangularTorsionRodModel.SAINT_VENANT_SERIES,
+        torsion=TorsionRodModel.POLAR_MOMENT,
     ),
     length=0.3,
     radius=0.03,
@@ -74,7 +74,7 @@ link1 = LinkSpec.circular(
 link2 = LinkSpec.circular(
     constitutive_law=RodConstitutiveLaw(
         transverse_shear=TransverseShearRodModel.UNIFORM,
-        rectangular_torsion=RectangularTorsionRodModel.SAINT_VENANT_SERIES,
+        torsion=TorsionRodModel.POLAR_MOMENT,
     ),
     length=0.3,
     radius=0.03,

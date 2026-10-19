@@ -31,9 +31,9 @@ from soromox.systems import (
     PCS,
     LinkSpec,
     PCSParams,
-    RectangularTorsionRodModel,
     RodConstitutiveLaw,
     SystemState,
+    TorsionRodModel,
     TransverseShearRodModel,
 )
 
@@ -125,7 +125,7 @@ def build_problem(trajectory_config: TaskSpaceTrajectoryConfig) -> PCSImpedanceP
         LinkSpec.circular(
             constitutive_law=RodConstitutiveLaw(
                 transverse_shear=TransverseShearRodModel.UNIFORM,
-                rectangular_torsion=RectangularTorsionRodModel.SAINT_VENANT_SERIES,
+                torsion=TorsionRodModel.POLAR_MOMENT,
             ),
             length=float(segment_lengths[index]),
             radius=2e-2,

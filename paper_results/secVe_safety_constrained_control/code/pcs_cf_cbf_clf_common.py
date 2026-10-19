@@ -15,9 +15,9 @@ from soromox.actuation import ThreadlikeActuator, ThreadlikeRouting
 from soromox.systems import (
     PCS,
     LinkSpec,
-    RectangularTorsionRodModel,
     RodConstitutiveLaw,
     SystemState,
+    TorsionRodModel,
     TransverseShearRodModel,
 )
 
@@ -303,7 +303,7 @@ def build_simulation_setup() -> SimulationSetup:
             LinkSpec.circular(
                 constitutive_law=RodConstitutiveLaw(
                     transverse_shear=TransverseShearRodModel.UNIFORM,
-                    rectangular_torsion=RectangularTorsionRodModel.SAINT_VENANT_SERIES,
+                    torsion=TorsionRodModel.POLAR_MOMENT,
                 ),
                 length=float(segment_length[index]),
                 radius=float(backbone_radius[index]),

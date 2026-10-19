@@ -29,9 +29,9 @@ from soromox.systems import (
     PendulumParams,
     PlanarPCS,
     PlanarPCSStructure,
-    RectangularTorsionRodModel,
     RodConstitutiveLaw,
     StrainBasisSpec,
+    TorsionRodModel,
     TransverseShearRodModel,
 )
 
@@ -228,7 +228,7 @@ def _planar_pcs_factory(
             LinkSpec.circular(
                 constitutive_law=RodConstitutiveLaw(
                     transverse_shear=TransverseShearRodModel.UNIFORM,
-                    rectangular_torsion=RectangularTorsionRodModel.SAINT_VENANT_SERIES,
+                    torsion=TorsionRodModel.POLAR_MOMENT,
                 ),
                 length=0.12,
                 radius=0.015,
@@ -281,7 +281,7 @@ def _pcs_factory(
             LinkSpec.circular(
                 constitutive_law=RodConstitutiveLaw(
                     transverse_shear=TransverseShearRodModel.UNIFORM,
-                    rectangular_torsion=RectangularTorsionRodModel.SAINT_VENANT_SERIES,
+                    torsion=TorsionRodModel.POLAR_MOMENT,
                 ),
                 length=0.1,
                 radius=0.02,
@@ -332,7 +332,7 @@ def _gvs_segment(strain_basis_order: int, gauss_points: int) -> GVSSegment:
         link=LinkSpec.circular(
             constitutive_law=RodConstitutiveLaw(
                 transverse_shear=TransverseShearRodModel.UNIFORM,
-                rectangular_torsion=RectangularTorsionRodModel.SAINT_VENANT_SERIES,
+                torsion=TorsionRodModel.POLAR_MOMENT,
             ),
             young_modulus=1.0e6,
             shear_modulus=1.0e6 / 2.9,
