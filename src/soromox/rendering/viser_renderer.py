@@ -694,6 +694,11 @@ class ViserRenderer(BaseSoftRobotRenderer):
         self._add_ground_plane(curves[:, 0])
 
         # Clear existing robot geometry
+        for handles in self._scene_handles.backbone_points:
+            for handle in handles:
+                handle.remove()
+        for handle in self._scene_handles.base_plates:
+            handle.remove()
         self._scene_handles.backbone_points = []
         self._scene_handles.discrete_backbone_batches = []
         self._scene_handles.swept_backbone_batches = []
@@ -2555,7 +2560,6 @@ class ViserRenderer(BaseSoftRobotRenderer):
         Returns:
             LiveModeController for managing the live session
         """
-        self._static_scene = False
         if self._server is None:
             self.start()
 
@@ -2760,6 +2764,11 @@ class LiveModeController:
         if self._running:
             return
 
+        if self._renderer._static_scene and self._renderer._scene_handles is not None:
+            # Static GLB handles cannot receive vertex updates. Rebuild them as
+            # editable meshes when the first live state arrives.
+            self._renderer._scene_handles.geometry_initialized = False
+        self._renderer._static_scene = False
         self._running = True
         self._renderer._live_mode_active = True
         self._start_time = time.time()
@@ -2903,3 +2912,4 @@ class LiveModeController:
                 material_frames=material_frames,
                 base_plate_color=self._renderer.color_config.base_plate_color,
             )
+            self._renderer._setup_camera(curves, self._renderer._active_camera)

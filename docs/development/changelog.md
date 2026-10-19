@@ -29,6 +29,12 @@ and include benchmark baseline and measurement context for performance claims.
 
 ### Fixed
 
+- Viser live mode initializes the camera and lighting on its first state and
+  rebuilds static meshes as editable surfaces when switching from a static
+  view, so subsequent geometry updates reach the browser. Resizing a live
+  robot batch removes obsolete meshes.
+- Open3D scene meshes explicitly initialize missing texture coordinates,
+  preventing white surface artifacts with unpatched Open3D wheels.
 - Restored the Section IVa PyElastica benchmarks using COOMM, with
   PyElastica 1.0 support and short rollout tests in CI; see
   [PR #220](https://github.com/tud-phi/soromox/pull/220).
