@@ -64,10 +64,9 @@ class TransverseShearRodModel(Enum):
 class TorsionRodModel(Enum):
     r"""Torsion assumptions in an isotropic rod constitutive law.
 
-    ``POLAR_MOMENT`` uses $J=I_y+I_z$ for solid sections, preserving the
-    released GVS constitutive law. It is exact for circular solids but neglects
-    cross-sectional warping for noncircular sections. Hollow sections require
-    ``SAINT_VENANT``.
+    ``POLAR_MOMENT`` uses $J=I_y+I_z$ for solid sections. It is exact for
+    circular solids but neglects cross-sectional warping for noncircular
+    sections. Hollow sections require ``SAINT_VENANT``.
 
     ``SAINT_VENANT`` accounts for free warping through geometry-specific
     torsion constants: exact circular/annular and solid elliptical formulas,
@@ -177,9 +176,8 @@ class RodConstitutiveLaw:
 
     Axial and bending stiffness always use EA, EIy and EIz. Rotational mass
     inertia always uses area moments, independently of these choices. The
-    defaults preserve the released solid-link stiffness and damping: uniform
-    shear and polar-moment torsion. Hollow links require EFFECTIVE_AREA shear
-    and SAINT_VENANT torsion.
+    default law uses uniform shear and polar-moment torsion for stiffness and
+    damping. Hollow links require EFFECTIVE_AREA shear and SAINT_VENANT torsion.
     """
 
     transverse_shear: TransverseShearRodModel = TransverseShearRodModel.UNIFORM

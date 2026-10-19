@@ -180,9 +180,9 @@ PyTree structure and requires recompilation.
 
 ### Rod constitutive laws
 
-The defaults preserve the released GVS law: uniform transverse shear and
-polar-moment torsion for solid sections. Shear and torsion can be selected
-independently. Hollow links require effective shear and Saint-Venant torsion.
+The default GVS law uses uniform transverse shear and polar-moment torsion
+for solid sections. Shear and torsion can be selected independently. Hollow
+links require effective shear and Saint-Venant torsion.
 
 A GVS link's `RodConstitutiveLaw` selects how the isotropic material and
 cross-section produce rod stiffness. For strain order
@@ -201,7 +201,7 @@ differ from \(J\).
 |---|---|
 | `TransverseShearRodModel.UNIFORM` (default) | Solid sections; shear stiffness is \(GA\). |
 | `TransverseShearRodModel.EFFECTIVE_AREA` | Solid/hollow circles use material-dependent Cowper factors; solid/hollow rectangles use Jourawski shear-energy matching. |
-| `TorsionRodModel.POLAR_MOMENT` (default) | Solid sections; torsional stiffness is \(G(I_y+I_z)\), preserving the released law. |
+| `TorsionRodModel.POLAR_MOMENT` (default) | Solid sections; torsional stiffness is \(G(I_y+I_z)\). |
 | `TorsionRodModel.SAINT_VENANT` | Marshall for solid/hollow rectangles; exact circular/annular and solid elliptical torsion. |
 
 For a rectangular tube, select both alternatives explicitly:
