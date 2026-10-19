@@ -55,10 +55,6 @@ Describe the delta from the last release, not intermediate development changes.
   robot batch removes obsolete meshes.
 - Open3D scene meshes explicitly initialize missing texture coordinates,
   preventing white surface artifacts with unpatched Open3D wheels.
-- GVS material-derived torsional stiffness and damping for solid rectangles
-  and ellipses now use their Saint-Venant torsion constants instead of polar
-  area moments. Rotational mass inertia still uses the polar moment; explicit
-  constitutive matrices retain their supplied values.
 - Corrected rectangular cross-section orientation in Open3D and Viser: height
   now spans local material y and width spans z, matching the existing GVS
   bending stiffness and inertia. Both swept surfaces and discrete boxes use

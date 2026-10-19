@@ -14,7 +14,6 @@ from soromox.systems.components import (
     evaluate_profile,
     section_properties,
 )
-from soromox.systems.components.cross_sections import section_torsion_constant
 from soromox.systems.gvs.params import GVSParams
 from soromox.systems.gvs.primitives import Basis, Joint
 from soromox.systems.gvs.specs import GVSSegment
@@ -195,14 +194,13 @@ def material_operators_from_params(
         ix, iy, iz, area = vmap(
             lambda value, geometry=geometry: section_properties(geometry, value)
         )(dimensions)
-        torsion = section_torsion_constant(geometry, dimensions)
         young_diagonal = jnp.stack(
             [jnp.zeros_like(ix), iy, iz, area, jnp.zeros_like(ix), jnp.zeros_like(ix)],
             axis=1,
         )
         shear_diagonal = jnp.stack(
             [
-                torsion,
+                ix,
                 jnp.zeros_like(ix),
                 jnp.zeros_like(ix),
                 jnp.zeros_like(ix),
@@ -212,7 +210,7 @@ def material_operators_from_params(
             axis=1,
         )
         damping_diagonal = jnp.stack(
-            [torsion, 3.0 * iy, 3.0 * iz, 3.0 * area, area, area], axis=1
+            [ix, 3.0 * iy, 3.0 * iz, 3.0 * area, area, area], axis=1
         )
 
         def project(
