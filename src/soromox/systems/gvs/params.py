@@ -454,6 +454,58 @@ class HelicoidalHelixParams(BaseSystemParams):
             **kwargs,
         )
 
+    @classmethod
+    def rectangular_hollow(
+        cls, *, width: float, height: float, wall_thickness: float, **kwargs
+    ) -> Self:
+        """Construct hollow rectangular strand sections from outer size and wall [m].
+
+        ``width`` spans the strand's local y (radial) axis and ``height`` its
+        local z axis. Torsion uses Bredt's thin-walled formula ``4 A_m^2 t / P_m``.
+        Remaining keyword arguments specify geometry, material and fusion as in
+        the constructor. Shear correction defaults to the thin-wall web areas
+        ``2 h t / A`` and ``2 w t / A``.
+        """
+        width, height, thickness = (
+            float(width),
+            float(height),
+            float(wall_thickness),
+        )
+        for name, value in (
+            ("width", width),
+            ("height", height),
+            ("wall_thickness", thickness),
+        ):
+            if not np.isfinite(value) or value <= 0:
+                raise ValueError(f"{name} must be finite and positive.")
+        if 2 * thickness >= min(width, height):
+            raise ValueError(
+                "wall_thickness must be smaller than half the smaller outer "
+                "dimension so the section remains hollow."
+            )
+        inner_width, inner_height = width - 2 * thickness, height - 2 * thickness
+        area = width * height - inner_width * inner_height
+        moment_y = (width * height**3 - inner_width * inner_height**3) / 12
+        moment_z = (height * width**3 - inner_height * inner_width**3) / 12
+        midline_width, midline_height = width - thickness, height - thickness
+        torsion = (
+            2
+            * thickness
+            * midline_width**2
+            * midline_height**2
+            / (midline_width + midline_height)
+        )
+        kwargs.setdefault(
+            "strand_shear_factors",
+            jnp.array([2 * height * thickness / area, 2 * width * thickness / area]),
+        )
+        return cls(
+            strand_area=area,
+            strand_second_moments=jnp.array([moment_y, moment_z]),
+            strand_torsion_constant=torsion,
+            **kwargs,
+        )
+
     def validate_structure(self) -> None:
         if (
             isinstance(self.helices_per_direction, bool)
