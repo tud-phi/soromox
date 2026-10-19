@@ -495,19 +495,6 @@ def test_general_open3d_scene_keeps_cavity_walls_through_smoothing():
     radial = np.linalg.norm(np.asarray(body.vertices)[:, 1:], axis=1)
     assert_allclose(radial.min(), 0.03)
     assert_allclose(radial.max(), 0.05)
-    for call in scene.add_geometry.call_args_list:
-        mesh = call.args[1]
-        assert mesh.has_triangle_uvs()
-        assert_array_equal(np.asarray(mesh.triangle_uvs), 0.0)
-
-
-def test_modern_mesh_preparation_preserves_existing_texture_coordinates():
-    o3d = open3d_renderer_module.o3d
-    mesh = o3d.geometry.TriangleMesh.create_box()
-    uvs = np.linspace(0, 1, 6 * len(mesh.triangles)).reshape(-1, 2)
-    mesh.triangle_uvs = o3d.utility.Vector2dVector(uvs)
-    open3d_renderer_module._initialize_missing_triangle_uvs(mesh)
-    assert_array_equal(np.asarray(mesh.triangle_uvs), uvs)
 
 
 @pytest.mark.parametrize("count", [0, 1, 3])

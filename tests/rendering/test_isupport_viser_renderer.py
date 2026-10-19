@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-from unittest.mock import Mock
 
 import jax
 
@@ -540,7 +539,6 @@ def test_live_controller_updates_custom_geometry_in_place():
     renderer = _renderer(_make_robot(connectors=True))
     renderer._server = _FakeServer()
     renderer._scene_handles = SceneHandles()
-    renderer._setup_camera = Mock()
     controller = ISupportLiveModeController(renderer)
     q = np.zeros((renderer.robot.num_internal_dofs,))
 
@@ -551,14 +549,12 @@ def test_live_controller_updates_custom_geometry_in_place():
     assert renderer._current_geometry_q.shape == (1, renderer.robot.num_internal_dofs)
     assert renderer._robot_visual_handles[0].chamber_handles[0] is first_handle
     assert renderer._server.atomic_calls == 1
-    renderer._setup_camera.assert_called_once()
 
 
 def test_live_controller_pushes_pressures_with_state():
     renderer = _renderer(_make_robot(connectors=True))
     renderer._server = _FakeServer()
     renderer._scene_handles = SceneHandles()
-    renderer._setup_camera = Mock()
     controller = ISupportLiveModeController(renderer)
     controller.start()
     q = np.zeros((renderer.robot.num_internal_dofs,))

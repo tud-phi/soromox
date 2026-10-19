@@ -54,12 +54,6 @@ Describe the delta from the last release, not intermediate development changes.
 
 ### Fixed
 
-- Viser live mode initializes the camera and lighting on its first state and
-  rebuilds static meshes as editable surfaces when switching from a static
-  view, so subsequent geometry updates reach the browser. Resizing a live
-  robot batch removes obsolete meshes.
-- Open3D scene meshes explicitly initialize missing texture coordinates,
-  preventing white surface artifacts with unpatched Open3D wheels.
 - GVS material-derived torsional stiffness and damping for solid rectangles
   and ellipses now use their Saint-Venant torsion constants instead of polar
   area moments. Rotational mass inertia still uses the polar moment; explicit
