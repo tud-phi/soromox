@@ -14,25 +14,112 @@ from .cross_sections import (
     section_torsion_constant,
 )
 
-__all__ = ["RodConstitutiveLaw", "TransverseShearModel", "RectangularTorsionModel"]
+__all__ = [
+    "RodConstitutiveLaw",
+    "TransverseShearRodModel",
+    "RectangularTorsionRodModel",
+]
 
 
-class TransverseShearModel(Enum):
-    """How transverse shear resultants relate to the rod's shear strains."""
+class TransverseShearRodModel(Enum):
+    r"""Transverse-shear assumptions in an isotropic rod constitutive law.
+
+    ``UNIFORM`` uses the material area, $A_{s,y}=A_{s,z}=A$, and supports
+    solid sections only. ``EFFECTIVE_AREA`` uses Cowper's expression for
+    circles and annuli, and Jourawski shear-energy matching for rectangles.
+    Effective areas for ellipses are currently unsupported.
+
+    For circles, with $m=r/R$ and elastic Poisson ratio $\nu$,
+
+    $$
+    A_s=kA,\qquad
+    k=\frac{6(1+\nu)(1+m^2)^2}
+            {(7+6\nu)(1+m^2)^2+(20+12\nu)m^2}.
+    $$
+
+    This has no thin-wall expansion. The solid limit is
+    $k=6(1+\nu)/(7+6\nu)$; the thin-wall limit is
+    $k=2(1+\nu)/(4+3\nu)$. The material supplies $\nu$ directly or through
+    $E/(2G)-1$, and the same factor enters the scalar damping model.
+
+    For rectangles, $A_s=I^2/\int Q(u)^2/b(u)\,du$ matches the energy of
+    the assumed stress $\tau=VQ/(Ib)$. Here $b$ is the material breadth at
+    a cut, $Q$ its first area moment, and $I$ the bending moment of area
+    for the chosen shear direction. This recovers $5A/6$ for solids and
+    continuously as a cavity closes. It neglects transverse redistribution
+    and corner effects. These effective-area solid limits differ from the
+    uniform-shear choice; changing models changes the solid stiffness too.
+
+    References:
+        Cowper, G. R. (1966). The Shear Coefficient in Timoshenko's Beam
+        Theory. *Journal of Applied Mechanics*, **33**(2), 335–340.
+        [doi:10.1115/1.3625046](https://doi.org/10.1115/1.3625046).
+        Source of the circular and annular shear factors.
+    """
 
     UNIFORM = "uniform"
     EFFECTIVE_AREA = "effective_area"
 
 
-class RectangularTorsionModel(Enum):
-    """Approximation to free-warping torsion of rectangular sections."""
+class RectangularTorsionRodModel(Enum):
+    r"""Free-warping rectangular torsion in an isotropic rod constitutive law.
+
+    ``SAINT_VENANT_SERIES`` evaluates the solid rectangular solution using
+    64 odd terms. ``MARSHALL`` supports centred, uniform-wall tubes with
+    sharp corners and a continuous extension to solid rectangles:
+
+    $$
+    J=\frac{4tA_m^2}{P_m}+\frac{P_mt^3}{3}.
+    $$
+
+    $A_m$ is the area enclosed by the wall midline and $P_m$ its perimeter.
+    The first term is Bredt's thin-wall expression. The relative correction,
+    $P_m^2t^2/(12A_m^2)$, vanishes quadratically for thin walls. At square-tube
+    wall/outer-side ratios of 1%, 5%, and 10%, the correction is 0.0136%,
+    0.3693%, and 1.6461%, respectively.
+
+    For a solid, Marshall is evaluated at $t=\min(h,w)/2$. This engineering
+    extension is continuous with the tube formula, but differs from the
+    exact solid solution: +3.739% for a square, and approximately -2.065%,
+    -1.882%, and -1.078% for side ratios 2, 5, and 10. A nonsquare uniform-wall
+    cavity closes to a line; this extension does not establish an exact
+    elasticity limit. Neither choice models restrained warping or wall buckling.
+
+    Circular torsion is independently exact for solids and annuli,
+    $J=\pi(R^4-r^4)/2$. Solid ellipses use $J=\pi a^3b^3/(a^2+b^2)$.
+
+    References:
+        Ridley-Ellis, D. J., Owen, J. S., & Davies, G. (2003). Torsional
+        behaviour of rectangular hollow sections. *Journal of Constructional
+        Steel Research*, **59**(5), 641–663.
+        [doi:10.1016/S0143-974X(02)00060-3](https://doi.org/10.1016/S0143-974X(02)00060-3).
+        Equation (1) gives Marshall's approximation used here for tubes.
+    """
 
     SAINT_VENANT_SERIES = "saint_venant_series"
     MARSHALL = "marshall"
 
 
 def _rectangular_shear_areas(outer: Array, inner: Array | None) -> Array:
-    """Integrate Jourawski shear energy exactly on each constant-breadth strip."""
+    r"""Compute rectangular shear areas by matching Jourawski stress energy.
+
+    Args:
+        outer: Outer height and width in the last axis, spanning material y
+            and z, in metres. Leading dimensions may batch several sections.
+        inner: Centred cavity height and width with the same shape as
+            ``outer``, or None for solid sections. Callers validate the cavity.
+
+    Returns:
+        Effective shear areas along y and z with shape ``(..., 2)``, in m².
+
+    For each direction, the approximation $\tau=VQ/(Ib)$ gives
+    $A_s=I^2/\int Q^2/b\,du$. The cavity divides the section into strips
+    of constant material breadth $b$. Within each strip, $Q$ is quadratic,
+    so three-point Gauss quadrature integrates its squared contribution
+    exactly. The integration includes both symmetric halves and solves both
+    shear directions together. Exact integration of this assumed stress
+    field does not account for transverse redistribution or corner effects.
+    """
     # Solve both directions together: depth along the applied shear, breadth
     # perpendicular to it. The last axis orders shear along material y and z.
     depth, breadth = outer, outer[..., ::-1]
@@ -87,16 +174,16 @@ class RodConstitutiveLaw:
     defaults preserve the existing solid-link stiffness and damping.
     """
 
-    transverse_shear: TransverseShearModel = TransverseShearModel.UNIFORM
-    rectangular_torsion: RectangularTorsionModel = (
-        RectangularTorsionModel.SAINT_VENANT_SERIES
+    transverse_shear: TransverseShearRodModel = TransverseShearRodModel.UNIFORM
+    rectangular_torsion: RectangularTorsionRodModel = (
+        RectangularTorsionRodModel.SAINT_VENANT_SERIES
     )
 
     def __post_init__(self) -> None:
-        if not isinstance(self.transverse_shear, TransverseShearModel):
-            raise TypeError("transverse_shear must be a TransverseShearModel.")
-        if not isinstance(self.rectangular_torsion, RectangularTorsionModel):
-            raise TypeError("rectangular_torsion must be a RectangularTorsionModel.")
+        if not isinstance(self.transverse_shear, TransverseShearRodModel):
+            raise TypeError("transverse_shear must be a TransverseShearRodModel.")
+        if not isinstance(self.rectangular_torsion, RectangularTorsionRodModel):
+            raise TypeError("rectangular_torsion must be a RectangularTorsionRodModel.")
 
     def validate_geometry(self, geometry: CrossSectionGeometry, hollow: bool) -> None:
         """Reject unsupported geometry/law combinations at construction and update.
@@ -111,12 +198,12 @@ class RodConstitutiveLaw:
         Raises:
             ValueError: If the selected models do not support this geometry.
         """
-        if hollow and self.transverse_shear == TransverseShearModel.UNIFORM:
+        if hollow and self.transverse_shear == TransverseShearRodModel.UNIFORM:
             raise ValueError(
                 "UNIFORM transverse shear requires solid geometry; choose EFFECTIVE_AREA for hollow links."
             )
         if (
-            self.transverse_shear == TransverseShearModel.EFFECTIVE_AREA
+            self.transverse_shear == TransverseShearRodModel.EFFECTIVE_AREA
             and geometry == CrossSectionGeometry.ELLIPTICAL
         ):
             raise ValueError(
@@ -125,7 +212,7 @@ class RodConstitutiveLaw:
         if (
             hollow
             and geometry == CrossSectionGeometry.RECTANGULAR
-            and self.rectangular_torsion != RectangularTorsionModel.MARSHALL
+            and self.rectangular_torsion != RectangularTorsionRodModel.MARSHALL
         ):
             raise ValueError("Hollow rectangular links require MARSHALL torsion.")
 
@@ -140,7 +227,7 @@ class RodConstitutiveLaw:
         """
         return (
             geometry == CrossSectionGeometry.CIRCULAR
-            and self.transverse_shear == TransverseShearModel.EFFECTIVE_AREA
+            and self.transverse_shear == TransverseShearRodModel.EFFECTIVE_AREA
         )
 
     def shear_areas(
@@ -167,16 +254,16 @@ class RodConstitutiveLaw:
         self.validate_geometry(geometry, inner is not None)
         outer = jnp.asarray(outer)
         area = section_properties(geometry, outer, inner)[3]
-        if self.transverse_shear == TransverseShearModel.UNIFORM:
+        if self.transverse_shear == TransverseShearRodModel.UNIFORM:
             return jnp.stack((area, area), axis=-1)
         if geometry == CrossSectionGeometry.RECTANGULAR:
             return _rectangular_shear_areas(
                 outer, None if inner is None else jnp.asarray(inner)
             )
         nu = jnp.asarray(poisson_ratio)
-        if not _contains_tracer(nu) and not bool(
-            jnp.all(jnp.isfinite(nu) & (nu > -1) & (nu <= 0.5))
-        ):
+        valid_nu = jnp.all(jnp.isfinite(nu) & (nu > -1) & (nu <= 0.5))
+        # Operations on a concrete closed-over array can still trace under JIT.
+        if not _contains_tracer(valid_nu) and not bool(valid_nu):
             raise ValueError(
                 "Cowper shear requires -1 < poisson_ratio <= 0.5, including when derived from E and G."
             )
@@ -210,7 +297,8 @@ class RodConstitutiveLaw:
         outer = jnp.asarray(outer)
         if (
             geometry != CrossSectionGeometry.RECTANGULAR
-            or self.rectangular_torsion == RectangularTorsionModel.SAINT_VENANT_SERIES
+            or self.rectangular_torsion
+            == RectangularTorsionRodModel.SAINT_VENANT_SERIES
         ):
             return section_torsion_constant(geometry, outer, inner)
         thickness = (

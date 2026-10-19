@@ -18,17 +18,17 @@ from systems.test_gvs_hollow_links import (
 from soromox.systems import (
     GVSLinkStructure,
     IsotropicMaterialParams,
-    RectangularTorsionModel,
+    RectangularTorsionRodModel,
     RodConstitutiveLaw,
-    TransverseShearModel,
+    TransverseShearRodModel,
 )
 from soromox.systems.components import CrossSectionGeometry as Geometry
 from soromox.systems.components.cross_sections import section_properties
 
 jax.config.update("jax_enable_x64", True)
 EFFECTIVE = RodConstitutiveLaw(
-    transverse_shear=TransverseShearModel.EFFECTIVE_AREA,
-    rectangular_torsion=RectangularTorsionModel.MARSHALL,
+    transverse_shear=TransverseShearRodModel.EFFECTIVE_AREA,
+    rectangular_torsion=RectangularTorsionRodModel.MARSHALL,
 )
 
 
@@ -127,7 +127,7 @@ def test_static_law_validation_and_hollow_rejection():
         replace(
             link_spec("rectangular"),
             constitutive_law=RodConstitutiveLaw(
-                transverse_shear=TransverseShearModel.EFFECTIVE_AREA
+                transverse_shear=TransverseShearRodModel.EFFECTIVE_AREA
             ),
         )
     with pytest.raises(ValueError, match="circular and rectangular"):
@@ -269,3 +269,28 @@ def test_mixed_links_use_their_own_law_and_poisson_ratio():
     assert_allclose(d[:, 4, 4], LENGTH * area * np.array([100, 200 * factor]))
     with pytest.raises(ValueError, match="Cowper"):
         model(replace(corrected, shear_modulus=1e5))
+
+
+@pytest.mark.parametrize("hollow", [False, True])
+def test_closed_over_poisson_array_allows_compiled_geometry_updates(hollow):
+    nu = jnp.array(0.3)
+
+    def areas(radius):
+        outer = jnp.reshape(radius, (1,))
+        inner = outer / 2 if hollow else None
+        return EFFECTIVE.shear_areas(Geometry.CIRCULAR, outer, inner, poisson_ratio=nu)
+
+    compiled = jax.jit(areas)
+    for radius in [0.02, 0.03]:
+        assert_allclose(compiled(jnp.array(radius)), areas(jnp.array(radius)))
+    derivative = jax.jit(jax.jacfwd(areas))(jnp.array(0.02))
+    # With fixed cavity ratio and material, effective area scales as radius².
+    assert_allclose(derivative, 2 * areas(jnp.array(0.02)) / 0.02)
+
+
+@pytest.mark.parametrize("nu", [-1.0, 0.5001, float("nan")])
+def test_invalid_eager_poisson_ratios_remain_rejected(nu):
+    with pytest.raises(ValueError, match="Cowper shear requires"):
+        EFFECTIVE.shear_areas(
+            Geometry.CIRCULAR, jnp.array([0.02]), poisson_ratio=jnp.array(nu)
+        )

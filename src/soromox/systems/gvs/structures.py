@@ -27,11 +27,11 @@ class GVSLinkStructure(eqx.Module):
 
     Attributes:
         cross_section_geometry: Static cross-section boundary family.
-        hollow: Whether an additional wall-thickness profile defines a cavity.
-        constitutive_law: Static transverse-shear and rectangular-torsion choices.
         cross_section_profile_types: Profile type for each geometry dimension.
         cross_section_profile_parameter_counts: Number of packed coefficients
             consumed by each geometry dimension.
+        hollow: Whether an additional wall-thickness profile defines a cavity.
+        constitutive_law: Static transverse-shear and rectangular-torsion choices.
     """
 
     cross_section_geometry: CrossSectionGeometry = eqx.field(static=True)

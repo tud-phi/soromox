@@ -14,11 +14,11 @@ from soromox.systems import (
     GVSSegment,
     JointSpec,
     LinkSpec,
-    RectangularTorsionModel,
+    RectangularTorsionRodModel,
     RodConstitutiveLaw,
     StrainBasisSpec,
     SystemState,
-    TransverseShearModel,
+    TransverseShearRodModel,
 )
 
 jax.config.update("jax_enable_x64", True)
@@ -58,8 +58,8 @@ DATA_DIR = Path(__file__).resolve().parents[2] / "data"
 # Link 1
 link1 = LinkSpec.circular(
     constitutive_law=RodConstitutiveLaw(
-        transverse_shear=TransverseShearModel.UNIFORM,
-        rectangular_torsion=RectangularTorsionModel.SAINT_VENANT_SERIES,
+        transverse_shear=TransverseShearRodModel.UNIFORM,
+        rectangular_torsion=RectangularTorsionRodModel.SAINT_VENANT_SERIES,
     ),
     length=0.3,
     radius=0.03,
@@ -73,8 +73,8 @@ link1 = LinkSpec.circular(
 # Link 2
 link2 = LinkSpec.circular(
     constitutive_law=RodConstitutiveLaw(
-        transverse_shear=TransverseShearModel.UNIFORM,
-        rectangular_torsion=RectangularTorsionModel.SAINT_VENANT_SERIES,
+        transverse_shear=TransverseShearRodModel.UNIFORM,
+        rectangular_torsion=RectangularTorsionRodModel.SAINT_VENANT_SERIES,
     ),
     length=0.3,
     radius=0.03,

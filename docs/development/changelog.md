@@ -27,12 +27,14 @@ Describe the delta from the last release, not intermediate development changes.
   discrete markers remain outer proxies. Hollow links require an explicit
   constitutive law supporting their geometry. See
   [continuum components](../api/systems/continuum-components.md).
-- Configurable GVS `RodConstitutiveLaw` with independent transverse-shear and
-  rectangular-torsion choices. Effective shear uses material-dependent Cowper
-  factors for circles and Jourawski shear energy for rectangles; Marshall
+- Configurable GVS `RodConstitutiveLaw` with independent `TransverseShearRodModel`
+  and `RectangularTorsionRodModel` choices. Effective shear uses
+  material-dependent Cowper factors for circles and Jourawski shear energy for
+  rectangles; Marshall
   torsion supports rectangular tubes and a continuous solid extension. Existing
   solid-link defaults are preserved and paper configurations select them
-  explicitly. See [rod constitutive laws](../api/systems/rod-constitutive-laws.md).
+  explicitly. See
+  [rod constitutive laws](../api/systems/continuum-components.md#rod-constitutive-laws).
 - Python 3.15 support, with numerical tests and patched Open3D source-build
   and rendering checks in Ubuntu CI.
 

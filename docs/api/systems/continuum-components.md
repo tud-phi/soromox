@@ -79,7 +79,7 @@ PCS currently accepts constant solid circular links. GVS accepts constant or
 linear circular, rectangular, and elliptical cross-sections. Add
 `wall_thickness=0.001` or `wall_thickness=LinearProfile(0.002, 0.001)` to
 `LinkSpec.circular(...)` or `LinkSpec.rectangular(...)` for a tube, together
-with an explicit [rod constitutive law](rod-constitutive-laws.md). Elliptical
+with an explicit [rod constitutive law](#rod-constitutive-laws). Elliptical
 sections are currently solid only.
 
 Wall thickness must be positive and leave an open cavity throughout the link.
@@ -155,71 +155,114 @@ and units.
 
 ## Isotropic material model
 
-Young's modulus, either shear modulus or Poisson's ratio, and optional material
-damping are useful construction and identification variables, but they are not
-duplicated in the runtime robot parameters. Instead, callers keep an
-`IsotropicMaterialParams` PyTree:
+`IsotropicMaterialParams` holds Young's modulus, either shear modulus or
+Poisson's ratio, and optional scalar material damping. Each field may be a
+scalar or one value per link. These are caller-owned construction and
+identification inputs; the robot stores the resulting stiffness and damping
+matrices.
 
 ```python
 from soromox.systems import IsotropicMaterialParams
 
-young = 1.0e6
 material = IsotropicMaterialParams(
-    young_modulus=young,
+    young_modulus=1.0e6,
     poisson_ratio=0.45,
+    material_damping_coefficient=100.0,
 )
 ```
 
-Each active field may be scalar or contain one value per link. Scalar values
-are broadcast when the material is applied. Exactly one of `shear_modulus` and
-`poisson_ratio` is required. Young's and shear moduli must be finite and
-strictly positive, Poisson's ratio must lie in `(-1, 0.5)`, and material
-damping must be finite and nonnegative when supplied. Omitting material damping
-produces a zero damping matrix.
+Supply exactly one of `shear_modulus` and `poisson_ratio`. Moduli must be
+positive, explicit Poisson ratios must lie in `(-1, 0.5)`, and damping must be
+nonnegative. Omitting damping produces a zero damping matrix. The relation
+\(G=E/[2(1+\nu)]\) is evaluated inside the material mapping so gradients
+include both inputs. Changing which optional fields are present changes the
+PyTree structure and requires recompilation.
 
-The optional-field pattern is structural: shear-modulus, Poisson-ratio, damped,
-and undamped materials have different PyTree structures. JIT compilation
-therefore specializes on these choices, while the active arrays remain normal
-differentiable leaves.
+### Rod constitutive laws
 
-Geometry, link length, strain basis, rotational scaling, and quadrature are
-projected into unit-response operators. Material matrices are then evaluated
-as
+A GVS link's `RodConstitutiveLaw` selects how the isotropic material and
+cross-section produce rod stiffness. For strain order
+`[twist, bend_y, bend_z, extension, shear_y, shear_z]`, the local matrix is
 
 \[
-K_i = E_i K_{i,E} + G_i K_{i,G},
-\qquad
-D_i = \eta_i D_{i,\eta}\quad\text{or}\quad 0,
+C=\mathrm{diag}(GJ,EI_y,EI_z,EA,GA_{s,y},GA_{s,z}).
 \]
 
-For the Young/Poisson parameterization,
-\(G_i = E_i / (2 (1 + \nu_i))\) is evaluated inside this mapping so gradients
-propagate through both \(E_i\) and \(\nu_i\).
+Area \(A\) and bending moments \(I_y,I_z\) subtract the cavity contribution
+exactly. The model choices determine the effective shear areas \(A_s\) and
+torsion constant \(J\). Rotational mass inertia uses \(I_y+I_z\), which can
+differ from \(J\).
 
-GVS links select shear and torsion assumptions using `LinkSpec.constitutive_law`
-(or `GVSLinkStructure.constitutive_law` for direct parameter construction).
-The default retains uniform shear for solids. With Cowper circular shear,
-`link_matrices_from_material()` reevaluates the operators at the supplied
-Poisson ratio; cached operators on the robot are reference values at zero
-Poisson ratio. See [rod constitutive laws](rod-constitutive-laws.md) for the
-formulas, supported geometries, and approximation limits.
+| Choice | Supported sections and behavior |
+|---|---|
+| `TransverseShearRodModel.UNIFORM` (default) | Solid sections; shear stiffness is \(GA\). |
+| `TransverseShearRodModel.EFFECTIVE_AREA` | Solid/hollow circles use material-dependent Cowper factors; solid/hollow rectangles use Jourawski shear-energy matching. |
+| `RectangularTorsionRodModel.SAINT_VENANT_SERIES` (default) | Solid rectangular torsion from the Saint-Venant series. |
+| `RectangularTorsionRodModel.MARSHALL` | Rectangular tubes and a continuous engineering extension to solid rectangles. |
 
-Equivalently, the unit operators represent the discretized integrals
+For a rectangular tube, select both alternatives explicitly:
 
-\[
-K_i = \int B_i(s)^\mathsf{T} C_i(s) B_i(s)\,\mathrm{d}s,
-\qquad
-D_i = \int B_i(s)^\mathsf{T} V_i(s) B_i(s)\,\mathrm{d}s.
-\]
+```python
+from soromox.systems import (
+    LinkSpec, RectangularTorsionRodModel, RodConstitutiveLaw,
+    TransverseShearRodModel,
+)
 
-`link_matrices_from_material` evaluates the mapping without modifying the
-robot. `with_isotropic_material` returns a robot containing the resulting
-canonical matrices. It does not store the material PyTree.
+link = LinkSpec.rectangular(
+    length=0.2, height=0.02, width=0.04, wall_thickness=0.003,
+    density=1000.0, young_modulus=1e6, poisson_ratio=0.45,
+    reference_strain=[0, 0, 0, 1, 0, 0],
+    constitutive_law=RodConstitutiveLaw(
+        transverse_shear=TransverseShearRodModel.EFFECTIVE_AREA,
+        rectangular_torsion=RectangularTorsionRodModel.MARSHALL,
+    ),
+)
+```
 
-Geometry updates refresh the unit-response operators but leave explicitly
-stored matrices unchanged. Reapply `with_isotropic_material` when matrices
-should follow updated material or geometry values. This prevents geometry
-updates from silently overwriting an explicitly supplied constitutive model.
+These choices are retained in `GVSLinkStructure`; reconstruct the model to
+change them. Hollow links require effective shear areas, and rectangular tubes
+also require Marshall torsion. PCS/PlanarPCS currently accept only the default
+law and solid circular geometry. Helicoidal strands retain their own
+[sectional assumptions](gvs/helicoidal.md).
+
+The effective shear laws connect continuously to their solid counterparts:
+Cowper's circular factor becomes \(6(1+\nu)/(7+6\nu)\), and rectangular
+shear area becomes \(5A/6\). These differ from uniform shear, so opting in also
+changes solid-link stiffness. Circular torsion is exact at every wall thickness.
+Marshall approaches Bredt for thin walls; its solid-square extension is about
+3.74% above the exact solid solution. Rectangular shear approximates stress
+redistribution, and neither torsion option models restrained warping or wall
+buckling. See the
+[transverse-shear][soromox.systems.components.TransverseShearRodModel] and
+[rectangular-torsion][soromox.systems.components.RectangularTorsionRodModel]
+API references below for formulas, limits, and publications.
+
+The scalar Kelvin–Voigt damping convention uses
+\(V=\eta\,\mathrm{diag}(J,3I_y,3I_z,3A,A_{s,y},A_{s,z})\), including the
+selected shear and torsion models. Cowper shear uses the elastic Poisson ratio
+for both stiffness and damping. With explicit stiffness and Cowper shear,
+supply an explicit damping matrix or omit damping: a damping coefficient alone
+does not determine Poisson's ratio.
+
+### Applying and updating material
+
+`link_matrices_from_material(material)` returns generalized stiffness and
+damping without changing the robot. `with_isotropic_material(material)` returns
+a robot containing those matrices, projected through its strain bases and
+quadrature. Cowper shear is reevaluated at the supplied Poisson ratio, including
+its dependence on \(E\) and \(G\).
+
+Geometry updates refresh inertia but preserve stored stiffness and damping.
+Reapply the material when those matrices should follow new dimensions:
+
+```python
+robot = robot.update_link_params(cross_section=new_section)
+robot = robot.with_isotropic_material(material)
+```
+
+Explicit generalized matrices remain independent inputs. For complete update
+and differentiation examples, see
+[Parameters and Optimization](../../user-guide/parameters-and-optimization.md).
 
 ## Joints
 

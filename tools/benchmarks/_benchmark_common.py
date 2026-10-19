@@ -29,10 +29,10 @@ from soromox.systems import (
     PendulumParams,
     PlanarPCS,
     PlanarPCSStructure,
-    RectangularTorsionModel,
+    RectangularTorsionRodModel,
     RodConstitutiveLaw,
     StrainBasisSpec,
-    TransverseShearModel,
+    TransverseShearRodModel,
 )
 
 Array = jax.Array
@@ -227,8 +227,8 @@ def _planar_pcs_factory(
         [
             LinkSpec.circular(
                 constitutive_law=RodConstitutiveLaw(
-                    transverse_shear=TransverseShearModel.UNIFORM,
-                    rectangular_torsion=RectangularTorsionModel.SAINT_VENANT_SERIES,
+                    transverse_shear=TransverseShearRodModel.UNIFORM,
+                    rectangular_torsion=RectangularTorsionRodModel.SAINT_VENANT_SERIES,
                 ),
                 length=0.12,
                 radius=0.015,
@@ -280,8 +280,8 @@ def _pcs_factory(
         [
             LinkSpec.circular(
                 constitutive_law=RodConstitutiveLaw(
-                    transverse_shear=TransverseShearModel.UNIFORM,
-                    rectangular_torsion=RectangularTorsionModel.SAINT_VENANT_SERIES,
+                    transverse_shear=TransverseShearRodModel.UNIFORM,
+                    rectangular_torsion=RectangularTorsionRodModel.SAINT_VENANT_SERIES,
                 ),
                 length=0.1,
                 radius=0.02,
@@ -331,8 +331,8 @@ def _gvs_segment(strain_basis_order: int, gauss_points: int) -> GVSSegment:
     return GVSSegment(
         link=LinkSpec.circular(
             constitutive_law=RodConstitutiveLaw(
-                transverse_shear=TransverseShearModel.UNIFORM,
-                rectangular_torsion=RectangularTorsionModel.SAINT_VENANT_SERIES,
+                transverse_shear=TransverseShearRodModel.UNIFORM,
+                rectangular_torsion=RectangularTorsionRodModel.SAINT_VENANT_SERIES,
             ),
             young_modulus=1.0e6,
             shear_modulus=1.0e6 / 2.9,

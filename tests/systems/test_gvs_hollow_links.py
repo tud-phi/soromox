@@ -20,10 +20,10 @@ from soromox.systems import (
     LinearProfile,
     LinkSpec,
     PlanarPCS,
-    RectangularTorsionModel,
+    RectangularTorsionRodModel,
     RodConstitutiveLaw,
     StrainBasisSpec,
-    TransverseShearModel,
+    TransverseShearRodModel,
 )
 from soromox.systems.components.cross_sections import (
     CrossSectionGeometry,
@@ -51,8 +51,8 @@ def link_spec(kind, *, wall=0.002, tapered=False):
     }
     if wall is not None and kind != "elliptical":
         kwargs["constitutive_law"] = RodConstitutiveLaw(
-            transverse_shear=TransverseShearModel.EFFECTIVE_AREA,
-            rectangular_torsion=RectangularTorsionModel.MARSHALL,
+            transverse_shear=TransverseShearRodModel.EFFECTIVE_AREA,
+            rectangular_torsion=RectangularTorsionRodModel.MARSHALL,
         )
     if kind == "circular":
         return LinkSpec.circular(

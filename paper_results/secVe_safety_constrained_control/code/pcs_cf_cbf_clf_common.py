@@ -15,10 +15,10 @@ from soromox.actuation import ThreadlikeActuator, ThreadlikeRouting
 from soromox.systems import (
     PCS,
     LinkSpec,
-    RectangularTorsionModel,
+    RectangularTorsionRodModel,
     RodConstitutiveLaw,
     SystemState,
-    TransverseShearModel,
+    TransverseShearRodModel,
 )
 
 jax.config.update("jax_enable_x64", True)
@@ -302,8 +302,8 @@ def build_simulation_setup() -> SimulationSetup:
         [
             LinkSpec.circular(
                 constitutive_law=RodConstitutiveLaw(
-                    transverse_shear=TransverseShearModel.UNIFORM,
-                    rectangular_torsion=RectangularTorsionModel.SAINT_VENANT_SERIES,
+                    transverse_shear=TransverseShearRodModel.UNIFORM,
+                    rectangular_torsion=RectangularTorsionRodModel.SAINT_VENANT_SERIES,
                 ),
                 length=float(segment_length[index]),
                 radius=float(backbone_radius[index]),

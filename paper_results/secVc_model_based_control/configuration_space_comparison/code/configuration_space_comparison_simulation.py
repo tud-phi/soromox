@@ -41,10 +41,10 @@ from soromox.control.configuration_space import (
 from soromox.systems import (
     PCS,
     LinkSpec,
-    RectangularTorsionModel,
+    RectangularTorsionRodModel,
     RodConstitutiveLaw,
     SystemState,
-    TransverseShearModel,
+    TransverseShearRodModel,
 )
 
 CASE_DIR = Path(__file__).parent.parent
@@ -202,8 +202,8 @@ def create_robot(
     links = [
         LinkSpec.circular(
             constitutive_law=RodConstitutiveLaw(
-                transverse_shear=TransverseShearModel.UNIFORM,
-                rectangular_torsion=RectangularTorsionModel.SAINT_VENANT_SERIES,
+                transverse_shear=TransverseShearRodModel.UNIFORM,
+                rectangular_torsion=RectangularTorsionRodModel.SAINT_VENANT_SERIES,
             ),
             length=float(segment_lengths[index]),
             radius=2e-2,
