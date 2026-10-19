@@ -9,7 +9,12 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array, ensure_compile_time_eval
 
-from soromox.systems.components import ContinuumLinkParams, JointParams, spatial_inertia
+from soromox.systems.components import (
+    ContinuumLinkParams,
+    JointParams,
+    StrandSection,
+    spatial_inertia,
+)
 from soromox.systems.params import (
     BaseSoftRobotParams,
     BaseSystemParams,
@@ -169,6 +174,10 @@ class GVSParams(BaseSoftRobotParams):
 
     def validate_value_compatibility(self, structure: GVSStructure) -> None:
         """Validate eager geometry values against the static GVS layout."""
+        from soromox.systems.components.cross_sections import (
+            evaluate_section_dimensions,
+        )
+
         for index, segment in enumerate(structure.segments):
             count = sum(segment.link.cross_section_profile_parameter_counts)
             active_coefficients = self.link.cross_section.coefficients[index, :count]
@@ -177,6 +186,19 @@ class GVSParams(BaseSoftRobotParams):
                     "Active cross-section coefficients must be strictly positive "
                     f"for GVS segment {index}."
                 )
+            if segment.link.hollow:
+                _, inner = evaluate_section_dimensions(
+                    segment.link.cross_section_geometry,
+                    active_coefficients,
+                    segment.link.cross_section_profile_types,
+                    segment.link.cross_section_profile_parameter_counts,
+                    jnp.array([0.0, 1.0]),
+                    hollow=True,
+                )
+                if not bool(jnp.all(inner > 0)):
+                    raise ValueError(
+                        f"wall_thickness must leave a positive cavity at both ends of GVS segment {index}."
+                    )
 
 
 def _as_strong_array(value: object) -> Array:
@@ -372,6 +394,8 @@ class HelicoidalHelixParams(BaseSystemParams):
             additively, neglecting overlap at fused crossings.
         young_modulus: Strand material Young's modulus [Pa].
         shear_modulus: Strand material shear modulus [Pa].
+        strand_section: Optional shared geometry retained by the named section
+            constructors. Direct property-only construction leaves it unset.
         strand_area: Strand-normal sectional area [m²].
         strand_second_moments: Principal area moments about local strand y/z,
             shape ``(2,)`` [m⁴]. The principal directions follow the strand frame.
@@ -425,36 +449,97 @@ class HelicoidalHelixParams(BaseSystemParams):
     fusion_stiffness_multiplier: Array = 4.0
     tip_attachment_stiffness_multiplier: Array = 10.0
     damping_time_constant: Array = 0.0
+    strand_section: StrandSection | None = None
 
     def __check_init__(self) -> None:
         for name in HelicoidalHelixParams.__annotations__:
-            if name != "helices_per_direction":
+            if name not in {"helices_per_direction", "strand_section"}:
                 object.__setattr__(self, name, _as_strong_array(getattr(self, name)))
         self.validate_for_update()
 
     def _normalize_replacement(self, name: str, value: object) -> object:
-        return value if name == "helices_per_direction" else _as_strong_array(value)
+        return (
+            value
+            if name in {"helices_per_direction", "strand_section"}
+            else _as_strong_array(value)
+        )
+
+    @classmethod
+    def from_section(cls, strand_section: StrandSection, **kwargs) -> Self:
+        """Derive mechanical properties and retain geometry for visualization.
+
+        Explicit sectional property keywords override the geometric estimates,
+        for example calibrated shear factors. Other keywords specify lattice
+        geometry, material and fusion as in the constructor.
+        """
+        if not isinstance(strand_section, StrandSection):
+            raise TypeError("strand_section must be a StrandSection.")
+        strand_section.validate_for_update()
+        properties = strand_section.mechanical_properties() | kwargs
+        return cls(strand_section=strand_section, **properties)
 
     @classmethod
     def circular(cls, *, strand_radius: float, **kwargs) -> Self:
-        """Construct circular strand sections from their radius [m].
+        """Construct solid circular strands, retaining their radius [m]."""
+        return cls.from_section(StrandSection.circular(strand_radius), **kwargs)
 
-        Remaining keyword arguments specify geometry, material and fusion as in
-        the constructor. Shear correction defaults to the reference's 0.9.
-        """
-        radius = float(strand_radius)
-        if not np.isfinite(radius) or radius <= 0:
-            raise ValueError("strand_radius must be finite and positive.")
-        moment = np.pi * radius**4 / 4
-        kwargs.setdefault("strand_shear_factors", jnp.full(2, 0.9))
-        return cls(
-            strand_area=np.pi * radius**2,
-            strand_second_moments=jnp.full(2, moment),
-            strand_torsion_constant=2 * moment,
+    @classmethod
+    def circular_hollow(
+        cls, *, strand_radius: float, wall_thickness: float, **kwargs
+    ) -> Self:
+        """Construct circular tubes from outer radius and wall thickness [m]."""
+        return cls.from_section(
+            StrandSection.circular_hollow(
+                radius=strand_radius, wall_thickness=wall_thickness
+            ),
             **kwargs,
         )
 
+    @classmethod
+    def rectangular(cls, *, width: float, height: float, **kwargs) -> Self:
+        """Construct solid rectangular strands with height along y, width along z [m]."""
+        return cls.from_section(
+            StrandSection.rectangular(width=width, height=height), **kwargs
+        )
+
+    @classmethod
+    def rectangular_hollow(
+        cls, *, width: float, height: float, wall_thickness: float, **kwargs
+    ) -> Self:
+        """Construct hollow rectangular strands with height along y, width along z.
+
+        Dimensions are in metres. Torsion uses Bredt's thin-wall approximation;
+        shear factors default to ``[2*height*t/A, 2*width*t/A]`` along y/z.
+        Explicit sectional property keywords override these estimates.
+        """
+        return cls.from_section(
+            StrandSection.rectangular_hollow(
+                width=width, height=height, wall_thickness=wall_thickness
+            ),
+            **kwargs,
+        )
+
+    def replace(self, **updates) -> Self:
+        """Update inputs, rederiving section properties when geometry is replaced.
+
+        Replacing ``strand_section`` resets all sectional properties to geometric
+        estimates unless overridden in the same call. Replacing material or
+        other inputs preserves existing calibrated properties. A None section
+        retains the properties and removes the optional geometry description.
+        """
+        section = updates.get("strand_section")
+        if section is not None:
+            if not isinstance(section, StrandSection):
+                raise TypeError("strand_section must be a StrandSection or None.")
+            section.validate_for_update()
+            updates = section.mechanical_properties() | updates
+        return super().replace(**updates)
+
     def validate_structure(self) -> None:
+        if self.strand_section is not None:
+            if not isinstance(self.strand_section, StrandSection):
+                raise TypeError("strand_section must be a StrandSection or None.")
+            self.strand_section.validate_structure()
         if (
             isinstance(self.helices_per_direction, bool)
             or not isinstance(self.helices_per_direction, int)
@@ -462,7 +547,7 @@ class HelicoidalHelixParams(BaseSystemParams):
         ):
             raise ValueError("helices_per_direction must be a positive integer.")
         for name in HelicoidalHelixParams.__annotations__:
-            if name == "helices_per_direction":
+            if name in {"helices_per_direction", "strand_section"}:
                 continue
             if name == "damping_time_constant":
                 if self.damping_time_constant.shape not in ((), (6,)):
@@ -479,8 +564,10 @@ class HelicoidalHelixParams(BaseSystemParams):
                 raise ValueError(f"{name} must have shape {shape}.")
 
     def validate_values(self) -> None:
+        if self.strand_section is not None:
+            self.strand_section.validate_values()
         for name in HelicoidalHelixParams.__annotations__:
-            if name == "helices_per_direction":
+            if name in {"helices_per_direction", "strand_section"}:
                 continue
             values = np.asarray(getattr(self, name))
             if not np.isfinite(values).all():

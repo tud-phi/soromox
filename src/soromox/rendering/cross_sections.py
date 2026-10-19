@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Any, Literal
 
 import equinox as eqx
@@ -13,7 +14,7 @@ import numpy as np
 from jax import Array
 from numpy.typing import NDArray
 
-from soromox.systems.components import CrossSectionGeometry
+from soromox.systems.components import CrossSectionGeometry, StrandSection
 from soromox.systems.soft_robot import SoftRobot
 
 __all__ = [
@@ -25,6 +26,7 @@ __all__ = [
     "loft_cross_section_contours",
     "loft_cross_sections",
     "register_cross_section_contour",
+    "sweep_cross_sections",
 ]
 
 
@@ -38,16 +40,25 @@ class CrossSection:
     The contour is represented in the robot material frame. Its first coordinate
     is longitudinal and therefore zero; the remaining coordinates lie in the
     material-frame yz plane. The contour is implicitly closed, so the first point
-    is not repeated at the end.
+    is not repeated at the end. Optional ``inner_dimensions`` describe a
+    centred cavity of the same geometry family; use ``contours`` and the shared
+    sweep/loft functions to retain its opening.
+
+    Attributes:
+        geometry: CrossSectionGeometry tag or a registered contour family.
+        outer_dimensions: Dimensions of the exterior boundary [m]. Rectangular
+            ``[height, width]`` spans material y and z, matching GVS mechanics.
+        inner_dimensions: Optional dimensions of a centred cavity [m].
     """
 
     geometry: int
-    dimensions: NDArray[np.float64]
+    outer_dimensions: NDArray[np.float64]
+    inner_dimensions: NDArray[np.float64] | None = None
 
     def __post_init__(self) -> None:
         """Normalize the descriptor without imposing geometry-specific dimensions."""
         geometry = int(np.asarray(self.geometry).item())
-        dimensions = np.asarray(self.dimensions, dtype=np.float64)
+        dimensions = np.asarray(self.outer_dimensions, dtype=np.float64)
         if dimensions.ndim != 1 or dimensions.size == 0:
             raise ValueError("cross-section dimensions must be a nonempty 1D array")
         if not np.all(np.isfinite(dimensions)):
@@ -55,32 +66,76 @@ class CrossSection:
         dimensions = dimensions.copy()
         dimensions.setflags(write=False)
         object.__setattr__(self, "geometry", geometry)
-        object.__setattr__(self, "dimensions", dimensions)
+        object.__setattr__(self, "outer_dimensions", dimensions)
+        if self.inner_dimensions is not None:
+            inner = np.asarray(self.inner_dimensions, dtype=np.float64)
+            if (
+                inner.shape != dimensions.shape
+                or not np.all(np.isfinite(inner))
+                or np.any(inner <= 0)
+                or np.any(inner >= dimensions)
+            ):
+                raise ValueError(
+                    "inner dimensions must be positive and smaller than the outer dimensions"
+                )
+            inner = inner.copy()
+            inner.setflags(write=False)
+            object.__setattr__(self, "inner_dimensions", inner)
 
-    def contour(self, resolution: int) -> NDArray[np.float64]:
-        """Return the ordered material-frame contour for this section."""
-        return _cross_section_contour(self.geometry, self.dimensions, resolution)
+    @classmethod
+    def from_strand_section(cls, section: StrandSection) -> CrossSection:
+        """Extract a rendering descriptor from shared strand geometry eagerly."""
+        section.validate_for_update()
+        return cls(section.geometry, section.outer_dimensions, section.inner_dimensions)
+
+    def contours(self, resolution: int) -> NDArray[np.float64]:
+        """Return all boundary loops in the material-frame yz plane.
+
+        Args:
+            resolution: Number of vertices per loop, at least four.
+
+        Returns:
+            Array of shape ``(loops, resolution, 3)``: outer boundary first,
+            then the optional centred cavity. Both loops wind counterclockwise
+            about x with corresponding vertices; sweep construction reverses
+            the cavity walls and builds annular end caps.
+        """
+        outer = _cross_section_contour(self.geometry, self.outer_dimensions, resolution)
+        if self.inner_dimensions is None:
+            return outer[None]
+        return np.stack(
+            (
+                outer,
+                _cross_section_contour(
+                    self.geometry, self.inner_dimensions, resolution
+                ),
+            )
+        )
 
     def discrete_marker(self) -> DiscreteCrossSectionMarker:
-        """Return the shared 3D marker representation for discrete rendering."""
+        """Return an outer-envelope proxy for discrete rendering.
+
+        Discrete sphere/box/ellipsoid markers intentionally omit cavities; use
+        swept rendering to display section walls and openings.
+        """
         if self.geometry == CrossSectionGeometry.CIRCULAR:
-            radius = _positive_dimension(self.dimensions, 0, "radius")
+            radius = _positive_dimension(self.outer_dimensions, 0, "radius")
             return DiscreteCrossSectionMarker(
                 primitive="sphere",
                 scale_xyz=np.full(3, radius),
                 align_with_material_frame=False,
             )
         if self.geometry == CrossSectionGeometry.RECTANGULAR:
-            height = _positive_dimension(self.dimensions, 0, "height")
-            width = _positive_dimension(self.dimensions, 1, "width")
+            height = _positive_dimension(self.outer_dimensions, 0, "height")
+            width = _positive_dimension(self.outer_dimensions, 1, "width")
             return DiscreteCrossSectionMarker(
                 primitive="box",
-                scale_xyz=np.array([width, height, max(width, height)]),
+                scale_xyz=np.array([height, width, max(width, height)]),
                 align_with_material_frame=True,
             )
 
-        semi_major = _positive_dimension(self.dimensions, 0, "semi_major")
-        semi_minor = _positive_dimension(self.dimensions, 1, "semi_minor")
+        semi_major = _positive_dimension(self.outer_dimensions, 0, "semi_major")
+        semi_minor = _positive_dimension(self.outer_dimensions, 1, "semi_minor")
         return DiscreteCrossSectionMarker(
             primitive="ellipsoid",
             scale_xyz=np.array([semi_major, semi_minor, max(semi_major, semi_minor)]),
@@ -272,10 +327,10 @@ def _rectangular_contour(
     width = _positive_dimension(dimensions, 1, "width")
     corners_yz = np.array(
         [
-            [-0.5 * width, -0.5 * height],
-            [0.5 * width, -0.5 * height],
-            [0.5 * width, 0.5 * height],
-            [-0.5 * width, 0.5 * height],
+            [-0.5 * height, -0.5 * width],
+            [0.5 * height, -0.5 * width],
+            [0.5 * height, 0.5 * width],
+            [-0.5 * height, 0.5 * width],
         ],
         dtype=np.float64,
     )
@@ -360,16 +415,37 @@ def evaluate_cross_sections(
     q: Any,
     abscissae: Iterable[float],
 ) -> tuple[CrossSection, ...]:
-    """Evaluate cross-section descriptors with one compiled vectorized call."""
+    """Evaluate outer and optional inner dimensions in one vectorized call.
+
+    Args:
+        robot: Model whose ``cross_section_geometry`` returns the geometry tag,
+            outer dimensions and optional inner dimensions together. Inner
+            dimensions use None for an entirely solid model or all-zero rows
+            for solid stations.
+        q: Generalized coordinates used for geometry evaluation.
+        abscissae: Backbone positions at which to sample the sections [m].
+
+    Returns:
+        One descriptor per station, including the optional cavity.
+    """
     stations = np.asarray(tuple(abscissae), dtype=np.float64).reshape(-1)
-    geometries, dimensions = _evaluate_cross_section_arrays(
+    geometries, dimensions, inner_dimensions = _evaluate_cross_section_arrays(
         robot,
         jnp.asarray(q),
         jnp.asarray(stations),
     )
+    inner_rows = (
+        [None] * len(stations)
+        if inner_dimensions is None
+        else np.asarray(inner_dimensions)
+    )
     return tuple(
-        CrossSection(geometry, dimension)
-        for geometry, dimension in zip(np.asarray(geometries), np.asarray(dimensions))
+        CrossSection(
+            geometry, outer, None if inner is None or np.all(inner == 0) else inner
+        )
+        for geometry, outer, inner in zip(
+            np.asarray(geometries), np.asarray(dimensions), inner_rows
+        )
     )
 
 
@@ -378,7 +454,7 @@ def _evaluate_cross_section_arrays(
     robot: SoftRobot,
     q: Array,
     abscissae: Array,
-) -> tuple[Array, Array]:
+) -> tuple[Array, Array, Array | None]:
     """Provide a persistent JIT boundary for vectorized array evaluation.
 
     This array-only function remains separate from :func:`evaluate_cross_sections`
@@ -386,6 +462,156 @@ def _evaluate_cross_section_arrays(
     NumPy-backed :class:`CrossSection` objects, which cannot happen while tracing.
     """
     return jax.vmap(robot.cross_section_geometry, in_axes=(None, 0))(q, abscissae)
+
+
+@lru_cache(maxsize=64)
+def _sweep_faces(
+    stations: int, resolution: int, hollow: bool, cap_start: bool, cap_end: bool
+) -> NDArray[np.int32]:
+    """Build cached triangle indices for a solid or hollow sweep.
+
+    Args:
+        stations: Number of longitudinal stations (at least two).
+        resolution: Vertices per boundary loop (at least four).
+        hollow: Whether an inner boundary follows the outer boundary vertices.
+        cap_start: Include the proximal cap.
+        cap_end: Include the distal cap.
+
+    Returns:
+        Read-only int32 array of outward-facing triangles, shape ``(F, 3)``.
+        All outer walls precede inner walls, followed by the enabled caps.
+    """
+    station = np.arange(stations - 1, dtype=np.int32)[:, None] * resolution
+    edge = np.arange(resolution, dtype=np.int32)
+    a = (station + edge).ravel()
+    b = (station + (edge + 1) % resolution).ravel()
+    walls = np.stack(
+        (
+            np.stack((a, b, a + resolution), axis=-1),
+            np.stack((b, b + resolution, a + resolution), axis=-1),
+        ),
+        axis=1,
+    ).reshape(-1, 3)
+    offset = stations * resolution
+    parts = [walls]
+    if hollow:
+        parts.append(walls[:, [0, 2, 1]] + offset)
+    center = offset
+    for endpoint, enabled in ((0, cap_start), (stations - 1, cap_end)):
+        if not enabled:
+            continue
+        a = endpoint * resolution + edge
+        b = endpoint * resolution + (edge + 1) % resolution
+        if hollow:
+            cap = np.stack(
+                (
+                    np.stack((a, b, b + offset), axis=-1),
+                    np.stack((a, b + offset, a + offset), axis=-1),
+                ),
+                axis=1,
+            ).reshape(-1, 3)
+        else:
+            cap = np.stack((np.full_like(a, center), a, b), axis=-1)
+            center += 1
+        parts.append(cap[:, [0, 2, 1]] if endpoint == 0 else cap)
+    result = np.concatenate(parts)
+    result.setflags(write=False)
+    return result
+
+
+def _sweep_contours(
+    centers: NDArray[np.float64],
+    frames: NDArray[np.float64],
+    loops: NDArray[np.float64],
+    *,
+    cap_start: bool,
+    cap_end: bool,
+) -> tuple[NDArray[np.float64], NDArray[np.int32]]:
+    """Transform boundary loops and attach cached outward-facing triangles.
+
+    Args:
+        centers: World positions, shape ``(N, 3)``.
+        frames: Material-to-world rotations, shape ``(N, 3, 3)``.
+        loops: Prepared boundaries, shape ``(N, 1 or 2, resolution, 3)``.
+        cap_start: Close the proximal end.
+        cap_end: Close the distal end.
+
+    Returns:
+        World vertices ``(V, 3)`` and cached int32 faces ``(F, 3)``.
+    """
+    centers, frames, loops = (
+        np.asarray(x, dtype=np.float64) for x in (centers, frames, loops)
+    )
+    if centers.ndim != 2 or centers.shape[1] != 3 or len(centers) < 2:
+        raise ValueError("centers must have shape (N, 3) with N >= 2")
+    if frames.shape != (len(centers), 3, 3):
+        raise ValueError("frames must have shape (N, 3, 3)")
+    if (
+        loops.ndim != 4
+        or loops.shape[0] != len(centers)
+        or loops.shape[1] not in (1, 2)
+        or loops.shape[2] < 4
+        or loops.shape[3] != 3
+    ):
+        raise ValueError("contours must have shape (N, 1 or 2, resolution >= 4, 3)")
+    if not all(np.isfinite(x).all() for x in (centers, frames, loops)):
+        raise ValueError("sweep centers, frames and contours must be finite")
+    if not np.allclose(loops[..., 0], 0):
+        raise ValueError("contours must lie in the material-frame yz plane")
+    world = centers[:, None, None, :] + np.einsum("nij,nlkj->nlki", frames, loops)
+    vertices = world.transpose(1, 0, 2, 3).reshape(-1, 3)
+    hollow = loops.shape[1] == 2
+    if not hollow:
+        caps = centers[[0, -1]][[cap_start, cap_end]]
+        vertices = np.concatenate((vertices, caps))
+    return vertices, _sweep_faces(
+        len(centers), loops.shape[2], hollow, cap_start, cap_end
+    )
+
+
+def sweep_cross_sections(
+    centers: NDArray[np.float64],
+    frames: NDArray[np.float64],
+    sections: CrossSection | Iterable[CrossSection],
+    resolution: int,
+    *,
+    cap_start: bool = True,
+    cap_end: bool = True,
+) -> tuple[NDArray[np.float64], NDArray[np.int32]]:
+    """Sweep solid or hollow sections through material frames at many stations.
+
+    Supply one constant section or one per station. Sections must share a
+    geometry family and cavity topology. Hollow sections have one centred
+    cavity with corresponding inner/outer vertices; end caps join the loops.
+    Vertices and cached faces keep a fixed order during deformation.
+
+    Args:
+        centers: World-space station positions, shape ``(N, 3)``, N >= 2.
+        frames: Material-to-world rotations, shape ``(N, 3, 3)``.
+        sections: One constant section or N sections with matching topology.
+        resolution: Number of vertices per boundary loop, at least four.
+        cap_start: Close the proximal end, preserving any cavity opening.
+        cap_end: Close the distal end, preserving any cavity opening.
+
+    Returns:
+        World vertices ``(V, 3)`` and cached int32 triangle indices ``(F, 3)``.
+        All outer stations precede inner stations; solid cap centres come last.
+
+    Raises:
+        ValueError: If station shapes, section topology or contours are invalid.
+    """
+    centers = np.asarray(centers, dtype=np.float64)
+    if isinstance(sections, CrossSection):
+        contours = np.asarray(sections.contours(resolution))
+        loops = np.broadcast_to(contours, (len(centers), *contours.shape))
+    else:
+        sections = tuple(sections)
+        if len(sections) != len(centers):
+            raise ValueError("one cross section is required per sweep station")
+        if len({(s.geometry, s.inner_dimensions is not None) for s in sections}) != 1:
+            raise ValueError("sweep sections must share geometry and cavity topology")
+        loops = np.asarray([s.contours(resolution) for s in sections])
+    return _sweep_contours(centers, frames, loops, cap_start=cap_start, cap_end=cap_end)
 
 
 def loft_cross_sections(
@@ -400,14 +626,31 @@ def loft_cross_sections(
     cap_start: bool = False,
     cap_end: bool = False,
 ) -> tuple[NDArray[np.float64], NDArray[np.int32]]:
-    """Connect two material-frame contours into one swept surface segment."""
+    """Connect two cross sections, retaining their outer and inner boundaries.
+
+    Args:
+        p0: First world-space station, shape ``(3,)``.
+        p1: Second world-space station, shape ``(3,)``.
+        frame0: First material-to-world rotation, shape ``(3, 3)``.
+        frame1: Second material-to-world rotation, shape ``(3, 3)``.
+        section0: First cross-section descriptor.
+        section1: Second descriptor with matching geometry and cavity topology.
+        resolution: Vertices per boundary loop, at least four.
+        cap_start: Close the proximal end.
+        cap_end: Close the distal end.
+
+    Returns:
+        World vertices ``(V, 3)`` and cached int32 faces ``(F, 3)``.
+    """
+    if section0.geometry != section1.geometry:
+        raise ValueError("loft sections must share geometry and cavity topology")
     return loft_cross_section_contours(
         p0,
         p1,
         frame0,
         frame1,
-        section0.contour(resolution),
-        section1.contour(resolution),
+        section0.contours(resolution),
+        section1.contours(resolution),
         cap_start=cap_start,
         cap_end=cap_end,
     )
@@ -424,54 +667,33 @@ def loft_cross_section_contours(
     cap_start: bool = False,
     cap_end: bool = False,
 ) -> tuple[NDArray[np.float64], NDArray[np.int32]]:
-    """Connect two prepared material-frame contours into a swept segment."""
-    contour0 = np.asarray(contour0, dtype=np.float64)
-    contour1 = np.asarray(contour1, dtype=np.float64)
-    if contour0.ndim != 2 or contour0.shape[1] != 3:
-        raise ValueError("cross-section contours must have shape (N, 3)")
-    if contour1.shape != contour0.shape:
+    """Loft two prepared sets of boundary loops, including a possible cavity.
+
+    Args:
+        p0: First world-space station, shape ``(3,)``.
+        p1: Second world-space station, shape ``(3,)``.
+        frame0: First material-to-world rotation, shape ``(3, 3)``.
+        frame1: Second material-to-world rotation, shape ``(3, 3)``.
+        contour0: First section loops, shape ``(1 or 2, resolution, 3)``.
+        contour1: Second section loops, with the same shape and vertex order.
+        cap_start: Include a proximal solid or annular cap.
+        cap_end: Include a distal solid or annular cap.
+
+    Returns:
+        World vertices ``(V, 3)`` and int32 triangle indices ``(F, 3)``.
+
+    Raises:
+        ValueError: If loop shapes or station data are invalid.
+    """
+    contour0, contour1 = np.asarray(contour0), np.asarray(contour1)
+    if contour0.shape != contour1.shape:
         raise ValueError(
-            "swept-segment endpoint contours must have matching shapes, got "
-            f"{contour0.shape} and {contour1.shape}"
+            "swept-segment endpoint contours must have matching shapes and topology"
         )
-    resolution = contour0.shape[0]
-    if resolution < 4:
-        raise ValueError("cross-section contours must contain at least 4 points")
-
-    world_contour0 = (
-        np.asarray(p0, dtype=np.float64)
-        + contour0 @ np.asarray(frame0, dtype=np.float64).T
+    return _sweep_contours(
+        np.asarray([p0, p1]),
+        np.asarray([frame0, frame1]),
+        np.stack((contour0, contour1)),
+        cap_start=cap_start,
+        cap_end=cap_end,
     )
-    world_contour1 = (
-        np.asarray(p1, dtype=np.float64)
-        + contour1 @ np.asarray(frame1, dtype=np.float64).T
-    )
-
-    vertex_groups = [world_contour0, world_contour1]
-    start_center_index: int | None = None
-    end_center_index: int | None = None
-    if cap_start:
-        start_center_index = sum(len(group) for group in vertex_groups)
-        vertex_groups.append(np.asarray(p0, dtype=np.float64).reshape(1, 3))
-    if cap_end:
-        end_center_index = sum(len(group) for group in vertex_groups)
-        vertex_groups.append(np.asarray(p1, dtype=np.float64).reshape(1, 3))
-    vertices = np.concatenate(vertex_groups, axis=0)
-
-    faces: list[tuple[int, int, int]] = []
-    for index in range(resolution):
-        next_index = (index + 1) % resolution
-        faces.append((index, next_index, resolution + index))
-        faces.append((next_index, resolution + next_index, resolution + index))
-    if start_center_index is not None:
-        for index in range(resolution):
-            next_index = (index + 1) % resolution
-            faces.append((start_center_index, next_index, index))
-    if cap_end:
-        assert end_center_index is not None
-        for index in range(resolution):
-            next_index = (index + 1) % resolution
-            faces.append(
-                (end_center_index, resolution + index, resolution + next_index)
-            )
-    return vertices, np.asarray(faces, dtype=np.int32)

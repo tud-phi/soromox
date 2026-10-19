@@ -43,7 +43,7 @@ class DummySpatialRobot:
         return self.forward_kinematics_abscissa_batched(q, jnp.asarray([s]))[0]
 
     def cross_section_geometry(self, q, s):
-        return CrossSectionGeometry.CIRCULAR, jnp.array([0.02])
+        return (CrossSectionGeometry.CIRCULAR, jnp.array([0.02]), None)
 
 
 class ProfiledSpatialRobot(DummySpatialRobot):
@@ -58,7 +58,66 @@ class ProfiledSpatialRobot(DummySpatialRobot):
         dimensions = self.base_dimensions + s * (
             self.tip_dimensions - self.base_dimensions
         )
-        return self.geometry, dimensions
+        return (self.geometry, dimensions, None)
+
+
+@pytest.mark.parametrize("second_inner", [0.015, 0.01, 0.0])
+def test_hollow_sections_survive_general_viser_build_update_and_interfaces(
+    second_inner,
+):
+    from soromox.rendering.viser_renderer import SceneHandles, ViserRenderer
+
+    class HollowRobot(DummySpatialRobot):
+        segment_length = jnp.array([0.6, 0.4])
+
+        def cross_section_geometry(self, q, s):
+            geometry, outer, _ = super().cross_section_geometry(q, s)
+            inner = jnp.array([jnp.where(s < 0.6, 0.015, second_inner)])
+            return geometry, outer, inner
+
+    renderer = ViserRenderer(
+        HollowRobot(jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0])),
+        auto_start=False,
+        config=RendererConfig(
+            geometry=GeometryConfig(num_points=8, cross_section_resolution=8)
+        ),
+    )
+    assert renderer._cross_section_contours[0].shape == (2, 8, 3)
+    assert renderer._cross_section_contours[-1].shape == (
+        1 if second_inner == 0 else 2,
+        8,
+        3,
+    )
+    curves, frames = map(
+        np.asarray,
+        renderer.compute_backbone_curves_and_frames_batched(
+            jnp.zeros((1, 0)),
+            jnp.zeros((1, 3)),
+        ),
+    )
+    caps = renderer._matching_swept_edge_caps(curves[0], frames[0])
+    assert caps[2][1] == caps[4][0] == (second_inner != 0.015)
+    server = FakeViserActuatorServer()
+    renderer._server = server
+    renderer._scene_handles = SceneHandles()
+    renderer._build_robot_geometry(
+        curves,
+        np.ones((1, 8, 4)),
+        material_frames=frames,
+        base_plate_color=(0.15, 0.15, 0.15),
+    )
+    mesh = server.scene.simple_meshes[0]
+    before, faces = mesh.vertices.copy(), mesh.faces.copy()
+    offset = np.array([0.03, -0.01, 0.02])
+    renderer._update_robot_geometry(curves + offset, frames)
+    assert_allclose(mesh.vertices, before + offset, atol=1e-7)
+    assert_array_equal(mesh.faces, faces)
+    # Three pieces per link; each wall contributes two triangles per edge.
+    loops2 = 1 if second_inner == 0 else 2
+    expected = 3 * 2 * 8 * (2 + loops2) + (8 if loops2 == 1 else 16)
+    if second_inner != 0.015:
+        expected += 16 + (8 if loops2 == 1 else 16)
+    assert len(faces) == expected
 
 
 class DiscontinuousTwoLinkRobot(DummySpatialRobot):
@@ -77,7 +136,7 @@ class DiscontinuousTwoLinkRobot(DummySpatialRobot):
             jnp.array([0.2, 0.4]),
             jnp.array([0.05, 0.05]),
         )
-        return geometry, dimensions
+        return (geometry, dimensions, None)
 
 
 class DummyActuatedSpatialRobot(DummySpatialRobot):
@@ -908,7 +967,7 @@ def test_viser_discrete_backbone_uses_boxes_for_rectangular_sections():
     assert len(box_batch.handle.vertices) == 8
     assert_allclose(
         box_batch.handle.batched_scales,
-        np.tile([0.4, 0.2, 0.4], (len(box_batch.point_indices), 1)),
+        np.tile([0.2, 0.4, 0.4], (len(box_batch.point_indices), 1)),
     )
     assert_allclose(
         sphere_batch.handle.batched_scales,
@@ -1035,8 +1094,8 @@ def test_viser_swept_backbone_uses_material_frame_contours():
             CrossSectionGeometry.RECTANGULAR,
             [0.4, 0.2],
             [0.2, 0.1],
-            [0.2, 0.4],
-            [0.1, 0.2],
+            [0.4, 0.2],
+            [0.2, 0.1],
         ),
     ],
 )

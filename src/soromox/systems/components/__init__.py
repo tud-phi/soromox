@@ -13,12 +13,14 @@ from .cross_sections import (
 from .joints import JOINT_DOF, JointParams, JointSpec, JointType, joint_dof
 from .links import ContinuumLinkParams, LinkSpec
 from .materials import IsotropicMaterialParams, shear_modulus_from_poisson_ratio
+from .strand_sections import StrandSection
 
 __all__ = [
     "spatial_inertia",
     "ContinuumLinkParams",
     "CrossSectionGeometry",
     "CrossSectionParams",
+    "StrandSection",
     "IsotropicMaterialParams",
     "JOINT_DOF",
     "JointParams",

@@ -39,9 +39,14 @@ link. The static system structure determines how each row is interpreted:
 The supported solid cross-sections are circular, rectangular, and elliptical.
 `CrossSectionGeometry` identifies the family, while shared geometry utilities
 calculate area and second moments of area. Geometry dimensions are finite and
-strictly positive. Shared evaluators and `robot.cross_section_geometry(...)`
-use `[height, width]` for rectangular sections and
-`[semi_major, semi_minor]` for elliptical sections.
+strictly positive. `robot.cross_section_geometry(q, s)` returns
+`(geometry, outer_dimensions, inner_dimensions)`, with `None` for entirely
+solid models and zero inner dimensions at solid links in mixed models.
+Shared evaluators and this query use
+`[height, width]` for rectangular sections and `[semi_major, semi_minor]` for
+elliptical sections. Height and semi-major radius span local material y; width
+and semi-minor radius span local material z. These axes rotate with the link
+and do not imply a world-up direction.
 
 `LinkSpec` provides the ergonomic construction interface:
 
@@ -70,8 +75,17 @@ tapered_rectangle = LinkSpec.rectangular(
 )
 ```
 
-PCS currently accepts constant circular links. GVS accepts constant or linear
-circular, rectangular, and elliptical cross-sections.
+PCS currently accepts constant solid circular links. GVS accepts constant or
+linear circular, rectangular, and elliptical cross-sections. Add
+`wall_thickness=0.001` or `wall_thickness=LinearProfile(0.002, 0.001)` to
+`LinkSpec.circular(...)` or `LinkSpec.rectangular(...)` for a tube. Elliptical
+sections are currently solid only.
+
+Wall thickness must be positive and leave an open cavity throughout the link.
+The same geometry supplies rendering, inertia, and material-derived stiffness
+and damping. Rectangular tubes use thin-wall torsion and shear approximations.
+Switching between solid and hollow sections requires constructing a new model.
+For geometry updates, follow the [material update guidance](#isotropic-material-model).
 
 ## Continuum links
 

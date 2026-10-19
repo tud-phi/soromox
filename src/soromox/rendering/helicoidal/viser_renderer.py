@@ -3,16 +3,17 @@
 from __future__ import annotations
 
 from contextlib import nullcontext
-from dataclasses import dataclass, replace
-from functools import lru_cache
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 
 from soromox.rendering.config import RendererConfig
 from soromox.rendering.config.colors import validate_rgb
+from soromox.rendering.cross_sections import CrossSection, sweep_cross_sections
 from soromox.rendering.viser_renderer import ViserRenderer
-from soromox.systems.components import CrossSectionGeometry
+from soromox.systems.components import CrossSectionGeometry, StrandSection
 from soromox.systems.gvs.helicoidal import Helicoidal
+from soromox.systems.gvs.params import HelicoidalHelixParams
 
 __all__ = [
     "HelicoidalModuleVisual",
@@ -29,7 +30,9 @@ class HelicoidalModuleVisual:
         segment_index: Index of the GVS link carrying the lattice.
         turns: Number of turns along the link's reference length.
         strands_per_family: Equally spaced helices in each winding direction.
-        strand_radius: Radius of each solid helix tube [m].
+        strand_section: Shared strand geometry. Height follows the projected
+            outward radial direction (local y); width follows local z. Defaults
+            to a solid circular section with a 2 mm radius.
         phase: Starting azimuth of the negative winding family [rad].
         family_phase: Additional azimuth of the positive winding family [rad].
 
@@ -40,11 +43,16 @@ class HelicoidalModuleVisual:
     segment_index: int
     turns: float = 3.0
     strands_per_family: int = 3
-    strand_radius: float = 0.002
     phase: float = 0.0
     family_phase: float = np.pi / 6
+    strand_section: StrandSection = field(
+        default_factory=lambda: StrandSection.circular(0.002)
+    )
 
     def __post_init__(self) -> None:
+        if not isinstance(self.strand_section, StrandSection):
+            raise TypeError("strand_section must be a StrandSection.")
+        self.strand_section.validate_for_update()
         for name, minimum in (("segment_index", 0), ("strands_per_family", 1)):
             value = getattr(self, name)
             if (
@@ -53,24 +61,61 @@ class HelicoidalModuleVisual:
                 or value < minimum
             ):
                 raise ValueError(f"{name} must be an integer >= {minimum}.")
-        for name in ("turns", "strand_radius"):
-            if not np.isfinite(getattr(self, name)) or getattr(self, name) <= 0:
-                raise ValueError(f"{name} must be finite and positive.")
+        if not np.isfinite(self.turns) or self.turns <= 0:
+            raise ValueError("turns must be finite and positive.")
         for name in ("phase", "family_phase"):
             if not np.isfinite(getattr(self, name)):
                 raise ValueError(f"{name} must be finite.")
 
+    @classmethod
+    def from_helix_params(
+        cls,
+        segment_index: int,
+        params: HelicoidalHelixParams,
+        *,
+        strand_section: StrandSection | None = None,
+    ) -> HelicoidalModuleVisual:
+        """Copy strand geometry and winding parameters from helix inputs.
+
+        Supply ``strand_section`` explicitly for property-only helix inputs.
+        The link's existing circular envelope supplies the centreline radius;
+        it should match ``params.radius_base`` and ``params.radius_tip``.
+        End-ring tube radius defaults to 2 mm, independently of strand geometry.
+        """
+        if not isinstance(params, HelicoidalHelixParams):
+            raise TypeError("params must be HelicoidalHelixParams.")
+        section = params.strand_section if strand_section is None else strand_section
+        if section is None:
+            raise ValueError(
+                "Helix inputs have no strand geometry; supply strand_section explicitly."
+            )
+        if not isinstance(section, StrandSection):
+            raise TypeError("strand_section must be a StrandSection.")
+        return cls(
+            segment_index=segment_index,
+            turns=float(params.num_turns),
+            strands_per_family=params.helices_per_direction,
+            phase=float(params.phase),
+            family_phase=float(params.winding_family_phase_offset),
+            strand_section=section,
+        )
+
+    @property
+    def strand_radial_extent(self) -> float:
+        """Half-extent of the strand along its local radial direction [m]."""
+        return float(self.strand_section.radial_extent)
+
 
 @dataclass(frozen=True)
 class HelicoidalVisualConfig:
-    """Sampling and appearance of helices, end rings, and connecting links.
+    """Sampling and appearance of helices and connecting links.
 
     Attributes:
         samples_per_turn: Minimum longitudinal sampling density of each helix.
         strand_sections: Vertices around a strand cross section.
         negative_color: RGB color of the negative winding family, in [0, 1].
         positive_color: RGB color of the positive winding family, in [0, 1].
-        interface_color: RGB color of end rings and connecting links, in [0, 1].
+        interface_color: RGB color of connecting links, in [0, 1].
     """
 
     samples_per_turn: int = 32
@@ -92,39 +137,8 @@ class HelicoidalVisualConfig:
             validate_rgb(getattr(self, name), name=name)
 
 
-@lru_cache(maxsize=64)
-def _surface_faces(rings: int, sections: int) -> np.ndarray:
-    """Triangulate a capped sweep with outward-facing triangles."""
-    faces = []
-    for i in range(rings - 1):
-        for j in range(sections):
-            a, b = i * sections + j, i * sections + (j + 1) % sections
-            faces.extend(((a, b, a + sections), (b, b + sections, a + sections)))
-    for j in range(sections):
-        k = (j + 1) % sections
-        faces.extend(
-            (
-                (rings * sections, k, j),
-                (
-                    rings * sections + 1,
-                    (rings - 1) * sections + j,
-                    (rings - 1) * sections + k,
-                ),
-            )
-        )
-    return np.asarray(faces, dtype=np.uint32)
-
-
-def _capped_vertices(rings: np.ndarray) -> np.ndarray:
-    return np.concatenate((rings.reshape(-1, 3), rings[[0, -1]].mean(axis=1))).astype(
-        np.float32
-    )
-
-
-def _strand_vertices(
-    centers: np.ndarray, radial: np.ndarray, radius: float, sections: int
-) -> np.ndarray:
-    """Sweep circular sections normal to a deformed strand's tangent."""
+def _strand_frames(centers: np.ndarray, radial: np.ndarray) -> np.ndarray:
+    """Build strand frames: tangent x, projected radial y, right-handed z."""
     tangent = np.gradient(centers, axis=0)
     tangent /= np.maximum(np.linalg.norm(tangent, axis=1, keepdims=True), 1e-15)
     normal = radial - np.sum(radial * tangent, axis=1, keepdims=True) * tangent
@@ -133,17 +147,11 @@ def _strand_vertices(
         axis = np.eye(3)[np.argmin(np.abs(tangent[singular]), axis=1)]
         normal[singular] = np.cross(tangent[singular], axis)
     normal /= np.maximum(np.linalg.norm(normal, axis=1, keepdims=True), 1e-15)
-    binormal = np.cross(tangent, normal)
-    angle = np.linspace(0, 2 * np.pi, sections, endpoint=False)
-    rings = centers[:, None] + radius * (
-        np.cos(angle)[None, :, None] * normal[:, None]
-        + np.sin(angle)[None, :, None] * binormal[:, None]
-    )
-    return _capped_vertices(rings)
+    return np.stack((tangent, normal, np.cross(tangent, normal)), axis=-1)
 
 
 class HelicoidalViserRenderer(ViserRenderer):
-    """Display helicoidal strands, end rings, and connecting link surfaces.
+    """Display helicoidal strands and connecting link surfaces.
 
     Supply ``modules`` to select the lattice links and their helix geometry.
     By default every link is a lattice module. Links outside this selection
@@ -200,8 +208,12 @@ class HelicoidalViserRenderer(ViserRenderer):
         auto_start = kwargs.pop("auto_start", True)
         super().__init__(robot, config=cfg, auto_start=False, **kwargs)
         self._module_by_link = {m.segment_index: m for m in self.modules}
+        self._strand_sections = {
+            m.segment_index: CrossSection.from_strand_section(m.strand_section)
+            for m in self.modules
+        }
+        start, end = self._segment_bounds(self.num_points)
         for m in self.modules:
-            start, end = self._segment_bounds(self.num_points)
             sections = self._cross_sections[
                 start[m.segment_index] : end[m.segment_index]
             ]
@@ -209,9 +221,10 @@ class HelicoidalViserRenderer(ViserRenderer):
                 raise ValueError(
                     "Lattice links require circular cross-section envelopes."
                 )
-            if any(s.dimensions[0] <= m.strand_radius for s in sections):
+            radial_extent = m.strand_radial_extent
+            if any(s.outer_dimensions[0] <= radial_extent for s in sections):
                 raise ValueError(
-                    "strand_radius must be smaller than the lattice radius."
+                    "Strand radial extent must be smaller than the lattice radius."
                 )
         if auto_start:
             self.start()
@@ -227,17 +240,21 @@ class HelicoidalViserRenderer(ViserRenderer):
             points, rotations = curve[start:end], frames[start:end]
             module = self._module_by_link.get(index)
             if module is None:
-                contours = np.asarray(self._cross_section_contours[start:end])
-                rings = points[:, None] + np.einsum("nij,nkj->nki", rotations, contours)
+                vertices, faces = sweep_cross_sections(
+                    points,
+                    rotations,
+                    self._cross_sections[start:end],
+                    self._cross_section_resolution,
+                )
                 yield (
                     f"link_{index}/surface",
-                    _capped_vertices(rings),
-                    _surface_faces(len(points), rings.shape[1]),
+                    vertices.astype(np.float32),
+                    faces,
                     cfg.interface_color,
                 )
                 continue
             radii = np.asarray(
-                [s.dimensions[0] for s in self._cross_sections[start:end]]
+                [s.outer_dimensions[0] for s in self._cross_sections[start:end]]
             )
             fraction = (
                 np.asarray(self._backbone_abscissae[start:end]) - boundaries[index]
@@ -258,32 +275,18 @@ class HelicoidalViserRenderer(ViserRenderer):
                     )
                     radial = np.einsum("nij,nj->ni", rotations, local)
                     centers = points + radii[:, None] * radial
+                    vertices, faces = sweep_cross_sections(
+                        centers,
+                        _strand_frames(centers, radial),
+                        self._strand_sections[index],
+                        cfg.strand_sections,
+                    )
                     yield (
                         f"link_{index}/family_{sign}/strand_{strand}",
-                        _strand_vertices(
-                            centers, radial, module.strand_radius, cfg.strand_sections
-                        ),
-                        _surface_faces(len(points), cfg.strand_sections),
+                        vertices.astype(np.float32),
+                        faces,
                         color,
                     )
-            # End rings share each module's end frame and strand thickness.
-            angle = np.linspace(
-                0, 2 * np.pi, max(32, self._cross_section_resolution) + 1
-            )
-            local = np.column_stack(
-                (np.zeros_like(angle), np.cos(angle), np.sin(angle))
-            )
-            for endpoint in (0, -1):
-                radial = local @ rotations[endpoint].T
-                centers = points[endpoint] + radii[endpoint] * radial
-                yield (
-                    f"link_{index}/ring_{endpoint}",
-                    _strand_vertices(
-                        centers, radial, module.strand_radius, cfg.strand_sections
-                    ),
-                    _surface_faces(len(angle), cfg.strand_sections),
-                    cfg.interface_color,
-                )
 
     def _build_robot_geometry(
         self, curves, point_colors, *, material_frames, base_plate_color

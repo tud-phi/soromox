@@ -164,6 +164,9 @@ examples/**/videos/*
 # Documentation build
 site/
 
+# Local Open3D native build artifacts
+/.open3d-uv-build/
+
 # ignore .claude settings
 .claude/
 

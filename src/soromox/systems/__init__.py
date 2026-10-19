@@ -16,6 +16,7 @@ from soromox.systems.components import (
     JointSpec,
     LinearProfile,
     LinkSpec,
+    StrandSection,
     shear_modulus_from_poisson_ratio,
 )
 from soromox.systems.components.inertia import spatial_inertia
@@ -77,6 +78,7 @@ __all__ = [
     "SoftRobot",
     "CrossSectionGeometry",
     "CrossSectionParams",
+    "StrandSection",
     "ContinuumLinkParams",
     "JointParams",
     "IsotropicMaterialParams",

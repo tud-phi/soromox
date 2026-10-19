@@ -437,64 +437,70 @@ def _smooth_swept_meshes(
     meshes: list[o3d.geometry.TriangleMesh],
     resolution: int,
     tolerance: float,
+    loop_counts: list[int] | None = None,
 ) -> None:
-    """Join swept pieces with smooth side normals at matching end contours.
+    """Join adjacent lofts only when every boundary loop matches.
 
     Args:
-        meshes: Ordered adjacent loft pieces. Each starts with two rings
-            of ``resolution`` vertices and ``2 * resolution`` side triangles;
-            optional cap vertices and triangles follow those entries.
-        resolution: Number of vertices in each cross-section contour.
-        tolerance: Absolute contour-matching tolerance in metres. This accounts
-            for the float32 sampling offsets on opposite sides of a link boundary.
+        meshes: Ordered adjacent loft meshes, with side vertices/faces first.
+        resolution: Vertices per boundary loop.
+        tolerance: Absolute world-space matching tolerance [m].
+        loop_counts: One (solid) or two (hollow) loops per mesh; defaults to one.
 
     Returns:
-        None. Updates matching adjacent rings with shared area-weighted side
-        normals, snaps them to their mean position and removes their buried caps.
-        Exterior caps, colors and mismatched contours are preserved.
+        None. Updates matching outer and inner seams with shared area-weighted
+        normals, snaps vertices and removes buried solid or annular caps.
+        Different cavities or topology retain their interface caps.
     """
-    if len(meshes) < 2:
-        return
-    # Side rings have identical topology; optional caps can have different sizes.
-    rings = np.stack([np.asarray(mesh.vertices)[: 2 * resolution] for mesh in meshes])
-    faces = np.stack([np.asarray(mesh.triangles)[: 2 * resolution] for mesh in meshes])
-    mesh_indices = np.arange(len(meshes))[:, None, None]
-    triangles = rings[mesh_indices, faces]
-    face_normals = np.cross(
-        triangles[:, :, 1] - triangles[:, :, 0],
-        triangles[:, :, 2] - triangles[:, :, 0],
+    counts = (
+        np.ones(len(meshes), dtype=int)
+        if loop_counts is None
+        else np.asarray(loop_counts)
     )
-    side_normals = np.zeros_like(rings)
-    np.add.at(
-        side_normals,
-        (mesh_indices, faces),
-        face_normals[:, :, None, :],
-    )
-    end = slice(resolution, 2 * resolution)
-    matching = np.all(
-        np.abs(rings[:-1, end] - rings[1:, :resolution]) <= tolerance, axis=(1, 2)
-    )
-    shared_normals = side_normals[:-1, end] + side_normals[1:, :resolution]
-    lengths = np.linalg.norm(shared_normals, axis=2, keepdims=True)
-    np.divide(shared_normals, lengths, out=shared_normals, where=lengths > 0)
-    shared_rings = (rings[:-1, end] + rings[1:, :resolution]) / 2
-    # Open3D owns separate mesh buffers, so write each matching interface back.
-    for index in np.flatnonzero(matching):
-        left, right = meshes[index], meshes[index + 1]
-        np.asarray(left.vertices)[end] = shared_rings[index]
-        np.asarray(right.vertices)[:resolution] = shared_rings[index]
-        np.asarray(left.vertex_normals)[end] = shared_normals[index]
-        np.asarray(right.vertex_normals)[:resolution] = shared_normals[index]
-        left_faces = np.asarray(left.triangles)
-        right_faces = np.asarray(right.triangles)
-        left_cap = (left_faces >= 2 * resolution).any(axis=1) & (
-            left_faces >= resolution
-        ).all(axis=1)
-        right_cap = (right_faces >= 2 * resolution).any(axis=1) & (
-            (right_faces < resolution) | (right_faces >= 2 * resolution)
-        ).all(axis=1)
-        left.triangles = o3d.utility.Vector3iVector(left_faces[~left_cap])
-        right.triangles = o3d.utility.Vector3iVector(right_faces[~right_cap])
+    if counts.shape != (len(meshes),) or not np.isin(counts, (1, 2)).all():
+        raise ValueError("loop_counts must contain one or two for each swept mesh")
+    # Batch each topology separately, without joining across intervening meshes.
+    for loops in (1, 2):
+        indices = np.flatnonzero(counts == loops)
+        if len(indices) < 2:
+            continue
+        side_count = 2 * resolution * loops
+        rings = np.stack([np.asarray(meshes[i].vertices)[:side_count] for i in indices])
+        faces = np.stack(
+            [np.asarray(meshes[i].triangles)[:side_count] for i in indices]
+        )
+        mesh_indices = np.arange(len(indices))[:, None, None]
+        triangles = rings[mesh_indices, faces]
+        face_normals = np.cross(
+            triangles[:, :, 1] - triangles[:, :, 0],
+            triangles[:, :, 2] - triangles[:, :, 0],
+        )
+        side_normals = np.zeros_like(rings)
+        np.add.at(side_normals, (mesh_indices, faces), face_normals[:, :, None, :])
+        start = (
+            np.arange(loops)[:, None] * 2 * resolution + np.arange(resolution)
+        ).ravel()
+        end = start + resolution
+        matching = (np.diff(indices) == 1) & np.all(
+            np.abs(rings[:-1, end] - rings[1:, start]) <= tolerance, axis=(1, 2)
+        )
+        shared_normals = side_normals[:-1, end] + side_normals[1:, start]
+        lengths = np.linalg.norm(shared_normals, axis=2, keepdims=True)
+        np.divide(shared_normals, lengths, out=shared_normals, where=lengths > 0)
+        shared_rings = (rings[:-1, end] + rings[1:, start]) / 2
+        for index in np.flatnonzero(matching):
+            left, right = meshes[indices[index]], meshes[indices[index + 1]]
+            np.asarray(left.vertices)[end] = shared_rings[index]
+            np.asarray(right.vertices)[start] = shared_rings[index]
+            np.asarray(left.vertex_normals)[end] = shared_normals[index]
+            np.asarray(right.vertex_normals)[start] = shared_normals[index]
+            for mesh, endpoint in ((left, end), (right, start)):
+                triangles = np.asarray(mesh.triangles)
+                cap = (np.isin(triangles, endpoint) | (triangles >= side_count)).all(
+                    axis=1
+                )
+                cap[:side_count] = False
+                mesh.triangles = o3d.utility.Vector3iVector(triangles[~cap])
 
 
 def _refresh_merged_triangle_mesh(
@@ -757,7 +763,7 @@ def _make_swept_cross_section_segment(
     )
     mesh = o3d.geometry.TriangleMesh()
     mesh.vertices = o3d.utility.Vector3dVector(vertices)
-    mesh.triangles = o3d.utility.Vector3iVector(faces)
+    mesh.triangles = o3d.utility.Vector3iVector(faces.copy())
     mesh.compute_vertex_normals()
     if apply_color:
         mesh.paint_uniform_color(np.asarray(color, dtype=np.float64))
@@ -1267,7 +1273,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
 
     def _base_plate_radius_for_section(self, section: CrossSection) -> float:
         """Size the circular base plate from the actual base contour."""
-        contour = section.contour(self.cross_section_resolution)
+        contour = section.contours(self.cross_section_resolution)[0]
         transverse_distance = np.linalg.norm(contour[:, 1:], axis=1)
         return float(self.base_plate_radius_scale * np.max(transverse_distance))
 
@@ -1491,6 +1497,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
 
             swept_groups: dict[tuple[float, ...], list] = {}
             swept_pieces = []
+            swept_loop_counts = []
             for s in range(layout.segments):
                 c0, c1 = int(layout.starts[s]), int(layout.ends[s])
                 raw_color_rgba = scene_data.segment_colors_rgba[robot_idx, s]
@@ -1513,6 +1520,9 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                         color_key = tuple(np.asarray(raw_color_rgba).reshape(-1))
                         swept_groups.setdefault(color_key, []).append(body)
                         swept_pieces.append(body)
+                        swept_loop_counts.append(
+                            1 if sections[p].inner_dimensions is None else 2
+                        )
                 else:
                     for p in range(c0, c1):
                         section = sections[p]
@@ -1578,6 +1588,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                 swept_pieces,
                 self.cross_section_resolution,
                 4 * np.finfo(np.float32).eps * self.L_max,
+                swept_loop_counts,
             )
             for group_idx, (color, pieces) in enumerate(swept_groups.items()):
                 body = _merge_triangle_meshes(pieces)
@@ -1672,7 +1683,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         )
         padding = max(
             self.base_plate_thickness,
-            max(float(np.max(section.dimensions)) for section in sections)
+            max(float(np.max(section.outer_dimensions)) for section in sections)
             * max(1.0, self.base_plate_radius_scale),
         )
         lower, upper = points.min(axis=0) - padding, points.max(axis=0) + padding
@@ -2748,8 +2759,8 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                         dynamic_length=False,
                         rotate_to_axis=False,
                         swept_contours=(
-                            sections[p].contour(self.cross_section_resolution),
-                            sections[p + 1].contour(self.cross_section_resolution),
+                            sections[p].contours(self.cross_section_resolution),
+                            sections[p + 1].contours(self.cross_section_resolution),
                         ),
                         cap_start=cap_start,
                         cap_end=cap_end,

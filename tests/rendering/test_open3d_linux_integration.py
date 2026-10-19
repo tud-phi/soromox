@@ -85,7 +85,7 @@ class _IntegrationRobot:
     def cross_section_geometry(self, q, s):
         """Use a constant circular cross-section."""
         del q, s
-        return CrossSectionGeometry.CIRCULAR, jnp.array([0.05])
+        return (CrossSectionGeometry.CIRCULAR, jnp.array([0.05]), None)
 
 
 def _renderer(*, xvfb_compatible: bool = False) -> Open3DRenderer:

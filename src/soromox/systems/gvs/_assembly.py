@@ -159,8 +159,8 @@ def assign_gvs_runtime_arrays(
         zero_pair = (jnp.array(0.0), jnp.array(0.0))
         geometry = int(segment.link.cross_section_geometry)
         radius_pair = pairs[0] if geometry == 0 else zero_pair
-        rectangular_pairs = pairs if geometry == 1 else [zero_pair, zero_pair]
-        elliptical_pairs = pairs if geometry == 2 else [zero_pair, zero_pair]
+        rectangular_pairs = pairs[:2] if geometry == 1 else [zero_pair, zero_pair]
+        elliptical_pairs = pairs[:2] if geometry == 2 else [zero_pair, zero_pair]
         segment_data = model._build_segment_i(
             max_dof=max_dof,
             max_num_integration_points=max_num_integration_points,
@@ -170,16 +170,9 @@ def assign_gvs_runtime_arrays(
             num_gauss_points=segment.num_gauss_points,
             length=params.link.length[i_segment],
             density=params.link.density[i_segment],
-            radius_initial=radius_pair[0],
-            radius_final=radius_pair[1],
-            height_initial=rectangular_pairs[0][0],
-            height_final=rectangular_pairs[0][1],
-            width_initial=rectangular_pairs[1][0],
-            width_final=rectangular_pairs[1][1],
-            semi_major_initial=elliptical_pairs[0][0],
-            semi_major_final=elliptical_pairs[0][1],
-            semi_minor_initial=elliptical_pairs[1][0],
-            semi_minor_final=elliptical_pairs[1][1],
+            cross_section_coefficients=params.link.cross_section.coefficients[
+                i_segment
+            ],
             reference_strain=params.link.reference_strain[i_segment],
             joint_stiffness=params.joint.stiffness[i_segment, :joint_dof, :joint_dof],
         )

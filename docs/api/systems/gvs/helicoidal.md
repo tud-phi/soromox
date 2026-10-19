@@ -77,16 +77,16 @@ strand families. Material and sectional properties belong to cross-sections
 
 ```python
 from math import pi
-from soromox.systems import HelicoidalHelixParams
+from soromox.systems import HelicoidalHelixParams, StrandSection
 
-helix = HelicoidalHelixParams.circular(
+helix = HelicoidalHelixParams.from_section(
+    StrandSection.circular(radius=0.002),
     length=0.2,
     radius_base=0.025,
     radius_tip=0.025,
     num_turns=3.0,                      # Each strand revolves around the backbone 3 times.
     helices_per_direction=3,           # Three strands in each winding direction.
     winding_family_phase_offset=pi/6,  # Families' base azimuths differ by 30 degrees.
-    strand_radius=0.002,
     density=1220.0,
     young_modulus=30e6,
     shear_modulus=30e6 / (2 * (1 + 0.48)),
@@ -114,9 +114,10 @@ and the strand-to-backbone arc-length factor. It is sampled at the existing
 Gauss points, supporting tapered geometries. Strand volumes add at crossings;
 overlap is neglected. Each strand section moves with its backbone material frame.
 
-For noncircular strands, the constructor accepts area, principal area moments,
-torsion constant, and shear correction factors. The parameter reference below
-defines their frames and the connection stiffness multipliers.
+`StrandSection` defines solid or hollow circular and rectangular strands for
+both mechanics and rendering. Hollow sections take a uniform `wall_thickness`;
+rectangular height spans strand **y** (radial) and width spans **z**.
+Measured sectional properties can override the estimates in `from_section`.
 `damping_time_constant` applies to the fitted **backbone** stiffness.
 
 Run the cylindrical example with strand-derived mechanics using:
@@ -147,6 +148,10 @@ conversion with `to_backbone()`, use the differentiable `with_helix_inertia`:
 robot = robot.with_helix_inertia({1: helix.replace(density=1250.0)})
 ```
 
+Use `helix.replace(strand_section=section)` to change strand shape, then reapply
+the helix inputs as above. This rederives sectional properties; include any
+calibrated overrides in the same call.
+
 Ordinary cylinder density updates use `update_link_params(density=...)`.
 Stored helix inertia is refreshed through the helix input; constitutive-only
 backbone updates preserve the current inertia.
@@ -158,7 +163,7 @@ Basis choices, quadrature counts, and tendon spans define the static structure.
 
 ## Specialized Viser Rendering
 
-`HelicoidalViserRenderer` displays both winding families, end rings, connectors,
+`HelicoidalViserRenderer` displays both winding families, connectors,
 and tendon routes, following the GVS material frames through deformation.
 
 ```python
@@ -166,19 +171,31 @@ from soromox.rendering import HelicoidalModuleVisual, HelicoidalViserRenderer
 
 renderer = HelicoidalViserRenderer(
     robot,
-    modules=tuple(HelicoidalModuleVisual(i, turns=3, strand_radius=0.002)
-                  for i in (1, 3, 5)),
+    modules=tuple(
+        HelicoidalModuleVisual.from_helix_params(i, helix)
+        for i in (1, 3, 5)
+    ),
 )
 renderer.show(q)
 ```
 
 Each module selects a link whose cross-section radius sets the helix centreline
-radius. `HelicoidalModuleVisual` specifies the strand geometry;
+radius. Keep the link's radius profile consistent with the helix inputs.
+`from_helix_params` reuses the strand and winding geometry; supply `strand_section`
+explicitly when the helix inputs contain only measured sectional properties.
+Rebuild the renderer after changing section geometry or winding inputs.
+
 `HelicoidalVisualConfig` controls colors and mesh resolution. The renderer
 supports batched configurations, `render_sequence`, `render_frame`, and live
 updates. Image and video capture use a connected Viser browser client.
 
 ## API Reference
+
+::: soromox.systems.components.StrandSection
+    options:
+      show_root_heading: true
+      show_source: false
+      heading_level: 3
 
 ::: soromox.systems.gvs.helicoidal.Helicoidal
     options:
