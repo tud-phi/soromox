@@ -194,8 +194,6 @@ class PlanarPCS(SoftRobot):
             raise ValueError("PlanarPCS requires at least one link.")
         specs = tuple(links)
         for index, spec in enumerate(specs):
-            if spec.hollow:
-                raise ValueError("Hollow LinkSpec sections require GVS.")
             if spec.cross_section_geometry != CrossSectionGeometry.CIRCULAR:
                 raise ValueError(
                     f"PlanarPCS link {index} must have a circular section."

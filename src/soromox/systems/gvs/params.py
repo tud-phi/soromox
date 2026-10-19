@@ -174,10 +174,6 @@ class GVSParams(BaseSoftRobotParams):
 
     def validate_value_compatibility(self, structure: GVSStructure) -> None:
         """Validate eager geometry values against the static GVS layout."""
-        from soromox.systems.components.cross_sections import (
-            evaluate_section_dimensions,
-        )
-
         for index, segment in enumerate(structure.segments):
             count = sum(segment.link.cross_section_profile_parameter_counts)
             active_coefficients = self.link.cross_section.coefficients[index, :count]
@@ -186,19 +182,6 @@ class GVSParams(BaseSoftRobotParams):
                     "Active cross-section coefficients must be strictly positive "
                     f"for GVS segment {index}."
                 )
-            if segment.link.hollow:
-                _, inner = evaluate_section_dimensions(
-                    segment.link.cross_section_geometry,
-                    active_coefficients,
-                    segment.link.cross_section_profile_types,
-                    segment.link.cross_section_profile_parameter_counts,
-                    jnp.array([0.0, 1.0]),
-                    hollow=True,
-                )
-                if not bool(jnp.all(inner > 0)):
-                    raise ValueError(
-                        f"wall_thickness must leave a positive cavity at both ends of GVS segment {index}."
-                    )
 
 
 def _as_strong_array(value: object) -> Array:

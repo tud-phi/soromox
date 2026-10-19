@@ -11,7 +11,6 @@ from typing import Any
 import equinox as eqx
 
 from soromox.systems.components import CrossSectionGeometry, ProfileType
-from soromox.systems.components.cross_sections import validate_section_profiles
 
 
 class GVSLinkStructure(eqx.Module):
@@ -22,8 +21,7 @@ class GVSLinkStructure(eqx.Module):
     in ``GVSParams.link``.
 
     Attributes:
-        cross_section_geometry: Static cross-section boundary family.
-        hollow: Whether an additional wall-thickness profile defines a cavity.
+        cross_section_geometry: Static solid cross-section family.
         cross_section_profile_types: Profile type for each geometry dimension.
         cross_section_profile_parameter_counts: Number of packed coefficients
             consumed by each geometry dimension.
@@ -32,15 +30,6 @@ class GVSLinkStructure(eqx.Module):
     cross_section_geometry: CrossSectionGeometry = eqx.field(static=True)
     cross_section_profile_types: tuple[ProfileType, ...] = eqx.field(static=True)
     cross_section_profile_parameter_counts: tuple[int, ...] = eqx.field(static=True)
-    hollow: bool = eqx.field(static=True, default=False)
-
-    def __check_init__(self) -> None:
-        validate_section_profiles(
-            self.cross_section_geometry,
-            self.cross_section_profile_types,
-            self.cross_section_profile_parameter_counts,
-            hollow=self.hollow,
-        )
 
 
 class GVSJointStructure(eqx.Module):

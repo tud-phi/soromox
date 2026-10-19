@@ -41,8 +41,6 @@ from soromox.systems.gvs.construction import (
     _resolve_structure,
     material_operators_from_params,
     params_and_structure_from_segments,
-    section_dimensions_at_points,
-    section_properties_at_points,
 )
 from soromox.systems.gvs.joint_bases import (
     B_Cylindrical,
@@ -54,9 +52,9 @@ from soromox.systems.gvs.joint_bases import (
     B_Revolute,
     B_Spherical,
 )
-from soromox.systems.gvs.operands import JointOperand
+from soromox.systems.gvs.operands import GeometricOperand, JointOperand
 from soromox.systems.gvs.params import GVSParams
-from soromox.systems.gvs.primitives import Basis, Joint
+from soromox.systems.gvs.primitives import Basis, Joint, Link
 from soromox.systems.gvs.specs import GVSSegment
 from soromox.systems.gvs.strain_bases import (
     B_IMQ,
@@ -512,9 +510,7 @@ class GVS(SoftRobot):
         """
         return jnp.asarray(self.segment_lengths)
 
-    def cross_section_geometry(
-        self, q: Array, s: Array
-    ) -> tuple[Array, Array, Array | None]:
+    def cross_section_geometry(self, q: Array, s: Array) -> tuple[Array, Array, None]:
         """Evaluate cross-section geometry at a backbone coordinate.
 
         Args:
@@ -524,13 +520,10 @@ class GVS(SoftRobot):
             s: Scalar global backbone coordinate.
 
         Returns:
-            Tuple ``(geometry, outer_dimensions, inner_dimensions)`` from the
-            same profiles used for mechanics. Inner dimensions are None for
-            entirely solid models, or zero at solid stations of mixed models.
-            ``geometry`` is the integer :class:`CrossSectionGeometry` tag.
-            Outer dimensions contain radius (repeated to keep two entries)
-            for a circle, height and width for a rectangle, or semi-major and
-            semi-minor radii for an ellipse.
+            A tuple ``(geometry, dimensions, None)`` for a solid section. ``geometry`` is the integer
+            :class:`CrossSectionGeometry` tag. ``dimensions`` contains radius
+            for a circular section, height and width for a rectangle, or
+            semi-major and semi-minor radii for an ellipse.
 
         Raises:
             ValueError: If ``s`` cannot be assigned to a segment.
@@ -538,34 +531,29 @@ class GVS(SoftRobot):
         segment_idx, s_local = self.classify_segment(s)
         length_i = self.segment_lengths[segment_idx]
         x = safe_divide(s_local, length_i, self.global_eps)
-        has_cavities = any(segment.link.hollow for segment in self.structure.segments)
+        tag = self.cross_section_geometry_index[segment_idx]
 
-        def branch(structure):
-            def evaluate(operand):
-                coefficients, point = operand
-                outer, inner = section_dimensions_at_points(
-                    coefficients, structure, point
-                )
-                # All branches have two dimensions so mixed families can be vmapped.
-                if outer.shape[-1] == 1:
-                    outer = jnp.repeat(outer, 2)
-                    if inner is not None:
-                        inner = jnp.repeat(inner, 2)
-                if has_cavities and inner is None:
-                    inner = jnp.zeros_like(outer)
-                return (
-                    jnp.asarray(structure.cross_section_geometry, dtype=jnp.int32),
-                    outer,
-                    inner,
-                )
+        def circular(_):
+            params = self.radius_params[segment_idx]
+            radius = Link.interpolate_param(x, params[0], params[1])
+            return jnp.array([radius, radius])
 
-            return evaluate
+        def rectangular(_):
+            h_params = self.height_params[segment_idx]
+            w_params = self.width_params[segment_idx]
+            height = Link.interpolate_param(x, h_params[0], h_params[1])
+            width = Link.interpolate_param(x, w_params[0], w_params[1])
+            return jnp.array([height, width])
 
-        return lax.switch(
-            segment_idx,
-            tuple(branch(segment.link) for segment in self.structure.segments),
-            (self.params.link.cross_section.coefficients[segment_idx], x),
-        )
+        def elliptical(_):
+            a_params = self.semi_major_params[segment_idx]
+            b_params = self.semi_minor_params[segment_idx]
+            a_val = Link.interpolate_param(x, a_params[0], a_params[1])
+            b_val = Link.interpolate_param(x, b_params[0], b_params[1])
+            return jnp.array([a_val, b_val])
+
+        dims = lax.switch(tag, [circular, rectangular, elliptical], None)
+        return tag.astype(jnp.int32), dims, None
 
     def _build_segment_i(
         self,
@@ -578,7 +566,16 @@ class GVS(SoftRobot):
         *,
         length: Array,
         density: Array,
-        cross_section_coefficients: Array,
+        radius_initial: Array,
+        radius_final: Array,
+        height_initial: Array,
+        height_final: Array,
+        width_initial: Array,
+        width_final: Array,
+        semi_major_initial: Array,
+        semi_major_final: Array,
+        semi_minor_initial: Array,
+        semi_minor_final: Array,
         reference_strain: Array,
         joint_stiffness: Array,
     ) -> SegmentRuntimeData:
@@ -664,8 +661,28 @@ class GVS(SoftRobot):
         )  # shape (6, max_dof)
 
         # === Link attributes
+        cross_section_geometry = link_structure.cross_section_geometry
+        cross_section_geometry_idx = int(cross_section_geometry)
+
         rho = jnp.asarray(density)
         L = jnp.asarray(length)
+
+        r_i = jnp.asarray(radius_initial)
+        r_f = jnp.asarray(radius_final)
+        h_i = jnp.asarray(height_initial)
+        h_f = jnp.asarray(height_final)
+        w_i = jnp.asarray(width_initial)
+        w_f = jnp.asarray(width_final)
+        a_i = jnp.asarray(semi_major_initial)
+        a_f = jnp.asarray(semi_major_final)
+        b_i = jnp.asarray(semi_minor_initial)
+        b_f = jnp.asarray(semi_minor_final)
+
+        r_params = (r_i, r_f)
+        h_params = (h_i, h_f)
+        w_params = (w_i, w_f)
+        a_params = (a_i, a_f)
+        b_params = (b_i, b_f)
 
         # === Basis attributes
         basetype = basis_structure.type
@@ -739,8 +756,18 @@ class GVS(SoftRobot):
         xi_ref_Z2 = vmap(xi_reffn)(integration_points[:-1] + self.Z2 * deltas).squeeze()
 
         # Compute the mass, stiffness, and damping matrices at the integration points
-        Ix_p, Iy_p, Iz_p, A_p = section_properties_at_points(
-            cross_section_coefficients, link_structure, integration_points
+        geometric_operand = GeometricOperand(
+            integration_points=integration_points,
+            r_params=r_params,
+            h_params=h_params,
+            w_params=w_params,
+            a_params=a_params,
+            b_params=b_params,
+        )
+        Ix_p, Iy_p, Iz_p, A_p = lax.switch(
+            index=cross_section_geometry_idx,
+            branches=Link.geometric_branches(),
+            operand=geometric_operand,
         )
 
         # Prepare the component vectors
@@ -1112,14 +1139,24 @@ class GVS(SoftRobot):
             zero_pair = (jnp.array(0.0), jnp.array(0.0))
             r_params = pairs[0] if cross_section_geometry_idx == 0 else zero_pair
             h_params, w_params = (
-                pairs[:2] if cross_section_geometry_idx == 1 else (zero_pair, zero_pair)
+                pairs if cross_section_geometry_idx == 1 else (zero_pair, zero_pair)
             )
             a_params, b_params = (
-                pairs[:2] if cross_section_geometry_idx == 2 else (zero_pair, zero_pair)
+                pairs if cross_section_geometry_idx == 2 else (zero_pair, zero_pair)
             )
 
-            Ix_p, Iy_p, Iz_p, A_p = section_properties_at_points(
-                coefficients, segment_structure.link, self.integration_points[i_segment]
+            geometric_operand = GeometricOperand(
+                integration_points=self.integration_points[i_segment],
+                r_params=r_params,
+                h_params=h_params,
+                w_params=w_params,
+                a_params=a_params,
+                b_params=b_params,
+            )
+            Ix_p, Iy_p, Iz_p, A_p = lax.switch(
+                index=cross_section_geometry_idx,
+                branches=Link.geometric_branches(),
+                operand=geometric_operand,
             )
 
             Ms_diag = jnp.stack([Ix_p, Iy_p, Iz_p, A_p, A_p, A_p], axis=1)

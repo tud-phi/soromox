@@ -11,13 +11,10 @@ from soromox.systems.components import (
     ContinuumLinkParams,
     CrossSectionParams,
     JointParams,
+    evaluate_profile,
     section_properties,
 )
-from soromox.systems.components.cross_sections import (
-    evaluate_section_dimensions,
-    section_shear_factors,
-    section_torsion_constant,
-)
+from soromox.systems.components.cross_sections import section_torsion_constant
 from soromox.systems.gvs.params import GVSParams
 from soromox.systems.gvs.primitives import Basis, Joint
 from soromox.systems.gvs.specs import GVSSegment
@@ -95,26 +92,22 @@ def _basis_at_points(
     return vmap(lambda point: function(point, selector, order, max_dof))(points)
 
 
-def section_dimensions_at_points(
+def _dimensions_at_points(
     coefficients: Array, structure: GVSLinkStructure, points: Array
-) -> tuple[Array, Array | None]:
-    """Evaluate outer and optional cavity dimensions from a GVS link layout."""
-    return evaluate_section_dimensions(
-        structure.cross_section_geometry,
-        coefficients,
+) -> Array:
+    dimensions = []
+    start = 0
+    for profile_type, count in zip(
         structure.cross_section_profile_types,
         structure.cross_section_profile_parameter_counts,
-        points,
-        hollow=structure.hollow,
-    )
-
-
-def section_properties_at_points(
-    coefficients: Array, structure: GVSLinkStructure, points: Array
-) -> tuple[Array, Array, Array, Array]:
-    """Evaluate area moments and area for GVS mass assembly at all nodes."""
-    outer, inner = section_dimensions_at_points(coefficients, structure, points)
-    return section_properties(structure.cross_section_geometry, outer, inner)
+        strict=True,
+    ):
+        stop = start + count
+        dimensions.append(
+            evaluate_profile(coefficients[start:stop], profile_type, points)
+        )
+        start = stop
+    return jnp.stack(dimensions, axis=1)
 
 
 def project_sectional_matrices(
@@ -195,19 +188,14 @@ def material_operators_from_params(
         length = params.link.length[index]
         if structure.scale_rotational_basis_by_length:
             basis = basis.at[:, :3, :].divide(length)
-        outer, inner = section_dimensions_at_points(
+        dimensions = _dimensions_at_points(
             params.link.cross_section.coefficients[index], segment.link, points
         )
         geometry = segment.link.cross_section_geometry
-        ix, iy, iz, area = section_properties(geometry, outer, inner)
-        torsion = section_torsion_constant(geometry, outer, inner)
-        # Solid links retain the classical uncorrected shear model used by PCS.
-        # Tubes use effective web/annular shear areas, independently of their mass.
-        shear_areas = (
-            area[:, None] * section_shear_factors(geometry, outer, inner)
-            if inner is not None
-            else jnp.stack((area, area), axis=-1)
-        )
+        ix, iy, iz, area = vmap(
+            lambda value, geometry=geometry: section_properties(geometry, value)
+        )(dimensions)
+        torsion = section_torsion_constant(geometry, dimensions)
         young_diagonal = jnp.stack(
             [jnp.zeros_like(ix), iy, iz, area, jnp.zeros_like(ix), jnp.zeros_like(ix)],
             axis=1,
@@ -218,21 +206,13 @@ def material_operators_from_params(
                 jnp.zeros_like(ix),
                 jnp.zeros_like(ix),
                 jnp.zeros_like(ix),
-                shear_areas[:, 0],
-                shear_areas[:, 1],
+                area,
+                area,
             ],
             axis=1,
         )
         damping_diagonal = jnp.stack(
-            [
-                torsion,
-                3.0 * iy,
-                3.0 * iz,
-                3.0 * area,
-                shear_areas[:, 0],
-                shear_areas[:, 1],
-            ],
-            axis=1,
+            [torsion, 3.0 * iy, 3.0 * iz, 3.0 * area, area, area], axis=1
         )
 
         def project(
@@ -314,7 +294,6 @@ def params_and_structure_from_segments(
         GVSSegmentStructure(
             link=GVSLinkStructure(
                 cross_section_geometry=segment.link.cross_section_geometry,
-                hollow=segment.link.hollow,
                 cross_section_profile_types=segment.link.cross_section_profile_types,
                 cross_section_profile_parameter_counts=(
                     segment.link.cross_section_profile_parameter_counts
