@@ -37,7 +37,14 @@ BaseSoftRobotRenderer (abstract base)
 
 Open3D and Viser evaluate `robot.cross_section_geometry(q, s)` along the
 backbone and support circular, elliptical, and rectangular sections with
-constant or abscissa-varying dimensions.
+constant or abscissa-varying dimensions. Rectangular height spans local material
+y and width spans z, matching GVS mechanics. The method returns
+`(geometry, outer_dimensions, inner_dimensions)` together. Inner dimensions
+describe a centred cavity of the same family; use `None` for entirely solid
+models, or an all-zero array at solid stations in models that also have cavities.
+Array shapes and the return structure must stay fixed across stations for JAX
+vectorization. Swept rendering preserves cavities; discrete markers use only
+the outer boundary.
 
 | `backbone_style` | Representation | Resolution controls |
 | --- | --- | --- |

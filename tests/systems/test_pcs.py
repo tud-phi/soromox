@@ -383,7 +383,8 @@ def test_public_pcs_accessors_and_geometry_helpers() -> None:
     assert int(segment_idx) == 1
     assert_allclose(s_local, 0.25 * params.link.length[1], rtol=RTOL, atol=ATOL)
 
-    tag, geom = model.cross_section_geometry(q, s_second)
+    tag, geom, inner = model.cross_section_geometry(q, s_second)
+    assert inner is None
     assert int(tag) == CrossSectionGeometry.CIRCULAR
     assert_allclose(
         geom,

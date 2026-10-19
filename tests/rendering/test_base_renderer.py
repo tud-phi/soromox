@@ -64,7 +64,7 @@ class DummyPlanarRobot:
         return self.forward_kinematics_abscissa_batched(q, jnp.asarray([s]))[0]
 
     def cross_section_geometry(self, q, s):
-        return CrossSectionGeometry.CIRCULAR, jnp.array([0.02])
+        return (CrossSectionGeometry.CIRCULAR, jnp.array([0.02]), None)
 
 
 class DummySpatialRobot:
@@ -86,7 +86,7 @@ class DummySpatialRobot:
         return self.forward_kinematics_abscissa_batched(q, jnp.asarray([s]))[0]
 
     def cross_section_geometry(self, q, s):
-        return CrossSectionGeometry.CIRCULAR, jnp.array([0.02])
+        return (CrossSectionGeometry.CIRCULAR, jnp.array([0.02]), None)
 
 
 class DummyActuatedPlanarRobot(DummyPlanarRobot):

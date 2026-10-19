@@ -606,7 +606,9 @@ class PlanarHSA(PlanarPCS):
         """
         return self.with_params(self.params.replace(**updates))
 
-    def cross_section_geometry(self, q: Array, s: Array) -> tuple[Array, Array]:
+    def cross_section_geometry(
+        self, q: Array, s: Array
+    ) -> tuple[Array, Array, Array | None]:
         """Return a renderer-compatible cross-section descriptor.
 
         HSA rods are represented by a circular section whose radius is the
@@ -618,8 +620,8 @@ class PlanarHSA(PlanarPCS):
             s: Arc-length coordinate along the flexible backbone.
 
         Returns:
-            A pair containing the circular-section enum and a one-element
-            array containing the section radius.
+            Tuple containing the circular-section enum, a one-element radius
+            array, and ``None`` for the solid proxy's inner dimensions.
         """
         del q
         segment_idx, _ = self.classify_segment(s)
@@ -627,6 +629,7 @@ class PlanarHSA(PlanarPCS):
         return (
             jnp.asarray(CrossSectionGeometry.CIRCULAR, dtype=jnp.int32),
             jnp.array([radius]),
+            None,
         )
 
     def _reference_physical_strains(self) -> Array:

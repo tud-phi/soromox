@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Write user-facing notes under the section that best describes the change. Keep
 entries concise, link to relevant pull requests or documentation when useful,
 and include benchmark baseline and measurement context for performance claims.
+Describe the delta from the last release, not intermediate development changes.
 
 ## [Unreleased]
 
@@ -15,8 +16,16 @@ and include benchmark baseline and measurement context for performance claims.
 
 - GVS-based `Helicoidal` models for trimmed-helicoid robots, with analytic
   sectional mechanics, per-strain damping, helix-domain material inputs,
-  strand-derived inertia, a simulation example, and a dedicated Viser renderer;
-  see [PR #229](https://github.com/tud-phi/soromox/pull/229).
+  strand-derived inertia, a simulation example, and a dedicated Viser renderer.
+  Shared `StrandSection` geometry supports solid and hollow circular and
+  rectangular strands for mechanics and viewer configuration; see
+  [Helicoidal](../api/systems/gvs/helicoidal.md) and
+  [PR #229](https://github.com/tud-phi/soromox/pull/229).
+- Hollow circular and rectangular GVS links through `LinkSpec`'s optional
+  `wall_thickness`, with constant or linear profiles. Shared section geometry
+  drives inertia, stiffness, damping, and cavity surfaces in Open3D and Viser;
+  discrete markers remain outer proxies. See
+  [continuum components](../api/systems/continuum-components.md).
 - Python 3.15 support, with numerical tests and patched Open3D source-build
   and rendering checks in Ubuntu CI.
 
@@ -33,8 +42,26 @@ and include benchmark baseline and measurement context for performance claims.
 
 ### Breaking changes
 
+- `SoftRobot.cross_section_geometry(q, s)` now returns
+  `(geometry, outer_dimensions, inner_dimensions)` instead of a pair.
+  Update custom implementations to return `None` as the third value for solid
+  models, and update callers to unpack all three values.
+- Rendering `CrossSection.dimensions` is now `outer_dimensions`.
+  `contour(resolution)` is replaced by `contours(resolution)`, returning all
+  boundary loops with shape `(1 or 2, resolution, 3)`. Select `[0]` explicitly
+  when only the outer boundary is needed. `loft_cross_section_contours()` now
+  accepts that same loop-array shape at each endpoint.
+
 ### Fixed
 
+- GVS material-derived torsional stiffness and damping for solid rectangles
+  and ellipses now use their Saint-Venant torsion constants instead of polar
+  area moments. Rotational mass inertia still uses the polar moment; explicit
+  constitutive matrices retain their supplied values.
+- Corrected rectangular cross-section orientation in Open3D and Viser: height
+  now spans local material y and width spans z, matching the existing GVS
+  bending stiffness and inertia. Both swept surfaces and discrete boxes use
+  this convention.
 - Restored the Section IVa PyElastica benchmarks using COOMM, with
   PyElastica 1.0 support and short rollout tests in CI; see
   [PR #220](https://github.com/tud-phi/soromox/pull/220).

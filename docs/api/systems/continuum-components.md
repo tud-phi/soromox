@@ -36,12 +36,24 @@ link. The static system structure determines how each row is interpreted:
 - rows are zero-padded when different GVS links require different numbers of
   coefficients.
 
+Hollow circular and rectangular GVS links append a `wall_thickness` profile
+after their outer dimensions. The static `hollow` flag distinguishes this
+layout from a solid section. Wall thickness must be positive and leave an open
+cavity at both ends; constant and linear profiles then remain valid throughout
+the link. Switching between solid and hollow layouts changes the static
+structure and requires constructing a new model.
+
 The supported solid cross-sections are circular, rectangular, and elliptical.
 `CrossSectionGeometry` identifies the family, while shared geometry utilities
 calculate area and second moments of area. Geometry dimensions are finite and
-strictly positive. Shared evaluators and `robot.cross_section_geometry(...)`
-use `[height, width]` for rectangular sections and
-`[semi_major, semi_minor]` for elliptical sections.
+strictly positive. `robot.cross_section_geometry(q, s)` returns
+`(geometry, outer_dimensions, inner_dimensions)`, with `None` for entirely
+solid models and zero inner dimensions at solid links in mixed models.
+Shared evaluators and this query use
+`[height, width]` for rectangular sections and `[semi_major, semi_minor]` for
+elliptical sections. Height and semi-major radius span local material y; width
+and semi-minor radius span local material z. These axes rotate with the link
+and do not imply a world-up direction.
 
 `LinkSpec` provides the ergonomic construction interface:
 
@@ -70,8 +82,25 @@ tapered_rectangle = LinkSpec.rectangular(
 )
 ```
 
-PCS currently accepts constant circular links. GVS accepts constant or linear
-circular, rectangular, and elliptical cross-sections.
+PCS currently accepts constant solid circular links. GVS accepts constant or
+linear circular, rectangular, and elliptical cross-sections. Add
+`wall_thickness=0.001` or `wall_thickness=LinearProfile(0.002, 0.001)` to
+`LinkSpec.circular(...)` or `LinkSpec.rectangular(...)` for a tube. Elliptical
+sections are currently solid only.
+
+For tubes, the same outer dimensions and wall profile supply rendering, area,
+area moments, stiffness, damping, and inertia. Rectangular tubes use Bredt's
+thin-wall torsion approximation and shear areas `2*height*t` and `2*width*t`
+along y/z. Circular tubes use exact annular area moments and torsion, with
+Cowper's approximate shear factor evaluated at zero Poisson ratio. These
+constitutive estimates can be replaced with calibrated matrices. Solid GVS
+links retain uncorrected shear areas; solid rectangular and elliptical torsion
+use their Saint-Venant constants rather than polar area moments.
+
+Changing geometry with `update_link_params(cross_section=...)` refreshes mass
+and material operators, while preserving explicit stiffness, damping, and
+sectional-inertia overrides. Reapply `with_isotropic_material(material)` to
+regenerate material-derived stiffness and damping after a geometry change.
 
 ## Continuum links
 

@@ -77,16 +77,16 @@ strand families. Material and sectional properties belong to cross-sections
 
 ```python
 from math import pi
-from soromox.systems import HelicoidalHelixParams
+from soromox.systems import HelicoidalHelixParams, StrandSection
 
-helix = HelicoidalHelixParams.circular(
+helix = HelicoidalHelixParams.from_section(
+    StrandSection.circular(radius=0.002),
     length=0.2,
     radius_base=0.025,
     radius_tip=0.025,
     num_turns=3.0,                      # Each strand revolves around the backbone 3 times.
     helices_per_direction=3,           # Three strands in each winding direction.
     winding_family_phase_offset=pi/6,  # Families' base azimuths differ by 30 degrees.
-    strand_radius=0.002,
     density=1220.0,
     young_modulus=30e6,
     shear_modulus=30e6 / (2 * (1 + 0.48)),
@@ -114,10 +114,15 @@ and the strand-to-backbone arc-length factor. It is sampled at the existing
 Gauss points, supporting tapered geometries. Strand volumes add at crossings;
 overlap is neglected. Each strand section moves with its backbone material frame.
 
-For noncircular strands, the constructor accepts area, principal area moments,
-torsion constant, and shear correction factors. The parameter reference below
-defines their frames and the connection stiffness multipliers.
-`damping_time_constant` applies to the fitted **backbone** stiffness.
+`StrandSection` supports solid and hollow circles and rectangles through
+`circular`, `circular_hollow`, `rectangular`, and `rectangular_hollow` constructors.
+Rectangular height follows strand **y** (projected outward radial direction),
+and width follows **z**, matching GVS links. Hollow constructors take a uniform
+`wall_thickness`.
+The same section supplies mechanical properties and viewer geometry. You may
+also supply measured area, moments, torsion constant, and shear factors directly
+or override the estimates in `from_section`. `damping_time_constant` applies to
+the fitted **backbone** stiffness.
 
 Run the cylindrical example with strand-derived mechanics using:
 
@@ -147,6 +152,19 @@ conversion with `to_backbone()`, use the differentiable `with_helix_inertia`:
 robot = robot.with_helix_inertia({1: helix.replace(density=1250.0)})
 ```
 
+To change strand shape, replace `strand_section` and reapply the helix inputs:
+
+```python
+section = StrandSection.rectangular_hollow(
+    width=0.004, height=0.002, wall_thickness=0.0002,
+)
+helix = helix.replace(strand_section=section)
+robot = robot.with_constitutive_params({1: helix})
+```
+
+This rederives sectional properties; supply calibrated overrides in the same
+`replace` call. Material-only updates preserve existing sectional properties.
+
 Ordinary cylinder density updates use `update_link_params(density=...)`.
 Stored helix inertia is refreshed through the helix input; constitutive-only
 backbone updates preserve the current inertia.
@@ -166,19 +184,39 @@ from soromox.rendering import HelicoidalModuleVisual, HelicoidalViserRenderer
 
 renderer = HelicoidalViserRenderer(
     robot,
-    modules=tuple(HelicoidalModuleVisual(i, turns=3, strand_radius=0.002)
-                  for i in (1, 3, 5)),
+    modules=tuple(
+        HelicoidalModuleVisual.from_helix_params(i, helix, ring_radius=0.002)
+        for i in (1, 3, 5)
+    ),
 )
 renderer.show(q)
 ```
 
 Each module selects a link whose cross-section radius sets the helix centreline
-radius. `HelicoidalModuleVisual` specifies the strand geometry;
+radius. Keep the link's radius profile consistent with the helix inputs.
+`from_helix_params` copies the strand section, turns, strand count, and both
+phases. Property-only helix inputs have no recoverable shape; pass an explicit
+`strand_section` to the adapter in that case. The adapter reads the preparation
+inputs; reduced backbone matrices do not retain the original geometry.
+
+`HelicoidalModuleVisual` also accepts `strand_section` directly, defaulting to
+`StrandSection.circular(0.002)`. `ring_radius` independently controls circular
+end rings, defaults to 2 mm, and is validated against the lattice radius at both
+ends.
+The shared contour/sweep code builds cavity walls and annular caps for hollow
+sections. Rebuild the renderer after changing section geometry or winding inputs.
+
 `HelicoidalVisualConfig` controls colors and mesh resolution. The renderer
 supports batched configurations, `render_sequence`, `render_frame`, and live
 updates. Image and video capture use a connected Viser browser client.
 
 ## API Reference
+
+::: soromox.systems.components.StrandSection
+    options:
+      show_root_heading: true
+      show_source: false
+      heading_level: 3
 
 ::: soromox.systems.gvs.helicoidal.Helicoidal
     options:

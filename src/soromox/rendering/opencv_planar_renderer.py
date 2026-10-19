@@ -86,7 +86,7 @@ class OpenCVPlanarRenderer(BaseOpenCVRenderer):
         )
 
     def _cross_section_span(self, q: Array, s: float) -> float:
-        geom_tag, geom_params = self.robot.cross_section_geometry(q, s)
+        geom_tag, geom_params, _ = self.robot.cross_section_geometry(q, s)
         tag = int(np.asarray(geom_tag).item())
         params = np.asarray(geom_params, dtype=float).reshape(-1)
         if params.size == 0:

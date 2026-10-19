@@ -179,6 +179,8 @@ class PCS(SoftRobot):
             raise ValueError("PCS requires at least one link.")
         specs = tuple(links)
         for index, spec in enumerate(specs):
+            if spec.hollow:
+                raise ValueError("Hollow LinkSpec sections require GVS.")
             if spec.cross_section_geometry != CrossSectionGeometry.CIRCULAR:
                 raise ValueError(f"PCS link {index} must have a circular section.")
             if spec.cross_section_profile_types != ("constant",):
@@ -481,7 +483,9 @@ class PCS(SoftRobot):
             return self._strain_basis_scaling_vector()[:, None] * B_xi
         return B_xi
 
-    def cross_section_geometry(self, q: Array, s: Array) -> tuple[Array, Array]:
+    def cross_section_geometry(
+        self, q: Array, s: Array
+    ) -> tuple[Array, Array, Array | None]:
         """Evaluate the circular cross-section at a backbone coordinate.
 
         Args:
@@ -491,8 +495,9 @@ class PCS(SoftRobot):
             s: Scalar global backbone coordinate.
 
         Returns:
-            A tuple containing the circular :class:`CrossSectionGeometry` tag
-            and a one-element array holding the selected segment radius.
+            Tuple containing the circular :class:`CrossSectionGeometry` tag,
+            a one-element array with the segment radius, and ``None`` for the
+            solid section's inner dimensions.
 
         Raises:
             ValueError: If ``s`` cannot be assigned to a segment.
@@ -500,7 +505,7 @@ class PCS(SoftRobot):
         segment_idx, _ = self.classify_segment(s)
         radius = jnp.asarray(self.r)[segment_idx]
         tag = jnp.asarray(CrossSectionGeometry.CIRCULAR, dtype=jnp.int32)
-        return tag, jnp.array([radius])
+        return (tag, jnp.array([radius]), None)
 
     def _set_params(self, params: PCSParams) -> None:
         """Set cached runtime arrays from typed parameters."""

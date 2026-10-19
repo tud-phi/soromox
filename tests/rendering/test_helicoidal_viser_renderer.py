@@ -1,6 +1,7 @@
 """Helix geometry, material-frame motion, and Viser handle lifecycle."""
 
 from contextlib import contextmanager
+from dataclasses import replace
 
 import jax
 import jax.numpy as jnp
@@ -8,13 +9,14 @@ import numpy as np
 import pytest
 from numpy.testing import assert_allclose
 
-from examples.simulation.gvs.simulate_helicoidal import build_robot
+from examples.simulation.gvs.simulate_helicoidal import build_helix_params, build_robot
 from soromox.rendering import (
     HelicoidalModuleVisual,
     HelicoidalViserRenderer,
     HelicoidalVisualConfig,
 )
 from soromox.rendering.viser_renderer import SceneHandles
+from soromox.systems import StrandSection
 
 jax.config.update("jax_enable_x64", True)
 
@@ -50,10 +52,14 @@ def robot():
     return build_robot(num_gauss_points=5)
 
 
-def renderer_for(robot):
+def renderer_for(robot, strand_section=None):
+    if strand_section is None:
+        strand_section = StrandSection.circular(0.002)
     return HelicoidalViserRenderer(
         robot,
-        modules=tuple(HelicoidalModuleVisual(i) for i in (1, 3, 5)),
+        modules=tuple(
+            HelicoidalModuleVisual(i, strand_section=strand_section) for i in (1, 3, 5)
+        ),
         auto_start=False,
         open_browser=False,
     )
@@ -64,7 +70,8 @@ def renderer_for(robot):
     [
         {"turns": 0},
         {"turns": np.nan},
-        {"strand_radius": -1},
+        {"ring_radius": -1},
+        {"ring_radius": np.nan},
         {"strands_per_family": 1.5},
         {"segment_index": -1},
         {"phase": np.inf},
@@ -93,6 +100,79 @@ def test_module_selection_validation(robot):
     for modules in ((), (HelicoidalModuleVisual(8),), (HelicoidalModuleVisual(1),) * 2):
         with pytest.raises(ValueError):
             HelicoidalViserRenderer(robot, modules=modules, auto_start=False)
+
+
+def test_adapter_copies_geometry_and_winding_parameters():
+    section = StrandSection.rectangular_hollow(
+        width=0.004, height=0.002, wall_thickness=0.0002
+    )
+    helix = build_helix_params().replace(
+        strand_section=section,
+        num_turns=2.5,
+        phase=0.3,
+        winding_family_phase_offset=0.4,
+    )
+    module = HelicoidalModuleVisual.from_helix_params(1, helix, ring_radius=0.001)
+    assert module.strand_section is helix.strand_section
+    assert module.turns == 2.5
+    assert module.strands_per_family == helix.helices_per_direction
+    assert module.phase == 0.3
+    assert module.family_phase == 0.4
+    assert module.ring_radius == 0.001
+    assert module.strand_radial_extent == 0.001
+    properties_only = helix.replace(strand_section=None)
+    with pytest.raises(ValueError, match="no strand geometry"):
+        HelicoidalModuleVisual.from_helix_params(1, properties_only)
+    explicit = HelicoidalModuleVisual.from_helix_params(
+        1, properties_only, strand_section=section
+    )
+    assert explicit.strand_section is section
+    circular = HelicoidalModuleVisual.from_helix_params(1, build_helix_params())
+    assert_allclose(circular.strand_section.outer_dimensions, [0.002])
+    assert circular.ring_radius == 0.002
+
+
+def test_section_replacement_preserves_independent_ring_radius():
+    module = replace(
+        HelicoidalModuleVisual(1), strand_section=StrandSection.circular(0.003)
+    )
+    assert module.strand_radial_extent == pytest.approx(0.003)
+    assert module.ring_radius == 0.002
+    explicit_ring = replace(module, ring_radius=0.001)
+    assert (
+        replace(explicit_ring, strand_section=StrandSection.circular(0.004)).ring_radius
+        == 0.001
+    )
+
+
+def test_module_requires_a_section_object():
+    with pytest.raises(TypeError, match="strand_section must be a StrandSection"):
+        HelicoidalModuleVisual(1, strand_section=None)
+
+
+@pytest.mark.parametrize("ring_radius", [0.025, 0.03])
+def test_hollow_strands_still_validate_circular_end_rings(robot, ring_radius):
+    module = HelicoidalModuleVisual(
+        1,
+        ring_radius=ring_radius,
+        strand_section=StrandSection.rectangular_hollow(
+            width=0.004, height=0.002, wall_thickness=0.0002
+        ),
+    )
+    with pytest.raises(ValueError, match="ring_radius"):
+        HelicoidalViserRenderer(robot, modules=(module,), auto_start=False)
+
+
+def test_strand_extent_is_validated_independently_of_rings(robot):
+    module = HelicoidalModuleVisual(
+        1,
+        ring_radius=0.001,
+        strand_section=StrandSection.rectangular_hollow(
+            width=0.002, height=0.06, wall_thickness=0.0002
+        ),
+    )
+    with pytest.raises(ValueError, match="Strand radial extent"):
+        HelicoidalViserRenderer(robot, modules=(module,), auto_start=False)
 
 
 def test_helix_radius_turns_tube_thickness_and_mesh_indices(robot):
@@ -137,8 +217,24 @@ def test_helix_radius_turns_tube_thickness_and_mesh_indices(robot):
         )
 
 
-def test_batched_deformation_updates_handles_and_rebuild_removes_old_meshes(robot):
-    renderer = renderer_for(robot)
+@pytest.mark.parametrize(
+    "shape", ["circular", "circular_hollow", "rectangular", "rectangular_hollow"]
+)
+def test_batched_deformation_updates_handles_and_rebuild_removes_old_meshes(
+    robot, shape
+):
+    sections = {
+        "circular": StrandSection.circular(0.002),
+        "circular_hollow": StrandSection.circular_hollow(
+            radius=0.002, wall_thickness=0.0002
+        ),
+        "rectangular": StrandSection.rectangular(width=0.004, height=0.002),
+        "rectangular_hollow": StrandSection.rectangular_hollow(
+            width=0.004, height=0.002, wall_thickness=0.0002
+        ),
+    }
+    section = sections[shape]
+    renderer = renderer_for(robot, section)
     renderer._server = Server()
     renderer._scene_handles = SceneHandles()
     renderer._add_ground_plane = lambda *args: None

@@ -50,6 +50,7 @@ from soromox.rendering.cross_sections import (
     loft_cross_section_contours,
     loft_cross_sections,
     register_cross_section_contour,
+    sweep_cross_sections,
 )
 from soromox.rendering.matplotlib_renderer import MatplotlibRenderer
 
@@ -132,6 +133,7 @@ __all__ = [
     "loft_cross_section_contours",
     "loft_cross_sections",
     "register_cross_section_contour",
+    "sweep_cross_sections",
     "ActuatorVisualLayer",
     "BatchedActuatorVisualLayer",
     "TrajectoryActuatorVisualLayer",

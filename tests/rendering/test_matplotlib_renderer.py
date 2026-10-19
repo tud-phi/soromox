@@ -38,7 +38,7 @@ class DummySpatialRobot:
 
     def cross_section_geometry(self, q, s):
         del q, s
-        return CrossSectionGeometry.CIRCULAR, jnp.array([0.02])
+        return (CrossSectionGeometry.CIRCULAR, jnp.array([0.02]), None)
 
 
 class DummyActuatedSpatialRobot(DummySpatialRobot):

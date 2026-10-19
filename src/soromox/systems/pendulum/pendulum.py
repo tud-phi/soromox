@@ -157,7 +157,9 @@ class Pendulum(SoftRobot):
         """Per-link lengths."""
         return jnp.asarray(self.L)
 
-    def cross_section_geometry(self, q: Array, s: Array) -> tuple[Array, Array]:
+    def cross_section_geometry(
+        self, q: Array, s: Array
+    ) -> tuple[Array, Array, Array | None]:
         """Return circular visualization geometry using the per-link radius.
 
         The radius does not determine the link's mass or planar moment of inertia.
@@ -166,7 +168,7 @@ class Pendulum(SoftRobot):
         segment_idx = jnp.clip(jnp.sum(s > L_cum) - 1, 0, self.num_links - 1)
         radius = self.r[segment_idx]
         tag = jnp.asarray(CrossSectionGeometry.CIRCULAR, dtype=jnp.int32)
-        return tag, jnp.array([radius])
+        return (tag, jnp.array([radius]), None)
 
     def _current_body_params(self) -> PendulumParams:
         """Return the pendulum body parameters."""

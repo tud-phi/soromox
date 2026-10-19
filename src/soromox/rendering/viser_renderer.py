@@ -367,7 +367,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
             self.robot, q_reference, s_points
         )
         self._cross_section_contours = tuple(
-            section.contour(self._cross_section_resolution)
+            section.contours(self._cross_section_resolution)
             for section in self._cross_sections
         )
         self._discrete_cross_section_markers = tuple(
@@ -375,7 +375,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
         )
         self._backbone_marker_scales = np.asarray(
             [
-                np.max(np.linalg.norm(contour[:, 1:], axis=1))
+                np.max(np.linalg.norm(contour[0, :, 1:], axis=1))
                 for contour in self._cross_section_contours
             ],
             dtype=np.float32,
@@ -874,7 +874,9 @@ class ViserRenderer(BaseSoftRobotRenderer):
             incoming = (
                 curve[right] + self._cross_section_contours[right] @ frames[right].T
             )
-            if np.all(np.abs(outgoing - incoming) <= tolerance):
+            if outgoing.shape == incoming.shape and np.all(
+                np.abs(outgoing - incoming) <= tolerance
+            ):
                 caps[left] = (caps[left][0], False)
                 caps[right] = (False, caps[right][1])
         return caps

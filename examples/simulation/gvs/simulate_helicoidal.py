@@ -262,9 +262,13 @@ def build_renderer(robot: Helicoidal, **kwargs):
             scene=SceneConfig.studio(),
         ),
     )
+    helix = build_helix_params()
     return HelicoidalViserRenderer(
         robot,
-        modules=tuple(HelicoidalModuleVisual(index) for index in (1, 3, 5)),
+        modules=tuple(
+            HelicoidalModuleVisual.from_helix_params(index, helix)
+            for index in (1, 3, 5)
+        ),
         config=config,
         **kwargs,
     )
