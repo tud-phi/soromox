@@ -21,11 +21,6 @@ Describe the delta from the last release, not intermediate development changes.
   rectangular strands for mechanics and viewer configuration; see
   [Helicoidal](../api/systems/gvs/helicoidal.md) and
   [PR #229](https://github.com/tud-phi/soromox/pull/229).
-- Hollow circular and rectangular GVS links through `LinkSpec`'s optional
-  `wall_thickness`, with constant or linear profiles. Shared section geometry
-  drives inertia, stiffness, damping, and cavity surfaces in Open3D and Viser;
-  discrete markers remain outer proxies. See
-  [continuum components](../api/systems/continuum-components.md).
 - Python 3.15 support, with numerical tests and patched Open3D source-build
   and rendering checks in Ubuntu CI.
 

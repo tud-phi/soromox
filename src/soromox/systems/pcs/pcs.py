@@ -179,8 +179,6 @@ class PCS(SoftRobot):
             raise ValueError("PCS requires at least one link.")
         specs = tuple(links)
         for index, spec in enumerate(specs):
-            if spec.hollow:
-                raise ValueError("Hollow LinkSpec sections require GVS.")
             if spec.cross_section_geometry != CrossSectionGeometry.CIRCULAR:
                 raise ValueError(f"PCS link {index} must have a circular section.")
             if spec.cross_section_profile_types != ("constant",):
