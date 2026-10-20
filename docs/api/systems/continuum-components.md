@@ -225,18 +225,17 @@ link = LinkSpec.rectangular(
 
 These choices are retained in `GVSLinkStructure`; reconstruct the model to
 change them. Hollow links require effective shear areas and Saint-Venant
-torsion, using Marshall for rectangles. PCS/PlanarPCS currently accept only the default
-law and solid circular geometry. Helicoidal strands retain their own
-[sectional assumptions](gvs/helicoidal.md).
+torsion, using Marshall for rectangles. PCS/PlanarPCS use uniform shear and
+polar-moment torsion for solid circular sections.
 
 The effective shear laws connect continuously to their solid counterparts:
 Cowper's circular factor becomes \(6(1+\nu)/(7+6\nu)\), and rectangular
 shear area becomes \(5A/6\). These differ from uniform shear, so opting in also
 changes solid-link stiffness. Circular torsion is exact at every wall thickness.
 Marshall approaches Bredt for thin walls; its solid-square extension is about
-3.74% above the exact solid solution. Rectangular shear approximates stress
-redistribution, and neither torsion option models restrained warping or wall
-buckling. See the
+3.74% above the exact solid solution. Rectangular shear uses the mean stress
+over the material breadth at each cut. Saint-Venant torsion assumes free
+warping and stable cross-sectional walls. See the
 [transverse-shear][soromox.systems.components.TransverseShearRodModel] and
 [torsion][soromox.systems.components.TorsionRodModel]
 API references below for formulas, limits, and publications.
@@ -245,8 +244,7 @@ The scalar Kelvin–Voigt damping convention uses
 \(V=\eta\,\mathrm{diag}(J,3I_y,3I_z,3A,A_{s,y},A_{s,z})\), including the
 selected shear and torsion models. Cowper shear uses the elastic Poisson ratio
 for both stiffness and damping. With explicit stiffness and Cowper shear,
-supply an explicit damping matrix or omit damping: a damping coefficient alone
-does not determine Poisson's ratio.
+supply an explicit damping matrix or leave damping disabled.
 
 ### Applying and updating material
 

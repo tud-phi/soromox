@@ -27,7 +27,7 @@ class TransverseShearRodModel(Enum):
     ``UNIFORM`` uses the material area, $A_{s,y}=A_{s,z}=A$, and supports
     solid sections only. ``EFFECTIVE_AREA`` uses Cowper's expression for
     circles and annuli, and Jourawski shear-energy matching for rectangles.
-    Effective areas for ellipses are currently unsupported.
+    Elliptical sections use ``UNIFORM`` shear.
 
     For circles, with $m=r/R$ and elastic Poisson ratio $\nu$,
 
@@ -37,7 +37,7 @@ class TransverseShearRodModel(Enum):
             {(7+6\nu)(1+m^2)^2+(20+12\nu)m^2}.
     $$
 
-    This has no thin-wall expansion. The solid limit is
+    This expression applies across wall thicknesses. The solid limit is
     $k=6(1+\nu)/(7+6\nu)$; the thin-wall limit is
     $k=2(1+\nu)/(4+3\nu)$. The material supplies $\nu$ directly or through
     $E/(2G)-1$, and the same factor enters the scalar damping model.
@@ -46,9 +46,9 @@ class TransverseShearRodModel(Enum):
     the assumed stress $\tau=VQ/(Ib)$. Here $b$ is the material breadth at
     a cut, $Q$ its first area moment, and $I$ the bending moment of area
     for the chosen shear direction. This recovers $5A/6$ for solids and
-    continuously as a cavity closes. It neglects transverse redistribution
-    and corner effects. These effective-area solid limits differ from the
-    uniform-shear choice; changing models changes the solid stiffness too.
+    continuously as a cavity closes. The assumed shear field uses the mean
+    stress over the material breadth at each cut. These effective areas give
+    solid shear stiffnesses of $kGA$ for circles and $5GA/6$ for rectangles.
 
     References:
         Cowper, G. R. (1966). The Shear Coefficient in Timoshenko's Beam
@@ -64,9 +64,9 @@ class TransverseShearRodModel(Enum):
 class TorsionRodModel(Enum):
     r"""Torsion assumptions in an isotropic rod constitutive law.
 
-    ``POLAR_MOMENT`` uses $J=I_y+I_z$ for solid sections. It is exact for
-    circular solids but neglects cross-sectional warping for noncircular
-    sections. Hollow sections require ``SAINT_VENANT``.
+    ``POLAR_MOMENT`` uses $J=I_y+I_z$ for solid sections. It assumes zero
+    cross-sectional warping and is exact for circular solids. Hollow sections
+    require ``SAINT_VENANT``.
 
     ``SAINT_VENANT`` accounts for free warping through geometry-specific
     torsion constants: exact circular/annular and solid elliptical formulas,
@@ -84,12 +84,12 @@ class TorsionRodModel(Enum):
     0.3693%, and 1.6461%, respectively.
 
     For a solid, Marshall is evaluated at $t=\min(h,w)/2$. This engineering
-    extension is continuous with the tube formula, but differs from the
-    exact solid solution: +3.739% for a square, and approximately -2.065%,
+    extension is continuous with the tube formula. Its relative errors against
+    the exact solid solution are +3.739% for a square, and approximately -2.065%,
     -1.882%, and -1.078% for side ratios 2, 5, and 10. A nonsquare uniform-wall
-    cavity closes to a line; this extension does not establish an exact
-    elasticity limit. This model does not describe restrained warping or wall
-    buckling.
+    cavity closes to a line; Marshall's solid endpoint is an engineering
+    approximation along this path. The model assumes free warping and stable
+    cross-sectional walls.
 
     For ``SAINT_VENANT``, circular torsion is exact for solids and annuli,
     $J=\pi(R^4-r^4)/2$. Solid ellipses use $J=\pi a^3b^3/(a^2+b^2)$.
@@ -123,8 +123,8 @@ def _rectangular_shear_areas(outer: Array, inner: Array | None) -> Array:
     of constant material breadth $b$. Within each strip, $Q$ is quadratic,
     so three-point Gauss quadrature integrates its squared contribution
     exactly. The integration includes both symmetric halves and solves both
-    shear directions together. Exact integration of this assumed stress
-    field does not account for transverse redistribution or corner effects.
+    shear directions together. The result matches the energy of this assumed
+    shear field, using the mean stress over the material breadth at each cut.
     """
     # Solve both directions together: depth along the applied shear, breadth
     # perpendicular to it. The last axis orders shear along material y and z.
@@ -169,7 +169,7 @@ class RodConstitutiveLaw:
     Attributes:
         transverse_shear: Uniform shear (solid sections only), or effective
             areas from Cowper's circular formula and rectangular Jourawski
-            shear energy. Effective areas do not currently support ellipses.
+            shear energy. Elliptical sections use uniform shear.
         torsion: Polar area moment for solid sections, or free-warping
             Saint-Venant torsion using Marshall for rectangles and exact
             constants for circular/annular and solid elliptical sections.
@@ -251,7 +251,7 @@ class RodConstitutiveLaw:
         Returns:
             Two effective shear areas per section. Rectangular areas integrate
             Q²/b over each strip, assuming Jourawski shear stress VQ/(Ib).
-            This approximation neglects transverse stress redistribution.
+            The assumed stress is averaged over the material breadth at each cut.
         """
         self.validate_geometry(geometry, inner is not None)
         outer = jnp.asarray(outer)
