@@ -116,7 +116,14 @@ def test_adapter_copies_geometry_and_winding_parameters():
     assert module.phase == 0.3
     assert module.family_phase == 0.4
     assert module.strand_radial_extent == 0.001
-    properties_only = helix.replace(strand_section=None)
+    properties = helix.strand_properties
+    properties_only = helix.replace(
+        strand_section=None,
+        strand_area_override=properties.area,
+        strand_second_moments_override=properties.second_moments,
+        strand_torsion_constant_override=properties.torsion_constant,
+        strand_shear_factors_override=properties.shear_factors,
+    )
     with pytest.raises(ValueError, match="no strand geometry"):
         HelicoidalModuleVisual.from_helix_params(1, properties_only)
     explicit = HelicoidalModuleVisual.from_helix_params(
