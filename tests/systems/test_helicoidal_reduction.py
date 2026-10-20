@@ -28,6 +28,7 @@ def helix():
         radius_tip=0.025,
         num_turns=3.0,
         strand_radius=0.002,
+        strand_shear_factors_override=jnp.full(2, 0.9),
         density=1220.0,
         young_modulus=30e6,
         shear_modulus=30e6 / 2.96,
@@ -225,12 +226,12 @@ def test_shared_inputs_reduce_once_and_match_sequential_updates(helix, monkeypat
 @pytest.mark.parametrize(
     "field,value",
     [
-        ("strand_area", -1),
+        ("strand_area_override", -1),
         ("density", 0),
         ("radius_tip", 0),
         ("fusion_stiffness_multiplier", np.nan),
         ("damping_time_constant", -1),
-        ("strand_second_moments", [1]),
+        ("strand_second_moments_override", [1]),
     ],
 )
 def test_invalid_params(helix, field, value):
@@ -316,3 +317,66 @@ def test_public_reduction_diagnostics(helix, reduced):
         diagnostics["shear_compliance_residual"], reduced.shear_compliance_residual
     )
     assert_allclose(diagnostics["relative_asymmetry"], reduced.relative_asymmetry)
+
+
+@pytest.mark.parametrize("kind", ["circular", "rectangular"])
+@pytest.mark.parametrize("hollow", [False, True])
+def test_geometry_law_and_calibrated_properties_reduce_identically(helix, kind, hollow):
+    from soromox.systems import StrandSection
+
+    if kind == "circular":
+        section = (
+            StrandSection.circular_hollow(radius=0.002, wall_thickness=0.0002)
+            if hollow
+            else StrandSection.circular(0.002)
+        )
+    else:
+        section = (
+            StrandSection.rectangular_hollow(
+                height=0.002, width=0.004, wall_thickness=0.0002
+            )
+            if hollow
+            else StrandSection.rectangular(height=0.002, width=0.004)
+        )
+    automatic = helix.replace(
+        strand_section=section, strand_shear_factors_override=None
+    )
+    props = automatic.strand_properties
+    calibrated = automatic.replace(
+        strand_section=None,
+        strand_area_override=props.area,
+        strand_second_moments_override=props.second_moments,
+        strand_torsion_constant_override=props.torsion_constant,
+        strand_shear_factors_override=props.shear_factors,
+    )
+    actual, expected = reduce_helix(automatic), reduce_helix(calibrated)
+    assert np.linalg.eigvalsh(actual.tip_compliance).min() > 0
+    assert actual.backbone.admissible_strains == expected.backbone.admissible_strains
+    assert_allclose(
+        actual.tip_compliance, expected.tip_compliance, rtol=2e-8, atol=2e-8
+    )
+    assert_allclose(
+        actual.backbone.stiffness_base, expected.backbone.stiffness_base, rtol=2e-8
+    )
+    assert_allclose(
+        actual.backbone.stiffness_tip, expected.backbone.stiffness_tip, rtol=2e-8
+    )
+    assert_allclose(
+        automatic.sectional_inertia(jnp.array([0.0, 0.1, 0.2])),
+        calibrated.sectional_inertia(jnp.array([0.0, 0.1, 0.2])),
+    )
+
+
+def test_default_cowper_shear_enters_lattice_compliance(helix, reduced):
+    automatic = helix.replace(strand_shear_factors_override=None)
+    expected_factor = 6 * (1 + 0.48) / (7 + 6 * 0.48)
+    assert_allclose(automatic.strand_shear_factors, expected_factor)
+    result = reduce_helix(automatic)
+    assert np.linalg.eigvalsh(result.tip_compliance).min() > 0
+    assert np.linalg.norm(result.tip_compliance - reduced.tip_compliance) > 1e-7
+    assert_allclose(
+        result.tip_compliance,
+        reduce_helix(
+            helix.replace(strand_shear_factors_override=jnp.full(2, expected_factor))
+        ).tip_compliance,
+    )

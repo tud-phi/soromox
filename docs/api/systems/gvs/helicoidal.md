@@ -117,8 +117,28 @@ overlap is neglected. Each strand section moves with its backbone material frame
 `StrandSection` defines solid or hollow circular and rectangular strands for
 both mechanics and rendering. Hollow sections take a uniform `wall_thickness`;
 rectangular height spans strand **y** (radial) and width spans **z**.
-Measured sectional properties can override the estimates in `from_section`.
-`damping_time_constant` applies to the fitted **backbone** stiffness.
+`strand_constitutive_law` uses the shared `RodConstitutiveLaw`. Its strand default
+is `EFFECTIVE_AREA` transverse shear and `SAINT_VENANT` torsion: Cowper shear with
+$\nu=E/(2G)-1$ for circles/annuli, Jourawski shear energy for rectangles, exact
+circular torsion and Marshall rectangular torsion. The same formulas apply to
+solid and hollow strands, with continuous cavity-collapse limits. Marshall and
+Jourawski remain approximations; see [rod constitutive laws](../continuum-components.md#rod-constitutive-laws)
+for their assumptions and limits. Hollow strands require both of these choices.
+
+`helix.strand_properties` exposes the evaluated material area, principal area
+moments, torsion constant and effective shear areas. The local strand stiffness,
+in angular-first order, is
+
+$$
+C_s = \mathrm{diag}(GJ, EI_y, EI_z, EA, GA_{s,y}, GA_{s,z}).
+$$
+
+Measured values can be supplied through `strand_area_override`,
+`strand_second_moments_override`, `strand_torsion_constant_override` and
+`strand_shear_factors_override`. Shear factors multiply the resolved area.
+Without `strand_section`, all four overrides are required. Fusion and tip
+attachment stiffness use their separate multipliers; `damping_time_constant`
+applies to the fitted **backbone** stiffness.
 
 Run the cylindrical example with strand-derived mechanics using:
 
@@ -134,7 +154,7 @@ The example uses square-root sectional damping and Tsit5 at 250 µs.
 Use the same method for either input type:
 
 ```python
-robot = robot.with_constitutive_params({1: helix.replace(young_modulus=35e6)})
+robot = robot.with_constitutive_params({1: helix.replace(young_modulus=28e6)})
 robot = robot.with_constitutive_params({3: backbone.replace(stiffness_tip=K_tip)})
 ```
 
@@ -149,8 +169,11 @@ robot = robot.with_helix_inertia({1: helix.replace(density=1250.0)})
 ```
 
 Use `helix.replace(strand_section=section)` to change strand shape, then reapply
-the helix inputs as above. This rederives sectional properties; include any
-calibrated overrides in the same call.
+the helix inputs as above. Derived properties follow geometry, material and law
+updates. Calibrated overrides persist until explicitly cleared, for example
+`helix.replace(strand_shear_factors_override=None)`. Changing the static law
+rebuilds the parameter object and can trigger JAX recompilation; numeric material
+and geometry updates with the same structure remain differentiable.
 
 Ordinary cylinder density updates use `update_link_params(density=...)`.
 Stored helix inertia is refreshed through the helix input; constitutive-only

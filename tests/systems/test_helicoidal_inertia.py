@@ -96,10 +96,10 @@ def test_tapered_non_circular_strands_match_point_volume_moments(helix):
         density=helix.density,
         young_modulus=helix.young_modulus,
         shear_modulus=helix.shear_modulus,
-        strand_area=area,
-        strand_second_moments=jnp.array([area * b * b / 4, area * a * a / 4]),
-        strand_torsion_constant=1e-10,
-        strand_shear_factors=jnp.ones(2),
+        strand_area_override=area,
+        strand_second_moments_override=jnp.array([area * b * b / 4, area * a * a / 4]),
+        strand_torsion_constant_override=1e-10,
+        strand_shear_factors_override=jnp.ones(2),
         helices_per_direction=1,
         phase=0.2,
         winding_family_phase_offset=0.7,
@@ -145,7 +145,7 @@ def test_tapered_non_circular_strands_match_point_volume_moments(helix):
     )
     # Elastic torsion constant is independent of the mass polar moment.
     assert_allclose(
-        params.replace(strand_torsion_constant=2e-10).sectional_inertia(
+        params.replace(strand_torsion_constant_override=2e-10).sectional_inertia(
             jnp.asarray(positions)
         ),
         actual,

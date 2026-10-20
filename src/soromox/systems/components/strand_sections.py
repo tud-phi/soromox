@@ -9,9 +9,6 @@ from jax import Array
 from soromox.systems.components.cross_sections import (
     CrossSectionGeometry,
     section_inner_dimensions,
-    section_properties,
-    section_shear_factors,
-    section_torsion_constant,
 )
 from soromox.systems.params import BaseSystemParams
 
@@ -113,35 +110,3 @@ class StrandSection(BaseSystemParams):
         if self.geometry == CrossSectionGeometry.CIRCULAR:
             return self.outer_dimensions[0]
         return self.outer_dimensions[0] / 2
-
-    def mechanical_properties(self) -> dict[str, Array]:
-        """Derive area, y/z moments, torsion constant and y/z shear factors.
-
-        Solid circles retain the reference model's shear factor 0.9. Circular
-        tubes use Cowper's annular shear factor at Poisson ratio zero. Solid
-        rectangles use shear factor 5/6 and the Saint-Venant torsion series
-        truncated after 64 odd terms. Hollow rectangles use Bredt's thin-wall
-        torsion and web shear areas ``[2*height*t, 2*width*t]``. Callers can
-        override these estimates in HelicoidalHelixParams.from_section().
-
-        Returns:
-            Helix parameter keywords: area [m²], principal y/z area moments
-            [m⁴], torsion constant [m⁴], and dimensionless y/z shear factors.
-
-        References:
-            Cowper (1966), The Shear Coefficient in Timoshenko's Beam Theory,
-            https://doi.org/10.1115/1.3625046.
-        """
-        inner = self.inner_dimensions
-        _, iy, iz, area = section_properties(
-            self.geometry, self.outer_dimensions, inner
-        )
-        moments = jnp.stack((iy, iz))
-        torsion = section_torsion_constant(self.geometry, self.outer_dimensions, inner)
-        shear = section_shear_factors(self.geometry, self.outer_dimensions, inner)
-        return {
-            "strand_area": area,
-            "strand_second_moments": moments,
-            "strand_torsion_constant": torsion,
-            "strand_shear_factors": shear,
-        }

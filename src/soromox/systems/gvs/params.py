@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import fields, replace
 from typing import TYPE_CHECKING, ClassVar, Self
 
 import equinox as eqx
@@ -12,7 +13,11 @@ from jax import Array, ensure_compile_time_eval
 from soromox.systems.components import (
     ContinuumLinkParams,
     JointParams,
+    RodConstitutiveLaw,
+    RodSectionProperties,
     StrandSection,
+    TorsionRodModel,
+    TransverseShearRodModel,
     spatial_inertia,
 )
 from soromox.systems.params import (
@@ -397,12 +402,17 @@ class HelicoidalHelixParams(BaseSystemParams):
         shear_modulus: Strand material shear modulus [Pa].
         strand_section: Optional shared geometry retained by the named section
             constructors. Direct property-only construction leaves it unset.
-        strand_area: Strand-normal sectional area [m²].
-        strand_second_moments: Principal area moments about local strand y/z,
-            shape ``(2,)`` [m⁴]. The principal directions follow the strand frame.
-        strand_torsion_constant: Strand-normal Saint-Venant torsion constant [m⁴].
-        strand_shear_factors: Shear correction factors along strand y/z,
-            shape ``(2,)``; the reference uses 0.9 for both.
+        strand_constitutive_law: Static strand shear/torsion choices. Defaults
+            use effective shear and Saint-Venant torsion, with Marshall for
+            rectangles. Cowper shear uses Poisson ratio E/(2G)-1.
+        strand_area_override: Optional calibrated material area [m²].
+        strand_second_moments_override: Optional calibrated principal y/z area
+            moments, shape ``(2,)`` [m⁴].
+        strand_torsion_constant_override: Optional calibrated torsion constant [m⁴].
+        strand_shear_factors_override: Optional calibrated y/z shear factors,
+            shape ``(2,)``. All four overrides are required for property-only
+            inputs. Overrides persist through material, geometry and law updates;
+            replace an override with None to derive it from the section again.
         helices_per_direction: Positive number of strands in each winding family.
         phase: Base azimuth of the first negative-winding strand [rad].
         winding_family_phase_offset: Base azimuth of the first positive-winding
@@ -440,10 +450,17 @@ class HelicoidalHelixParams(BaseSystemParams):
     density: Array
     young_modulus: Array
     shear_modulus: Array
-    strand_area: Array
-    strand_second_moments: Array
-    strand_torsion_constant: Array
-    strand_shear_factors: Array
+    strand_area_override: Array | None = None
+    strand_second_moments_override: Array | None = None
+    strand_torsion_constant_override: Array | None = None
+    strand_shear_factors_override: Array | None = None
+    strand_constitutive_law: RodConstitutiveLaw = eqx.field(
+        static=True,
+        default=RodConstitutiveLaw(
+            transverse_shear=TransverseShearRodModel.EFFECTIVE_AREA,
+            torsion=TorsionRodModel.SAINT_VENANT,
+        ),
+    )
     helices_per_direction: int = eqx.field(static=True, default=3)
     phase: Array = 0.0
     winding_family_phase_offset: Array = np.pi / 6
@@ -454,30 +471,45 @@ class HelicoidalHelixParams(BaseSystemParams):
 
     def __check_init__(self) -> None:
         for name in HelicoidalHelixParams.__annotations__:
-            if name not in {"helices_per_direction", "strand_section"}:
+            if (
+                name
+                not in {
+                    "helices_per_direction",
+                    "strand_section",
+                    "strand_constitutive_law",
+                }
+                and getattr(self, name) is not None
+            ):
                 object.__setattr__(self, name, _as_strong_array(getattr(self, name)))
         self.validate_for_update()
 
-    def _normalize_replacement(self, name: str, value: object) -> object:
-        return (
-            value
-            if name in {"helices_per_direction", "strand_section"}
-            else _as_strong_array(value)
-        )
+    def replace(self, **updates: object) -> Self:
+        """Replace geometry, material, static law or calibration fields together.
+
+        Args:
+            **updates: Parameter fields to replace. Set an override to ``None``
+                to derive that property from geometry and the strand law again.
+
+        Returns:
+            A validated helix parameter object with the requested changes.
+        """
+        unknown = set(updates) - {field.name for field in fields(self)}
+        if unknown:
+            raise KeyError(f"Unknown parameter field(s): {', '.join(sorted(unknown))}")
+        return replace(self, **updates)
 
     @classmethod
     def from_section(cls, strand_section: StrandSection, **kwargs) -> Self:
         """Derive mechanical properties and retain geometry for visualization.
 
-        Explicit sectional property keywords override the geometric estimates,
-        for example calibrated shear factors. Other keywords specify lattice
-        geometry, material and fusion as in the constructor.
+        Geometry, material and the strand law determine the current properties.
+        Optional ``strand_*_override`` keywords supply calibrated properties.
+        Other keywords specify lattice geometry, material and fusion.
         """
         if not isinstance(strand_section, StrandSection):
             raise TypeError("strand_section must be a StrandSection.")
         strand_section.validate_for_update()
-        properties = strand_section.mechanical_properties() | kwargs
-        return cls(strand_section=strand_section, **properties)
+        return cls(strand_section=strand_section, **kwargs)
 
     @classmethod
     def circular(cls, *, strand_radius: float, **kwargs) -> Self:
@@ -509,9 +541,9 @@ class HelicoidalHelixParams(BaseSystemParams):
     ) -> Self:
         """Construct hollow rectangular strands with height along y, width along z.
 
-        Dimensions are in metres. Torsion uses Bredt's thin-wall approximation;
-        shear factors default to ``[2*height*t/A, 2*width*t/A]`` along y/z.
-        Explicit sectional property keywords override these estimates.
+        Dimensions are in metres. The default strand law uses Marshall torsion
+        and Jourawski effective shear areas. Calibration overrides can supply
+        individual sectional properties.
         """
         return cls.from_section(
             StrandSection.rectangular_hollow(
@@ -520,27 +552,91 @@ class HelicoidalHelixParams(BaseSystemParams):
             **kwargs,
         )
 
-    def replace(self, **updates) -> Self:
-        """Update inputs, rederiving section properties when geometry is replaced.
+    @property
+    def strand_properties(self) -> RodSectionProperties:
+        """Resolve current geometry, material and law, then apply calibration overrides.
 
-        Replacing ``strand_section`` resets all sectional properties to geometric
-        estimates unless overridden in the same call. Replacing material or
-        other inputs preserves existing calibrated properties. A None section
-        retains the properties and removes the optional geometry description.
+        Derived quantities follow parameter updates without caching. Calibrated
+        shear factors multiply the resolved material area to give effective areas.
         """
-        section = updates.get("strand_section")
-        if section is not None:
-            if not isinstance(section, StrandSection):
-                raise TypeError("strand_section must be a StrandSection or None.")
-            section.validate_for_update()
-            updates = section.mechanical_properties() | updates
-        return super().replace(**updates)
+        if self.strand_section is None:
+            area = self.strand_area_override
+            return RodSectionProperties(
+                area,
+                self.strand_second_moments_override,
+                self.strand_torsion_constant_override,
+                area * self.strand_shear_factors_override,
+            )
+        section = self.strand_section
+        derived = self.strand_constitutive_law.section_properties(
+            section.geometry,
+            section.outer_dimensions,
+            section.inner_dimensions,
+            poisson_ratio=self.young_modulus / (2 * self.shear_modulus) - 1,
+            shear_factors_override=self.strand_shear_factors_override,
+        )
+        area = (
+            derived.area
+            if self.strand_area_override is None
+            else self.strand_area_override
+        )
+        moments = (
+            derived.second_moments
+            if self.strand_second_moments_override is None
+            else self.strand_second_moments_override
+        )
+        torsion = (
+            derived.torsion_constant
+            if self.strand_torsion_constant_override is None
+            else self.strand_torsion_constant_override
+        )
+        return RodSectionProperties(
+            area, moments, torsion, area * derived.shear_factors
+        )
+
+    @property
+    def strand_area(self) -> Array:
+        """Resolved strand material area [m²]."""
+        return self.strand_properties.area
+
+    @property
+    def strand_second_moments(self) -> Array:
+        """Resolved principal y/z area moments [m⁴]."""
+        return self.strand_properties.second_moments
+
+    @property
+    def strand_torsion_constant(self) -> Array:
+        """Resolved torsion constant [m⁴]."""
+        return self.strand_properties.torsion_constant
+
+    @property
+    def strand_shear_factors(self) -> Array:
+        """Resolved y/z effective-area fractions."""
+        return self.strand_properties.shear_factors
 
     def validate_structure(self) -> None:
+        if not isinstance(self.strand_constitutive_law, RodConstitutiveLaw):
+            raise TypeError("strand_constitutive_law must be a RodConstitutiveLaw.")
         if self.strand_section is not None:
             if not isinstance(self.strand_section, StrandSection):
                 raise TypeError("strand_section must be a StrandSection or None.")
             self.strand_section.validate_structure()
+            self.strand_constitutive_law.validate_geometry(
+                self.strand_section.geometry,
+                self.strand_section.wall_thickness is not None,
+            )
+        elif any(
+            getattr(self, name) is None
+            for name in (
+                "strand_area_override",
+                "strand_second_moments_override",
+                "strand_torsion_constant_override",
+                "strand_shear_factors_override",
+            )
+        ):
+            raise ValueError(
+                "Property-only helix inputs require all four strand overrides."
+            )
         if (
             isinstance(self.helices_per_direction, bool)
             or not isinstance(self.helices_per_direction, int)
@@ -548,8 +644,16 @@ class HelicoidalHelixParams(BaseSystemParams):
         ):
             raise ValueError("helices_per_direction must be a positive integer.")
         for name in HelicoidalHelixParams.__annotations__:
-            if name in {"helices_per_direction", "strand_section"}:
+            if name in {
+                "helices_per_direction",
+                "strand_section",
+                "strand_constitutive_law",
+            }:
                 continue
+            if getattr(self, name) is None:
+                if name.endswith("_override"):
+                    continue
+                raise ValueError(f"{name} must not be None.")
             if name == "damping_time_constant":
                 if self.damping_time_constant.shape not in ((), (6,)):
                     raise ValueError(
@@ -558,17 +662,28 @@ class HelicoidalHelixParams(BaseSystemParams):
                 continue
             shape = (
                 (2,)
-                if name in {"strand_second_moments", "strand_shear_factors"}
+                if name
+                in {"strand_second_moments_override", "strand_shear_factors_override"}
                 else ()
             )
             if getattr(self, name).shape != shape:
                 raise ValueError(f"{name} must have shape {shape}.")
 
+        _ = self.strand_properties
+
     def validate_values(self) -> None:
         if self.strand_section is not None:
             self.strand_section.validate_values()
         for name in HelicoidalHelixParams.__annotations__:
-            if name in {"helices_per_direction", "strand_section"}:
+            if (
+                name
+                in {
+                    "helices_per_direction",
+                    "strand_section",
+                    "strand_constitutive_law",
+                }
+                or getattr(self, name) is None
+            ):
                 continue
             values = np.asarray(getattr(self, name))
             if not np.isfinite(values).all():
@@ -637,7 +752,8 @@ class HelicoidalHelixParams(BaseSystemParams):
         normal = radial - jnp.sum(radial * tangent, axis=-1, keepdims=True) * tangent
         normal = normal / jnp.linalg.norm(normal, axis=-1, keepdims=True)
         frame = jnp.stack((tangent, normal, jnp.cross(tangent, normal)), axis=-1)
-        iy, iz = self.strand_second_moments
+        properties = self.strand_properties
+        iy, iz = properties.second_moments
         # Polar area moment Iy+Iz determines mass inertia; Saint-Venant's
         # torsion constant describes elasticity and can differ for noncircles.
         section = jnp.diag(jnp.stack((iy + iz, iy, iz)))
@@ -646,7 +762,7 @@ class HelicoidalHelixParams(BaseSystemParams):
             * arc_factor[..., None, None]
             * (frame @ section @ jnp.swapaxes(frame, -1, -2))
         )
-        mass = self.density * self.strand_area * arc_factor
+        mass = self.density * properties.area * arc_factor
         center = radius[..., None] * radial
         return jnp.sum(spatial_inertia(mass, center, inertia), axis=-3)
 

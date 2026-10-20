@@ -201,15 +201,15 @@ def material_operators_from_params(
             params.link.cross_section.coefficients[index], segment.link, points
         )
         geometry = segment.link.cross_section_geometry
-        ix, iy, iz, area = section_properties(geometry, outer, inner)
-        law = segment.link.constitutive_law
-        torsion = law.torsion_constant(geometry, outer, inner)
-        shear_areas = law.shear_areas(
+        section = segment.link.constitutive_law.section_properties(
             geometry,
             outer,
             inner,
             poisson_ratio=0.0 if poisson_ratios is None else poisson_ratios[index],
         )
+        iy, iz = section.second_moments[:, 0], section.second_moments[:, 1]
+        ix, area = iy + iz, section.area
+        torsion, shear_areas = section.torsion_constant, section.shear_areas
         young_diagonal = jnp.stack(
             [jnp.zeros_like(ix), iy, iz, area, jnp.zeros_like(ix), jnp.zeros_like(ix)],
             axis=1,

@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from enum import Enum
+from typing import NamedTuple
 
 import jax.numpy as jnp
 from jax import Array
@@ -11,14 +12,35 @@ from soromox.systems.params import _contains_tracer
 from .cross_sections import (
     CrossSectionGeometry,
     section_properties,
-    section_torsion_constant,
 )
 
 __all__ = [
     "RodConstitutiveLaw",
+    "RodSectionProperties",
     "TransverseShearRodModel",
     "TorsionRodModel",
 ]
+
+
+class RodSectionProperties(NamedTuple):
+    """Evaluated material-frame section properties for links and strands.
+
+    Attributes:
+        area: Material area [m²].
+        second_moments: Area moments about y/z, last axis of size two [m⁴].
+        torsion_constant: Constant J for torsional stiffness GJ [m⁴].
+        shear_areas: Effective areas along y/z, last axis of size two [m²].
+    """
+
+    area: Array
+    second_moments: Array
+    torsion_constant: Array
+    shear_areas: Array
+
+    @property
+    def shear_factors(self) -> Array:
+        """Dimensionless effective-area fractions along y/z."""
+        return self.shear_areas / self.area[..., None]
 
 
 class TransverseShearRodModel(Enum):
@@ -164,7 +186,7 @@ def _rectangular_shear_areas(outer: Array, inner: Array | None) -> Array:
 
 @dataclass(frozen=True)
 class RodConstitutiveLaw:
-    """Independent sectional assumptions for an isotropic GVS rod.
+    """Independent sectional assumptions for an isotropic rod.
 
     Attributes:
         transverse_shear: Uniform shear (solid sections only), or effective
@@ -177,7 +199,7 @@ class RodConstitutiveLaw:
     Axial and bending stiffness always use EA, EIy and EIz. Rotational mass
     inertia always uses area moments, independently of these choices. The
     default law uses uniform shear and polar-moment torsion for stiffness and
-    damping. Hollow links require EFFECTIVE_AREA shear and SAINT_VENANT torsion.
+    damping. Hollow sections require EFFECTIVE_AREA shear and SAINT_VENANT torsion.
     """
 
     transverse_shear: TransverseShearRodModel = TransverseShearRodModel.UNIFORM
@@ -204,7 +226,7 @@ class RodConstitutiveLaw:
         """
         if hollow and self.transverse_shear == TransverseShearRodModel.UNIFORM:
             raise ValueError(
-                "UNIFORM transverse shear requires solid geometry; choose EFFECTIVE_AREA for hollow links."
+                "UNIFORM transverse shear requires solid geometry; choose EFFECTIVE_AREA for hollow sections."
             )
         if (
             self.transverse_shear == TransverseShearRodModel.EFFECTIVE_AREA
@@ -215,8 +237,55 @@ class RodConstitutiveLaw:
             )
         if hollow and self.torsion == TorsionRodModel.POLAR_MOMENT:
             raise ValueError(
-                "POLAR_MOMENT torsion requires solid geometry; choose SAINT_VENANT for hollow links."
+                "POLAR_MOMENT torsion requires solid geometry; choose SAINT_VENANT for hollow sections."
             )
+
+    def section_properties(
+        self,
+        geometry: CrossSectionGeometry,
+        outer: Array,
+        inner: Array | None = None,
+        *,
+        poisson_ratio: Array | float = 0.0,
+        shear_factors_override: Array | None = None,
+    ) -> RodSectionProperties:
+        """Evaluate a solid or hollow section for a link or strand.
+
+        Args:
+            geometry: Cross-section family.
+            outer: Outer dimensions in the last axis [m].
+            inner: Optional centred cavity dimensions [m].
+            poisson_ratio: Elastic Poisson ratio used by Cowper shear.
+            shear_factors_override: Optional calibrated y/z shear factors.
+                These supply the effective areas directly, independently of
+                the material's Poisson ratio. The last axis has size two.
+
+        Returns:
+            Material area, principal area moments, torsion constant and
+            effective shear areas, with any leading section batch dimensions.
+        """
+        self.validate_geometry(geometry, inner is not None)
+        _, iy, iz, area = section_properties(geometry, outer, inner)
+        if shear_factors_override is None:
+            shear = self.shear_areas(
+                geometry, outer, inner, poisson_ratio=poisson_ratio
+            )
+        else:
+            factors = jnp.asarray(shear_factors_override)
+            if factors.shape[-1:] != (2,):
+                raise ValueError(
+                    "shear_factors_override must have a final axis of size two."
+                )
+            valid = jnp.all(jnp.isfinite(factors) & (factors > 0))
+            if not _contains_tracer(valid) and not bool(valid):
+                raise ValueError("shear_factors_override must be finite and positive.")
+            shear = area[..., None] * factors
+        return RodSectionProperties(
+            area,
+            jnp.stack((iy, iz), axis=-1),
+            self.torsion_constant(geometry, outer, inner),
+            shear,
+        )
 
     def requires_poisson_ratio(self, geometry: CrossSectionGeometry) -> bool:
         """Check whether shear areas depend on the elastic Poisson ratio.
@@ -301,8 +370,11 @@ class RodConstitutiveLaw:
         outer = jnp.asarray(outer)
         if self.torsion == TorsionRodModel.POLAR_MOMENT:
             return section_properties(geometry, outer)[0]
-        if geometry != CrossSectionGeometry.RECTANGULAR:
-            return section_torsion_constant(geometry, outer, inner)
+        if geometry == CrossSectionGeometry.CIRCULAR:
+            return section_properties(geometry, outer, inner)[0]
+        if geometry == CrossSectionGeometry.ELLIPTICAL:
+            a, b = outer[..., 0], outer[..., 1]
+            return jnp.pi * a**3 * b**3 / (a**2 + b**2)
         thickness = (
             jnp.min(outer, axis=-1) / 2
             if inner is None

@@ -3,6 +3,7 @@
 from soromox.systems.components.inertia import spatial_inertia
 from soromox.systems.components.rod_constitutive_laws import (
     RodConstitutiveLaw,
+    RodSectionProperties,
     TorsionRodModel,
     TransverseShearRodModel,
 )
@@ -22,6 +23,7 @@ from .strand_sections import StrandSection
 
 __all__ = [
     "RodConstitutiveLaw",
+    "RodSectionProperties",
     "TransverseShearRodModel",
     "TorsionRodModel",
     "spatial_inertia",
