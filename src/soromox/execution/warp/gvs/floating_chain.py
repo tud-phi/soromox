@@ -15,6 +15,10 @@ from soromox.execution.warp.common.floating_base import _spatial_root_jacobian_e
 from soromox.execution.warp.common.rotations import _quaternion_rotation_matrix
 from soromox.execution.warp.common.se3 import Vec6d, _ad_action
 from soromox.execution.warp.common.spatial import _coadjoint_wrench
+from soromox.execution.warp.common.spatial_inertia import (
+    _mass_jacobian_action,
+    _mass_vector_action,
+)
 from soromox.execution.warp.common.storage import (
     _matrix_value,
     _vector_value,
@@ -92,7 +96,9 @@ def floating_persistent_chain_at(
         velocity: Total angular-first generalized velocities.
         inertia_upper_rows: Packed augmented upper-inertia row indices.
         inertia_upper_columns: Packed augmented upper-inertia column indices.
-        weighted_masses: Quadrature-weighted diagonal spatial inertias.
+        weighted_masses: Weighted spatial inertias with shape ``(S * P, 6)``
+            for diagonals or ``(S * P, 36)`` for row-major full matrices.
+            P includes the unit-weight link-tip slot when present.
         gravity_world: World-frame spatial gravity.
         num_cells_array: One-entry array containing cells per segment.
         num_quadrature_array: One-entry array containing quadrature count.
@@ -114,8 +120,8 @@ def floating_persistent_chain_at(
     """
     num_dofs = velocity.shape[1]
     num_cells = num_cells_array[0]
-    num_quadrature = num_quadrature_array[0]
     num_segments = joint_adjoint.shape[0] // (velocity.shape[0] * SPATIAL_DIM)
+    num_mass_points = weighted_masses.shape[0] // num_segments
     lane_stride = lanes_per_block[0]
     state_base_row = environment * SPATIAL_DIM
     base_dofs = int(6)
@@ -536,8 +542,9 @@ def floating_persistent_chain_at(
                 state_row += lane_stride
             wp.tile_scatter_masked(barrier, 0, int(0), lane == 0)
             current_is_first = destination_is_first
-            if cell < num_quadrature:
-                quadrature_item = segment * num_quadrature + cell
+
+            if cell < num_mass_points:
+                quadrature_item = segment * num_mass_points + cell
                 num_inertia_pairs = segment_dofs * (segment_dofs + 1) // 2
                 entry = lane
                 while entry < num_inertia_pairs:
@@ -546,24 +553,22 @@ def floating_persistent_chain_at(
                     value = wp.float64(0.0)
                     row = int(0)
                     while row < SPATIAL_DIM:
-                        value += (
-                            _matrix_value(
-                                jacobian_first,
-                                jacobian_second,
-                                current_is_first,
-                                state_base_row,
-                                row,
-                                output_row,
-                            )
-                            * weighted_masses[quadrature_item, row]
-                            * _matrix_value(
-                                jacobian_first,
-                                jacobian_second,
-                                current_is_first,
-                                state_base_row,
-                                row,
-                                output_column,
-                            )
+                        value += _matrix_value(
+                            jacobian_first,
+                            jacobian_second,
+                            current_is_first,
+                            state_base_row,
+                            row,
+                            output_row,
+                        ) * _mass_jacobian_action(
+                            weighted_masses,
+                            quadrature_item,
+                            row,
+                            jacobian_first,
+                            jacobian_second,
+                            current_is_first,
+                            state_base_row,
+                            output_column,
                         )
                         row += 1
                     inertia[environment, output_row, output_column] += value
@@ -595,16 +600,14 @@ def floating_persistent_chain_at(
                             column,
                         )
                         coriolis_value += jacobian_value * wrench[row]
-                        gravity_value -= (
-                            jacobian_value
-                            * weighted_masses[quadrature_item, row]
-                            * _vector_value(
-                                gravity_first,
-                                gravity_second,
-                                current_is_first,
-                                state_base_row,
-                                row,
-                            )
+                        gravity_value -= jacobian_value * _mass_vector_action(
+                            weighted_masses,
+                            quadrature_item,
+                            row,
+                            gravity_first,
+                            gravity_second,
+                            current_is_first,
+                            state_base_row,
                         )
                         row += 1
                     coriolis_qd[environment, column] += coriolis_value
@@ -642,7 +645,9 @@ class GVSFloatingChainData:
         velocity: Total angular-first generalized velocities.
         inertia_upper_rows: Packed augmented upper-inertia row indices.
         inertia_upper_columns: Packed augmented upper-inertia column indices.
-        weighted_masses: Quadrature-weighted diagonal spatial inertias.
+        weighted_masses: Weighted spatial inertias with shape ``(S * P, 6)``
+            for diagonals or ``(S * P, 36)`` for row-major full matrices.
+            P includes the unit-weight link-tip slot when present.
         gravity_world: World-frame spatial gravity.
         num_cells_array: One-entry array containing cells per segment.
         num_quadrature_array: One-entry array containing quadrature count.
@@ -896,7 +901,9 @@ def launch_homogeneous_floating_persistent_chain(
         velocity: Batched total generalized velocities.
         inertia_upper_rows: Packed augmented upper-inertia row indices.
         inertia_upper_columns: Matching upper-inertia column indices.
-        weighted_masses: Quadrature-weighted local inertia diagonals.
+        weighted_masses: Weighted spatial inertias with shape ``(S * P, 6)``
+            for diagonals or ``(S * P, 36)`` for row-major full matrices.
+            P includes the unit-weight link-tip slot when present.
         gravity_world: World-frame spatial gravity.
         num_cells: One-entry array containing cells per segment.
         num_quadrature: One-entry array containing quadrature points.

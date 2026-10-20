@@ -122,7 +122,9 @@ def _stage_worlds() -> list[dict]:
                 active_dofs=op.active_dofs_per_segment,
                 inertia_upper_rows=op.inertia_upper_rows,
                 inertia_upper_columns=op.inertia_upper_columns,
-                weighted_masses=np.asarray(op.weighted_mass_diagonals).reshape(-1, 6),
+                weighted_masses=np.asarray(op.weighted_inertias).reshape(
+                    -1, op.weighted_inertias.shape[-1]
+                ),
                 num_cells_array=np.array([cells], np.int32),
                 num_quadrature_array=np.array([op.num_quadrature], np.int32),
                 lanes_per_block=np.array([32 if device.is_cuda else 1], np.int32),

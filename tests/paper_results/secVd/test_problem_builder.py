@@ -307,10 +307,13 @@ def test_builder_reproduces_the_committed_archive_initial_loss(method):
     fail for reasons that had nothing to do with the property under test. Schema
     v3 records ``solver_dt``, so the archive can now describe itself completely.
 
-    Bit-identity is not expected: the archives were produced under ``vmap`` at
-    six starts, this evaluates one start unbatched, and batched matmuls
-    reassociate floating-point additions. Across 50000 solver steps that is
-    worth about 1e-10 relative, measured.
+    Bit-identity is not expected: the archives used Gauss nodes whose Newton
+    iteration stopped at float32 epsilon, even in float64 runs. Converging the
+    nodes to float64 precision changes these losses by at most 1.1e-7 relative.
+    Restoring only the old quadrature reproduces both archives at the previous
+    1e-8 tolerance. Allow 2e-7 for this historical numerical precision; retain
+    the original archives as the paper's results. Batched versus unbatched
+    evaluation contributes a smaller reassociation difference (about 1e-10).
     """
     archive = SECTION_DIR / "data" / method / "optimization_results.npz"
     if not archive.exists():
@@ -327,4 +330,4 @@ def test_builder_reproduces_the_committed_archive_initial_loss(method):
         {"opt_ctr_params": start_gains, "opt_atr_params": {}}
     )
     expected = float(np.asarray(stored["history_loss"])[0, 0])
-    assert float(loss) == pytest.approx(expected, rel=1e-8)
+    assert float(loss) == pytest.approx(expected, rel=2e-7)

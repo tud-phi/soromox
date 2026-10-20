@@ -770,17 +770,29 @@ class SoftRobot(DynamicalSystem):
         return poses.quaternion_pose_to_transform(jnp.asarray(pose))
 
     @abstractmethod
-    def cross_section_geometry(self, q: Array, s: Array) -> tuple[Array, Array]:
-        """Return integer cross-section tag and geometry parameters at position s.
+    def cross_section_geometry(
+        self, q: Array, s: Array
+    ) -> tuple[Array, Array, Array | None]:
+        """Return the section family and both boundaries at position ``s``.
 
-        Tag values:
-            - CrossSectionGeometry.CIRCULAR
-            - CrossSectionGeometry.RECTANGULAR
-            - CrossSectionGeometry.ELLIPTICAL
+        Args:
+            q: Generalized coordinates.
+            s: Global backbone coordinate.
 
-        Rectangular parameters use ``[height, width]`` order, matching
-        :func:`soromox.systems.components.section_properties`. Elliptical
-        parameters use ``[semi_major, semi_minor]`` order.
+        Returns:
+            Tuple ``(geometry, outer_dimensions, inner_dimensions)``. Geometry
+            is an integer :class:`CrossSectionGeometry` tag. Dimensions use
+            ``[radius]`` for circles, ``[height, width]`` for rectangles and
+            ``[semi_major, semi_minor]`` for ellipses, in metres. Height and
+            semi-major radius span local y; width and semi-minor radius span z.
+
+            Inner dimensions describe a centred cavity of the same family,
+            with positive dimensions smaller than the outer boundary. Return
+            ``None`` for an entirely solid model. Models mixing solid and hollow
+            sections return an array for every station, using all zeros for
+            solid sections. Array shapes and the return structure must stay
+            fixed across stations for JAX vectorization; pad dimensions when
+            mixing geometry families.
         """
         ...
 

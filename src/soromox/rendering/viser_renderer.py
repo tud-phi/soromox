@@ -367,7 +367,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
             self.robot, q_reference, s_points
         )
         self._cross_section_contours = tuple(
-            section.contour(self._cross_section_resolution)
+            section.contours(self._cross_section_resolution)
             for section in self._cross_sections
         )
         self._discrete_cross_section_markers = tuple(
@@ -375,7 +375,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
         )
         self._backbone_marker_scales = np.asarray(
             [
-                np.max(np.linalg.norm(contour[:, 1:], axis=1))
+                np.max(np.linalg.norm(contour[0, :, 1:], axis=1))
                 for contour in self._cross_section_contours
             ],
             dtype=np.float32,
@@ -694,6 +694,11 @@ class ViserRenderer(BaseSoftRobotRenderer):
         self._add_ground_plane(curves[:, 0])
 
         # Clear existing robot geometry
+        for handles in self._scene_handles.backbone_points:
+            for handle in handles:
+                handle.remove()
+        for handle in self._scene_handles.base_plates:
+            handle.remove()
         self._scene_handles.backbone_points = []
         self._scene_handles.discrete_backbone_batches = []
         self._scene_handles.swept_backbone_batches = []
@@ -874,7 +879,9 @@ class ViserRenderer(BaseSoftRobotRenderer):
             incoming = (
                 curve[right] + self._cross_section_contours[right] @ frames[right].T
             )
-            if np.all(np.abs(outgoing - incoming) <= tolerance):
+            if outgoing.shape == incoming.shape and np.all(
+                np.abs(outgoing - incoming) <= tolerance
+            ):
                 caps[left] = (caps[left][0], False)
                 caps[right] = (False, caps[right][1])
         return caps
@@ -2555,7 +2562,6 @@ class ViserRenderer(BaseSoftRobotRenderer):
         Returns:
             LiveModeController for managing the live session
         """
-        self._static_scene = False
         if self._server is None:
             self.start()
 
@@ -2760,6 +2766,11 @@ class LiveModeController:
         if self._running:
             return
 
+        if self._renderer._static_scene and self._renderer._scene_handles is not None:
+            # Static GLB handles cannot receive vertex updates. Rebuild them as
+            # editable meshes when the first live state arrives.
+            self._renderer._scene_handles.geometry_initialized = False
+        self._renderer._static_scene = False
         self._running = True
         self._renderer._live_mode_active = True
         self._start_time = time.time()
@@ -2903,3 +2914,4 @@ class LiveModeController:
                 material_frames=material_frames,
                 base_plate_color=self._renderer.color_config.base_plate_color,
             )
+            self._renderer._setup_camera(curves, self._renderer._active_camera)

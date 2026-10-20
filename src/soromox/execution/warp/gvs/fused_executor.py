@@ -96,9 +96,7 @@ def execute_dynamics_and_threadlike_actuation_force(
     trailing = (
         dynamics.inertia_upper_rows,
         dynamics.inertia_upper_columns,
-        dynamics.weighted_mass_diagonals.reshape(
-            num_segments * dynamics.num_quadrature, SPATIAL_DIM
-        ),
+        dynamics.weighted_inertias.reshape(-1, dynamics.weighted_inertias.shape[-1]),
         jnp.asarray([dynamics.num_cells], dtype=jnp.int32),
         jnp.asarray([dynamics.num_quadrature], dtype=jnp.int32),
         jnp.asarray([dynamics.block_dim], dtype=jnp.int32),

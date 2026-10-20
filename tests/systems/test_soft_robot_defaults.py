@@ -40,8 +40,10 @@ class _PlanarDefaultRobot(SoftRobot):
     def is_planar(self) -> bool:
         return True
 
-    def cross_section_geometry(self, q: Array, s: Array) -> tuple[Array, Array]:
-        return jnp.asarray(CrossSectionGeometry.CIRCULAR), jnp.array([1.0])
+    def cross_section_geometry(
+        self, q: Array, s: Array
+    ) -> tuple[Array, Array, Array | None]:
+        return (jnp.asarray(CrossSectionGeometry.CIRCULAR), jnp.array([1.0]), None)
 
     def _forward_kinematics(self, q: Array, s: Array) -> Array:
         theta = q[0] * s

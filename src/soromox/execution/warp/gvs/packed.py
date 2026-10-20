@@ -37,7 +37,9 @@ class GVSMixedChainData:
         qd: Internal generalized velocities for the fixed-base recurrence.
         inertia_upper_rows: Packed upper-inertia row indices for this world's velocity dimension.
         inertia_upper_columns: Packed upper-inertia column indices for this world's velocity dimension.
-        weighted_masses: Quadrature-weighted diagonal spatial inertias.
+        weighted_masses: Weighted spatial inertias with shape ``(S * P, 6)``
+            for diagonals or ``(S * P, 36)`` for row-major full matrices.
+            P includes the unit-weight link-tip slot when present.
         gravity_base: Base-frame gravity.
         num_cells_array: One-entry array containing cells per segment.
         num_quadrature_array: One-entry array containing quadrature count.

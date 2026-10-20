@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Write user-facing notes under the section that best describes the change. Keep
 entries concise, link to relevant pull requests or documentation when useful,
 and include benchmark baseline and measurement context for performance claims.
+Describe the delta from the last release, not intermediate development changes.
 
 ## [Unreleased]
 
@@ -17,11 +18,20 @@ and include benchmark baseline and measurement context for performance claims.
   kinematics and actuation across different joints and strain bases; see
   [PR #227](https://github.com/tud-phi/soromox/pull/227).
 
+- GVS-based `Helicoidal` models for trimmed-helicoid robots, with analytic
+  sectional mechanics, per-strain damping, helix-domain material inputs,
+  strand-derived inertia, a simulation example, and a dedicated Viser renderer.
+  Shared `StrandSection` geometry supports solid and hollow circular and
+  rectangular strands for mechanics and viewer configuration; see
+  [Helicoidal](../api/systems/gvs/helicoidal.md) and
+  [PR #229](https://github.com/tud-phi/soromox/pull/229).
 - Python 3.15 support, with numerical tests and patched Open3D source-build
   and rendering checks in Ubuntu CI.
 
 ### Changed
 
+- Shared PCS/GVS dynamics support full sectional and tip inertia in JAX and Warp;
+  see [PR #229](https://github.com/tud-phi/soromox/pull/229).
 - Refreshed the numerical and rendering dependency lock for Python 3.15,
   including compatible Viser and `rpds-py` releases.
 
@@ -37,9 +47,28 @@ and include benchmark baseline and measurement context for performance claims.
   must use the explicit names and updated kernel signatures.
   See the [batch layout contracts](../api/execution/warp/gvs.md#batch-layouts-and-naming)
   and [PR #227](https://github.com/tud-phi/soromox/pull/227).
+- `SoftRobot.cross_section_geometry(q, s)` now returns
+  `(geometry, outer_dimensions, inner_dimensions)` instead of a pair.
+  Update custom implementations to return `None` as the third value for solid
+  models, and update callers to unpack all three values.
+- Rendering `CrossSection.dimensions` is now `outer_dimensions`.
+  `contour(resolution)` is replaced by `contours(resolution)`, returning all
+  boundary loops with shape `(1 or 2, resolution, 3)`. Select `[0]` explicitly
+  when only the outer boundary is needed. `loft_cross_section_contours()` now
+  accepts that same loop-array shape at each endpoint.
 
 ### Fixed
 
+- Viser live mode initializes the camera and lighting on its first state and
+  rebuilds static meshes as editable surfaces when switching from a static
+  view, so subsequent geometry updates reach the browser. Resizing a live
+  robot batch removes obsolete meshes.
+- Open3D scene meshes explicitly initialize missing texture coordinates,
+  preventing white surface artifacts with unpatched Open3D wheels.
+- Corrected rectangular cross-section orientation in Open3D and Viser: height
+  now spans local material y and width spans z, matching the existing GVS
+  bending stiffness and inertia. Both swept surfaces and discrete boxes use
+  this convention.
 - Restored the Section IVa PyElastica benchmarks using COOMM, with
   PyElastica 1.0 support and short rollout tests in CI; see
   [PR #220](https://github.com/tud-phi/soromox/pull/220).
