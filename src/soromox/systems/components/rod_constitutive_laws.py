@@ -16,14 +16,19 @@ from .cross_sections import (
 
 __all__ = [
     "RodConstitutiveLaw",
-    "RodSectionProperties",
+    "RodCrossSectionProperties",
     "TransverseShearRodModel",
     "TorsionRodModel",
 ]
 
 
-class RodSectionProperties(NamedTuple):
-    """Evaluated material-frame section properties for links and strands.
+class RodCrossSectionProperties(NamedTuple):
+    """Evaluated mechanical cross-section properties for links and strands.
+
+    Geometry determines area and area moments. The selected rod law determines
+    the torsion constant and effective shear areas; Cowper shear also depends
+    on the material Poisson ratio. Values are evaluated from the current
+    geometry, material and law.
 
     Attributes:
         area: Material area [m²].
@@ -240,7 +245,7 @@ class RodConstitutiveLaw:
                 "POLAR_MOMENT torsion requires solid geometry; choose SAINT_VENANT for hollow sections."
             )
 
-    def section_properties(
+    def cross_section_properties(
         self,
         geometry: CrossSectionGeometry,
         outer: Array,
@@ -248,8 +253,8 @@ class RodConstitutiveLaw:
         *,
         poisson_ratio: Array | float = 0.0,
         shear_factors_override: Array | None = None,
-    ) -> RodSectionProperties:
-        """Evaluate a solid or hollow section for a link or strand.
+    ) -> RodCrossSectionProperties:
+        """Evaluate a solid or hollow cross-section for a link or strand.
 
         Args:
             geometry: Cross-section family.
@@ -280,7 +285,7 @@ class RodConstitutiveLaw:
             if not _contains_tracer(valid) and not bool(valid):
                 raise ValueError("shear_factors_override must be finite and positive.")
             shear = area[..., None] * factors
-        return RodSectionProperties(
+        return RodCrossSectionProperties(
             area,
             jnp.stack((iy, iz), axis=-1),
             self.torsion_constant(geometry, outer, inner),

@@ -180,7 +180,7 @@ PyTree structure and requires recompilation.
 
 ### Rod constitutive laws
 
-The default GVS law uses uniform transverse shear and polar-moment torsion
+The default `RodConstitutiveLaw` uses uniform transverse shear and polar-moment torsion
 for solid sections. Shear and torsion can be selected independently. Hollow
 links require effective shear and Saint-Venant torsion.
 
@@ -199,9 +199,9 @@ differ from \(J\).
 
 | Choice | Supported sections and behavior |
 |---|---|
-| `TransverseShearRodModel.UNIFORM` (GVS link default) | Solid sections; shear stiffness is \(GA\). |
+| `TransverseShearRodModel.UNIFORM` (default) | Solid sections; shear stiffness is \(GA\). |
 | `TransverseShearRodModel.EFFECTIVE_AREA` | Solid/hollow circles use material-dependent Cowper factors; solid/hollow rectangles use Jourawski shear-energy matching. |
-| `TorsionRodModel.POLAR_MOMENT` (GVS link default) | Solid sections; torsional stiffness is \(G(I_y+I_z)\). |
+| `TorsionRodModel.POLAR_MOMENT` (default) | Solid sections; torsional stiffness is \(G(I_y+I_z)\). |
 | `TorsionRodModel.SAINT_VENANT` | Marshall for solid/hollow rectangles; exact circular/annular and solid elliptical torsion. |
 
 For a rectangular tube, select both alternatives explicitly:
@@ -239,12 +239,6 @@ warping and stable cross-sectional walls. See the
 [transverse-shear][soromox.systems.components.TransverseShearRodModel] and
 [torsion][soromox.systems.components.TorsionRodModel]
 API references below for formulas, limits, and publications.
-
-`RodConstitutiveLaw.section_properties(...)` evaluates a section as
-`RodSectionProperties`: material area, y/z area moments, torsion constant and
-effective shear areas. GVS material projection and [helicoidal strands](gvs/helicoidal.md)
-share this evaluation. Each caller selects its law explicitly or uses its own
-documented default.
 
 The scalar Kelvin–Voigt damping convention uses
 \(V=\eta\,\mathrm{diag}(J,3I_y,3I_z,3A,A_{s,y},A_{s,z})\), including the

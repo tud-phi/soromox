@@ -322,28 +322,28 @@ def test_public_reduction_diagnostics(helix, reduced):
 @pytest.mark.parametrize("kind", ["circular", "rectangular"])
 @pytest.mark.parametrize("hollow", [False, True])
 def test_geometry_law_and_calibrated_properties_reduce_identically(helix, kind, hollow):
-    from soromox.systems import StrandSection
+    from soromox.systems import StrandCrossSection
 
     if kind == "circular":
         section = (
-            StrandSection.circular_hollow(radius=0.002, wall_thickness=0.0002)
+            StrandCrossSection.circular_hollow(radius=0.002, wall_thickness=0.0002)
             if hollow
-            else StrandSection.circular(0.002)
+            else StrandCrossSection.circular(0.002)
         )
     else:
         section = (
-            StrandSection.rectangular_hollow(
+            StrandCrossSection.rectangular_hollow(
                 height=0.002, width=0.004, wall_thickness=0.0002
             )
             if hollow
-            else StrandSection.rectangular(height=0.002, width=0.004)
+            else StrandCrossSection.rectangular(height=0.002, width=0.004)
         )
     automatic = helix.replace(
-        strand_section=section, strand_shear_factors_override=None
+        strand_cross_section=section, strand_shear_factors_override=None
     )
-    props = automatic.strand_properties
+    props = automatic.strand_cross_section_properties
     calibrated = automatic.replace(
-        strand_section=None,
+        strand_cross_section=None,
         strand_area_override=props.area,
         strand_second_moments_override=props.second_moments,
         strand_torsion_constant_override=props.torsion_constant,

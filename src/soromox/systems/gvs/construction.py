@@ -201,7 +201,7 @@ def material_operators_from_params(
             params.link.cross_section.coefficients[index], segment.link, points
         )
         geometry = segment.link.cross_section_geometry
-        section = segment.link.constitutive_law.section_properties(
+        section = segment.link.constitutive_law.cross_section_properties(
             geometry,
             outer,
             inner,

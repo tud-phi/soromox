@@ -252,7 +252,7 @@ def _tip_compliance(params):
             compliance is not positive definite.
     """
     frames, lengths, connections, terminal, tip = _spans(params)
-    properties = params.strand_properties
+    properties = params.strand_cross_section_properties
     E, G, area = map(
         float, (params.young_modulus, params.shear_modulus, properties.area)
     )

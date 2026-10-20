@@ -389,7 +389,7 @@ def test_shared_properties_batch_and_jit(geometry, outer):
     outer = jnp.array(outer)
     inner = outer * 0.5 if geometry == Geometry.CIRCULAR else outer - 0.004
     properties = eqx.filter_jit(
-        lambda dims: EFFECTIVE.section_properties(
+        lambda dims: EFFECTIVE.cross_section_properties(
             geometry, dims, inner, poisson_ratio=0.3
         )
     )(outer)
@@ -403,7 +403,7 @@ def test_shared_properties_batch_and_jit(geometry, outer):
     assert_allclose(
         properties.torsion_constant, EFFECTIVE.torsion_constant(geometry, outer, inner)
     )
-    calibrated = EFFECTIVE.section_properties(
+    calibrated = EFFECTIVE.cross_section_properties(
         geometry,
         outer,
         inner,
@@ -416,7 +416,7 @@ def test_shared_properties_batch_and_jit(geometry, outer):
 @pytest.mark.parametrize("factors", [[0.8], [0.8, 0], [np.nan, 0.8], [0.8, -0.2]])
 def test_shared_properties_reject_invalid_calibrated_shear(factors):
     with pytest.raises(ValueError, match="shear_factors_override"):
-        EFFECTIVE.section_properties(
+        EFFECTIVE.cross_section_properties(
             Geometry.CIRCULAR,
             jnp.array([0.02]),
             shear_factors_override=jnp.array(factors),

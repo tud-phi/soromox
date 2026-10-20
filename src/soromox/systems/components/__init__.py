@@ -3,7 +3,7 @@
 from soromox.systems.components.inertia import spatial_inertia
 from soromox.systems.components.rod_constitutive_laws import (
     RodConstitutiveLaw,
-    RodSectionProperties,
+    RodCrossSectionProperties,
     TorsionRodModel,
     TransverseShearRodModel,
 )
@@ -19,18 +19,18 @@ from .cross_sections import (
 from .joints import JOINT_DOF, JointParams, JointSpec, JointType, joint_dof
 from .links import ContinuumLinkParams, LinkSpec
 from .materials import IsotropicMaterialParams, shear_modulus_from_poisson_ratio
-from .strand_sections import StrandSection
+from .strand_cross_sections import StrandCrossSection
 
 __all__ = [
     "RodConstitutiveLaw",
-    "RodSectionProperties",
+    "RodCrossSectionProperties",
     "TransverseShearRodModel",
     "TorsionRodModel",
     "spatial_inertia",
     "ContinuumLinkParams",
     "CrossSectionGeometry",
     "CrossSectionParams",
-    "StrandSection",
+    "StrandCrossSection",
     "IsotropicMaterialParams",
     "JOINT_DOF",
     "JointParams",

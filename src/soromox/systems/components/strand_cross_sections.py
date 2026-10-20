@@ -12,17 +12,17 @@ from soromox.systems.components.cross_sections import (
 )
 from soromox.systems.params import BaseSystemParams
 
-__all__ = ["StrandSection"]
+__all__ = ["StrandCrossSection"]
 
 
-class StrandSection(BaseSystemParams):
-    """Constant circular or rectangular section normal to a strand's x axis.
+class StrandCrossSection(BaseSystemParams):
+    """Constant circular or rectangular cross-section normal to a strand's x axis.
 
     Attributes:
         geometry: Static cross-section family.
         outer_dimensions: Dynamic dimensions [m]: ``[radius]`` for circles or
             ``[height, width]`` for rectangles. Height spans local y, width z.
-        wall_thickness: Uniform wall [m] for a hollow section; None for solid.
+        wall_thickness: Uniform wall [m] for a hollow cross-section; None for solid.
     """
 
     geometry: CrossSectionGeometry = eqx.field(static=True)
@@ -46,7 +46,7 @@ class StrandSection(BaseSystemParams):
 
     @classmethod
     def circular(cls, radius: float) -> Self:
-        """Construct a solid circular section with radius in metres."""
+        """Construct a solid circular cross-section with radius in metres."""
         return cls(CrossSectionGeometry.CIRCULAR, jnp.asarray([radius]))
 
     @classmethod
@@ -97,7 +97,7 @@ class StrandSection(BaseSystemParams):
 
     @property
     def inner_dimensions(self) -> Array | None:
-        """Dimensions of the centred cavity, or None for a solid section."""
+        """Dimensions of the centred cavity, or None for a solid cross-section."""
         if self.wall_thickness is None:
             return None
         return section_inner_dimensions(

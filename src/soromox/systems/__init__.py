@@ -16,13 +16,13 @@ from soromox.systems.components import (
     JointSpec,
     LinearProfile,
     LinkSpec,
-    StrandSection,
+    StrandCrossSection,
     shear_modulus_from_poisson_ratio,
 )
 from soromox.systems.components.inertia import spatial_inertia
 from soromox.systems.components.rod_constitutive_laws import (
     RodConstitutiveLaw,
-    RodSectionProperties,
+    RodCrossSectionProperties,
     TorsionRodModel,
     TransverseShearRodModel,
 )
@@ -77,7 +77,7 @@ from .pendulum import Pendulum
 
 __all__ = [
     "RodConstitutiveLaw",
-    "RodSectionProperties",
+    "RodCrossSectionProperties",
     "TransverseShearRodModel",
     "TorsionRodModel",
     "spatial_inertia",
@@ -88,7 +88,7 @@ __all__ = [
     "SoftRobot",
     "CrossSectionGeometry",
     "CrossSectionParams",
-    "StrandSection",
+    "StrandCrossSection",
     "ContinuumLinkParams",
     "JointParams",
     "IsotropicMaterialParams",

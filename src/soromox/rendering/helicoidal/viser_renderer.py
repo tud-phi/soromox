@@ -11,7 +11,7 @@ from soromox.rendering.config import RendererConfig
 from soromox.rendering.config.colors import validate_rgb
 from soromox.rendering.cross_sections import CrossSection, sweep_cross_sections
 from soromox.rendering.viser_renderer import ViserRenderer
-from soromox.systems.components import CrossSectionGeometry, StrandSection
+from soromox.systems.components import CrossSectionGeometry, StrandCrossSection
 from soromox.systems.gvs.helicoidal import Helicoidal
 from soromox.systems.gvs.params import HelicoidalHelixParams
 
@@ -30,9 +30,9 @@ class HelicoidalModuleVisual:
         segment_index: Index of the GVS link carrying the lattice.
         turns: Number of turns along the link's reference length.
         strands_per_family: Equally spaced helices in each winding direction.
-        strand_section: Shared strand geometry. Height follows the projected
+        strand_cross_section: Shared strand geometry. Height follows the projected
             outward radial direction (local y); width follows local z. Defaults
-            to a solid circular section with a 2 mm radius.
+            to a solid circular cross-section with a 2 mm radius.
         phase: Starting azimuth of the negative winding family [rad].
         family_phase: Additional azimuth of the positive winding family [rad].
 
@@ -45,14 +45,14 @@ class HelicoidalModuleVisual:
     strands_per_family: int = 3
     phase: float = 0.0
     family_phase: float = np.pi / 6
-    strand_section: StrandSection = field(
-        default_factory=lambda: StrandSection.circular(0.002)
+    strand_cross_section: StrandCrossSection = field(
+        default_factory=lambda: StrandCrossSection.circular(0.002)
     )
 
     def __post_init__(self) -> None:
-        if not isinstance(self.strand_section, StrandSection):
-            raise TypeError("strand_section must be a StrandSection.")
-        self.strand_section.validate_for_update()
+        if not isinstance(self.strand_cross_section, StrandCrossSection):
+            raise TypeError("strand_cross_section must be a StrandCrossSection.")
+        self.strand_cross_section.validate_for_update()
         for name, minimum in (("segment_index", 0), ("strands_per_family", 1)):
             value = getattr(self, name)
             if (
@@ -73,37 +73,40 @@ class HelicoidalModuleVisual:
         segment_index: int,
         params: HelicoidalHelixParams,
         *,
-        strand_section: StrandSection | None = None,
+        strand_cross_section: StrandCrossSection | None = None,
     ) -> HelicoidalModuleVisual:
         """Copy strand geometry and winding parameters from helix inputs.
 
-        Supply ``strand_section`` explicitly for property-only helix inputs.
+        Supply ``strand_cross_section`` explicitly for property-only helix inputs.
         The link's existing circular envelope supplies the centreline radius;
         it should match ``params.radius_base`` and ``params.radius_tip``.
-        End-ring tube radius defaults to 2 mm, independently of strand geometry.
         """
         if not isinstance(params, HelicoidalHelixParams):
             raise TypeError("params must be HelicoidalHelixParams.")
-        section = params.strand_section if strand_section is None else strand_section
+        section = (
+            params.strand_cross_section
+            if strand_cross_section is None
+            else strand_cross_section
+        )
         if section is None:
             raise ValueError(
-                "Helix inputs have no strand geometry; supply strand_section explicitly."
+                "Helix inputs have no strand geometry; supply strand_cross_section explicitly."
             )
-        if not isinstance(section, StrandSection):
-            raise TypeError("strand_section must be a StrandSection.")
+        if not isinstance(section, StrandCrossSection):
+            raise TypeError("strand_cross_section must be a StrandCrossSection.")
         return cls(
             segment_index=segment_index,
             turns=float(params.num_turns),
             strands_per_family=params.helices_per_direction,
             phase=float(params.phase),
             family_phase=float(params.winding_family_phase_offset),
-            strand_section=section,
+            strand_cross_section=section,
         )
 
     @property
     def strand_radial_extent(self) -> float:
         """Half-extent of the strand along its local radial direction [m]."""
-        return float(self.strand_section.radial_extent)
+        return float(self.strand_cross_section.radial_extent)
 
 
 @dataclass(frozen=True)
@@ -208,8 +211,10 @@ class HelicoidalViserRenderer(ViserRenderer):
         auto_start = kwargs.pop("auto_start", True)
         super().__init__(robot, config=cfg, auto_start=False, **kwargs)
         self._module_by_link = {m.segment_index: m for m in self.modules}
-        self._strand_sections = {
-            m.segment_index: CrossSection.from_strand_section(m.strand_section)
+        self._strand_cross_sections = {
+            m.segment_index: CrossSection.from_strand_cross_section(
+                m.strand_cross_section
+            )
             for m in self.modules
         }
         start, end = self._segment_bounds(self.num_points)
@@ -278,7 +283,7 @@ class HelicoidalViserRenderer(ViserRenderer):
                     vertices, faces = sweep_cross_sections(
                         centers,
                         _strand_frames(centers, radial),
-                        self._strand_sections[index],
+                        self._strand_cross_sections[index],
                         cfg.strand_sections,
                     )
                     yield (

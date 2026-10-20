@@ -15,7 +15,7 @@ from soromox.rendering import (
     HelicoidalVisualConfig,
 )
 from soromox.rendering.viser_renderer import SceneHandles
-from soromox.systems import StrandSection
+from soromox.systems import StrandCrossSection
 
 jax.config.update("jax_enable_x64", True)
 
@@ -51,13 +51,14 @@ def robot():
     return build_robot(num_gauss_points=5)
 
 
-def renderer_for(robot, strand_section=None):
-    if strand_section is None:
-        strand_section = StrandSection.circular(0.002)
+def renderer_for(robot, strand_cross_section=None):
+    if strand_cross_section is None:
+        strand_cross_section = StrandCrossSection.circular(0.002)
     return HelicoidalViserRenderer(
         robot,
         modules=tuple(
-            HelicoidalModuleVisual(i, strand_section=strand_section) for i in (1, 3, 5)
+            HelicoidalModuleVisual(i, strand_cross_section=strand_cross_section)
+            for i in (1, 3, 5)
         ),
         auto_start=False,
         open_browser=False,
@@ -100,25 +101,25 @@ def test_module_selection_validation(robot):
 
 
 def test_adapter_copies_geometry_and_winding_parameters():
-    section = StrandSection.rectangular_hollow(
+    section = StrandCrossSection.rectangular_hollow(
         width=0.004, height=0.002, wall_thickness=0.0002
     )
     helix = build_helix_params().replace(
-        strand_section=section,
+        strand_cross_section=section,
         num_turns=2.5,
         phase=0.3,
         winding_family_phase_offset=0.4,
     )
     module = HelicoidalModuleVisual.from_helix_params(1, helix)
-    assert module.strand_section is helix.strand_section
+    assert module.strand_cross_section is helix.strand_cross_section
     assert module.turns == 2.5
     assert module.strands_per_family == helix.helices_per_direction
     assert module.phase == 0.3
     assert module.family_phase == 0.4
     assert module.strand_radial_extent == 0.001
-    properties = helix.strand_properties
+    properties = helix.strand_cross_section_properties
     properties_only = helix.replace(
-        strand_section=None,
+        strand_cross_section=None,
         strand_area_override=properties.area,
         strand_second_moments_override=properties.second_moments,
         strand_torsion_constant_override=properties.torsion_constant,
@@ -127,22 +128,24 @@ def test_adapter_copies_geometry_and_winding_parameters():
     with pytest.raises(ValueError, match="no strand geometry"):
         HelicoidalModuleVisual.from_helix_params(1, properties_only)
     explicit = HelicoidalModuleVisual.from_helix_params(
-        1, properties_only, strand_section=section
+        1, properties_only, strand_cross_section=section
     )
-    assert explicit.strand_section is section
+    assert explicit.strand_cross_section is section
     circular = HelicoidalModuleVisual.from_helix_params(1, build_helix_params())
-    assert_allclose(circular.strand_section.outer_dimensions, [0.002])
+    assert_allclose(circular.strand_cross_section.outer_dimensions, [0.002])
 
 
 def test_module_requires_a_section_object():
-    with pytest.raises(TypeError, match="strand_section must be a StrandSection"):
-        HelicoidalModuleVisual(1, strand_section=None)
+    with pytest.raises(
+        TypeError, match="strand_cross_section must be a StrandCrossSection"
+    ):
+        HelicoidalModuleVisual(1, strand_cross_section=None)
 
 
 def test_strand_extent_is_validated(robot):
     module = HelicoidalModuleVisual(
         1,
-        strand_section=StrandSection.rectangular_hollow(
+        strand_cross_section=StrandCrossSection.rectangular_hollow(
             width=0.002, height=0.06, wall_thickness=0.0002
         ),
     )
@@ -199,12 +202,12 @@ def test_batched_deformation_updates_handles_and_rebuild_removes_old_meshes(
     robot, shape
 ):
     sections = {
-        "circular": StrandSection.circular(0.002),
-        "circular_hollow": StrandSection.circular_hollow(
+        "circular": StrandCrossSection.circular(0.002),
+        "circular_hollow": StrandCrossSection.circular_hollow(
             radius=0.002, wall_thickness=0.0002
         ),
-        "rectangular": StrandSection.rectangular(width=0.004, height=0.002),
-        "rectangular_hollow": StrandSection.rectangular_hollow(
+        "rectangular": StrandCrossSection.rectangular(width=0.004, height=0.002),
+        "rectangular_hollow": StrandCrossSection.rectangular_hollow(
             width=0.004, height=0.002, wall_thickness=0.0002
         ),
     }

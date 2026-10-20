@@ -14,8 +14,8 @@ from soromox.systems.components import (
     ContinuumLinkParams,
     JointParams,
     RodConstitutiveLaw,
-    RodSectionProperties,
-    StrandSection,
+    RodCrossSectionProperties,
+    StrandCrossSection,
     TorsionRodModel,
     TransverseShearRodModel,
     spatial_inertia,
@@ -400,8 +400,8 @@ class HelicoidalHelixParams(BaseSystemParams):
             additively, neglecting overlap at fused crossings.
         young_modulus: Strand material Young's modulus [Pa].
         shear_modulus: Strand material shear modulus [Pa].
-        strand_section: Optional shared geometry retained by the named section
-            constructors. Direct property-only construction leaves it unset.
+        strand_cross_section: Optional strand cross-section geometry retained by
+            the shape constructors. Direct property-only construction leaves it unset.
         strand_constitutive_law: Static strand shear/torsion choices. Defaults
             use effective shear and Saint-Venant torsion, with Marshall for
             rectangles. Cowper shear uses Poisson ratio E/(2G)-1.
@@ -467,7 +467,7 @@ class HelicoidalHelixParams(BaseSystemParams):
     fusion_stiffness_multiplier: Array = 4.0
     tip_attachment_stiffness_multiplier: Array = 10.0
     damping_time_constant: Array = 0.0
-    strand_section: StrandSection | None = None
+    strand_cross_section: StrandCrossSection | None = None
 
     def __check_init__(self) -> None:
         for name in HelicoidalHelixParams.__annotations__:
@@ -475,7 +475,7 @@ class HelicoidalHelixParams(BaseSystemParams):
                 name
                 not in {
                     "helices_per_direction",
-                    "strand_section",
+                    "strand_cross_section",
                     "strand_constitutive_law",
                 }
                 and getattr(self, name) is not None
@@ -499,30 +499,34 @@ class HelicoidalHelixParams(BaseSystemParams):
         return replace(self, **updates)
 
     @classmethod
-    def from_section(cls, strand_section: StrandSection, **kwargs) -> Self:
+    def from_cross_section(
+        cls, strand_cross_section: StrandCrossSection, **kwargs
+    ) -> Self:
         """Derive mechanical properties and retain geometry for visualization.
 
         Geometry, material and the strand law determine the current properties.
         Optional ``strand_*_override`` keywords supply calibrated properties.
         Other keywords specify lattice geometry, material and fusion.
         """
-        if not isinstance(strand_section, StrandSection):
-            raise TypeError("strand_section must be a StrandSection.")
-        strand_section.validate_for_update()
-        return cls(strand_section=strand_section, **kwargs)
+        if not isinstance(strand_cross_section, StrandCrossSection):
+            raise TypeError("strand_cross_section must be a StrandCrossSection.")
+        strand_cross_section.validate_for_update()
+        return cls(strand_cross_section=strand_cross_section, **kwargs)
 
     @classmethod
     def circular(cls, *, strand_radius: float, **kwargs) -> Self:
         """Construct solid circular strands, retaining their radius [m]."""
-        return cls.from_section(StrandSection.circular(strand_radius), **kwargs)
+        return cls.from_cross_section(
+            StrandCrossSection.circular(strand_radius), **kwargs
+        )
 
     @classmethod
     def circular_hollow(
         cls, *, strand_radius: float, wall_thickness: float, **kwargs
     ) -> Self:
         """Construct circular tubes from outer radius and wall thickness [m]."""
-        return cls.from_section(
-            StrandSection.circular_hollow(
+        return cls.from_cross_section(
+            StrandCrossSection.circular_hollow(
                 radius=strand_radius, wall_thickness=wall_thickness
             ),
             **kwargs,
@@ -531,8 +535,8 @@ class HelicoidalHelixParams(BaseSystemParams):
     @classmethod
     def rectangular(cls, *, width: float, height: float, **kwargs) -> Self:
         """Construct solid rectangular strands with height along y, width along z [m]."""
-        return cls.from_section(
-            StrandSection.rectangular(width=width, height=height), **kwargs
+        return cls.from_cross_section(
+            StrandCrossSection.rectangular(width=width, height=height), **kwargs
         )
 
     @classmethod
@@ -545,30 +549,30 @@ class HelicoidalHelixParams(BaseSystemParams):
         and Jourawski effective shear areas. Calibration overrides can supply
         individual sectional properties.
         """
-        return cls.from_section(
-            StrandSection.rectangular_hollow(
+        return cls.from_cross_section(
+            StrandCrossSection.rectangular_hollow(
                 width=width, height=height, wall_thickness=wall_thickness
             ),
             **kwargs,
         )
 
     @property
-    def strand_properties(self) -> RodSectionProperties:
+    def strand_cross_section_properties(self) -> RodCrossSectionProperties:
         """Resolve current geometry, material and law, then apply calibration overrides.
 
         Derived quantities follow parameter updates without caching. Calibrated
         shear factors multiply the resolved material area to give effective areas.
         """
-        if self.strand_section is None:
+        if self.strand_cross_section is None:
             area = self.strand_area_override
-            return RodSectionProperties(
+            return RodCrossSectionProperties(
                 area,
                 self.strand_second_moments_override,
                 self.strand_torsion_constant_override,
                 area * self.strand_shear_factors_override,
             )
-        section = self.strand_section
-        derived = self.strand_constitutive_law.section_properties(
+        section = self.strand_cross_section
+        derived = self.strand_constitutive_law.cross_section_properties(
             section.geometry,
             section.outer_dimensions,
             section.inner_dimensions,
@@ -590,40 +594,42 @@ class HelicoidalHelixParams(BaseSystemParams):
             if self.strand_torsion_constant_override is None
             else self.strand_torsion_constant_override
         )
-        return RodSectionProperties(
+        return RodCrossSectionProperties(
             area, moments, torsion, area * derived.shear_factors
         )
 
     @property
     def strand_area(self) -> Array:
         """Resolved strand material area [m²]."""
-        return self.strand_properties.area
+        return self.strand_cross_section_properties.area
 
     @property
     def strand_second_moments(self) -> Array:
         """Resolved principal y/z area moments [m⁴]."""
-        return self.strand_properties.second_moments
+        return self.strand_cross_section_properties.second_moments
 
     @property
     def strand_torsion_constant(self) -> Array:
         """Resolved torsion constant [m⁴]."""
-        return self.strand_properties.torsion_constant
+        return self.strand_cross_section_properties.torsion_constant
 
     @property
     def strand_shear_factors(self) -> Array:
         """Resolved y/z effective-area fractions."""
-        return self.strand_properties.shear_factors
+        return self.strand_cross_section_properties.shear_factors
 
     def validate_structure(self) -> None:
         if not isinstance(self.strand_constitutive_law, RodConstitutiveLaw):
             raise TypeError("strand_constitutive_law must be a RodConstitutiveLaw.")
-        if self.strand_section is not None:
-            if not isinstance(self.strand_section, StrandSection):
-                raise TypeError("strand_section must be a StrandSection or None.")
-            self.strand_section.validate_structure()
+        if self.strand_cross_section is not None:
+            if not isinstance(self.strand_cross_section, StrandCrossSection):
+                raise TypeError(
+                    "strand_cross_section must be a StrandCrossSection or None."
+                )
+            self.strand_cross_section.validate_structure()
             self.strand_constitutive_law.validate_geometry(
-                self.strand_section.geometry,
-                self.strand_section.wall_thickness is not None,
+                self.strand_cross_section.geometry,
+                self.strand_cross_section.wall_thickness is not None,
             )
         elif any(
             getattr(self, name) is None
@@ -646,7 +652,7 @@ class HelicoidalHelixParams(BaseSystemParams):
         for name in HelicoidalHelixParams.__annotations__:
             if name in {
                 "helices_per_direction",
-                "strand_section",
+                "strand_cross_section",
                 "strand_constitutive_law",
             }:
                 continue
@@ -669,17 +675,17 @@ class HelicoidalHelixParams(BaseSystemParams):
             if getattr(self, name).shape != shape:
                 raise ValueError(f"{name} must have shape {shape}.")
 
-        _ = self.strand_properties
+        _ = self.strand_cross_section_properties
 
     def validate_values(self) -> None:
-        if self.strand_section is not None:
-            self.strand_section.validate_values()
+        if self.strand_cross_section is not None:
+            self.strand_cross_section.validate_values()
         for name in HelicoidalHelixParams.__annotations__:
             if (
                 name
                 in {
                     "helices_per_direction",
-                    "strand_section",
+                    "strand_cross_section",
                     "strand_constitutive_law",
                 }
                 or getattr(self, name) is None
@@ -752,7 +758,7 @@ class HelicoidalHelixParams(BaseSystemParams):
         normal = radial - jnp.sum(radial * tangent, axis=-1, keepdims=True) * tangent
         normal = normal / jnp.linalg.norm(normal, axis=-1, keepdims=True)
         frame = jnp.stack((tangent, normal, jnp.cross(tangent, normal)), axis=-1)
-        properties = self.strand_properties
+        properties = self.strand_cross_section_properties
         iy, iz = properties.second_moments
         # Polar area moment Iy+Iz determines mass inertia; Saint-Venant's
         # torsion constant describes elasticity and can differ for noncircles.
