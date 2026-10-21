@@ -2,7 +2,12 @@
 
 The coordinates used here are supplied by the common
 [actuation model](../actuation/index.md), including signed/scaled threadlike
-coordinates rather than raw tendon lengths.
+coordinates rather than raw tendon lengths. The collocated controller formulas
+in this chapter assume an ideal transmission with (A=J_a^T). For a lossy
+transmission, such as continuum Capstan friction,
+`ActuationSpaceDynamics.actuation_matrix(q)` returns the transformed physical
+force map (J^{-T}A), which need not equal ([I;0]); the current controllers do
+not compensate that loss automatically.
 
 Actuation-space controllers operate in a transformed coordinate system where the actuation matrix becomes a simple identity structure. This formulation, developed by [Pustina et al. (2024)](#references) and further elaborated in [Pustina (2025)](#references), provides a clean separation between actuated and unactuated dynamics, making it particularly well-suited for underactuated soft robots.
 

@@ -12,6 +12,7 @@ from soromox.actuation.threadlike import (
     ThreadlikeActuator,
     linear_threadlike_routing,
     linear_threadlike_routing_derivative,
+    linear_threadlike_routing_second_derivative,
 )
 
 
@@ -68,7 +69,7 @@ class LinearThreadlikeActuationData(eqx.Module):
 
 
 def _uses_builtin_linear_routing(actuator) -> bool:
-    """Return whether one actuator has the exact built-in linear runtime."""
+    """Return whether one actuator has the exact frictionless linear runtime."""
 
     if not isinstance(actuator, ThreadlikeActuator):
         return False
@@ -77,18 +78,21 @@ def _uses_builtin_linear_routing(actuator) -> bool:
         isinstance(routing.params, LinearThreadlikeRoutingParams)
         and routing.offset_fn is linear_threadlike_routing
         and routing.derivative_fn is linear_threadlike_routing_derivative
+        and routing.second_derivative_fn
+        in (None, linear_threadlike_routing_second_derivative)
+        and actuator.transmission.friction.is_frictionless
     )
 
 
 def supports_linear_threadlike_matrix(model) -> bool:
-    """Return whether all active transmission columns have Warp-linear routing."""
+    """Return whether every active column has frictionless Warp-linear routing."""
 
     actuators = tuple(getattr(model, "actuators", ()))
     return bool(actuators) and all(_uses_builtin_linear_routing(a) for a in actuators)
 
 
 def supports_linear_threadlike_force(model) -> bool:
-    """Return whether the matrix may be fused with direct actuator controls."""
+    """Return whether frictionless direct controls may use the fused Warp force."""
 
     return supports_linear_threadlike_matrix(model) and all(
         type(actuator.effort_model) is DirectEffort for actuator in model.actuators

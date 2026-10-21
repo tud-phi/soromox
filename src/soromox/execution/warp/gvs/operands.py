@@ -262,8 +262,8 @@ class GVSPipelineShapes:
     External integrators can construct this object once for their fixed batch
     size, allocate Warp arrays for each returned output mapping, and reuse those
     buffers for every step and CUDA graph replay. The names match the arguments
-    of :func:`launch_joint_terms`, :func:`launch_cell_terms`, and
-    :func:`launch_persistent_chain`.
+    of :func:`launch_homogeneous_joint_terms`, :func:`launch_homogeneous_cell_terms`, and
+    :func:`launch_homogeneous_persistent_chain`.
 
     Attributes:
         batch_size: Number of independent environments.

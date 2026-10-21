@@ -165,25 +165,32 @@ Coriolis/centrifugal, and gravity terms together, call `dynamics_terms`.
 
 ### Threadlike actuation
 
-Built-in linear threadlike layouts have public Warp-native operands, FP64
-kernels, and allocation-free launchers for actuation matrices `(E, D, A)` and
-fused direct-effort forces `(E, D)`. These low-level APIs are always available
-from `soromox.execution.warp.pcs` and `.gvs` for Newton and other
-Warp-native integrations. They support multiple ordered threadlike actuator
-groups and every built-in modality.
+Built-in frictionless linear threadlike layouts have public Warp-native
+operands, FP64 kernels, and allocation-free launchers for actuation matrices
+`(E, D, A)` and fused direct-effort forces `(E, D)`. These low-level APIs are
+always available from `soromox.execution.warp.pcs` and `.gvs` for Newton and
+other Warp-native integrations. They support multiple ordered threadlike
+actuator groups and every built-in modality; non-frictionless
+`ThreadlikeFriction` models are not yet implemented by these kernels.
 
 For spatial `PCS`, `actuation_matrix` uses the Warp implementation when the GPU
-backend is selected. `PlanarPCS` and `GVS` actuation matrices, and all
-system-level `actuation_force` methods, use JAX. Passing `backend="warp"` for an
-unsupported system-level operation explains how to access the low-level
-Warp-native API. Passive threadlike impedance and actuator path coordinates
-also remain JAX operations.
+backend is selected and all active transmissions are frictionless. Installing
+a non-frictionless `ThreadlikeFriction` keeps the matrix on JAX under
+`backend="auto"`, while an explicit `backend="warp"` request raises an error.
+`PlanarPCS` and `GVS` actuation matrices, and all system-level
+`actuation_force` methods, use JAX. Passing `backend="warp"` for an unsupported
+system-level operation explains how to access the low-level Warp-native API.
+Passive threadlike impedance and actuator path coordinates also remain JAX
+operations.
 
-When Warp dynamics is selected, eligible built-in linear threadlike actuation
-is fused with the dynamics evaluation. This fused path supports GVS on CPU and
-GPU, and PlanarPCS and PCS on GPU. Because `"auto"` selects JAX on CPU, CPU GVS
-fusion is used only when Warp is selected explicitly. Other actuation layouts
-use Warp dynamics and evaluate actuation with JAX.
+When Warp dynamics is selected, eligible built-in frictionless linear
+threadlike actuation is fused with the dynamics evaluation. The fused path is
+not used when an active transmission has a non-frictionless
+`ThreadlikeFriction`; those models use Warp dynamics and evaluate actuation
+with JAX. Fusion supports GVS on CPU and GPU, and PlanarPCS and PCS on GPU.
+Because `"auto"` selects JAX on CPU, CPU GVS fusion is used only when Warp is
+selected explicitly. Other actuation layouts also use Warp dynamics and
+evaluate actuation with JAX.
 
 ## Model-level and per-call selection
 

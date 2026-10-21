@@ -14,6 +14,14 @@ Describe the delta from the last release, not intermediate development changes.
 
 ### Added
 
+- Added optional continuum Capstan friction for active threadlike actuation in
+  PCS, PlanarPCS, and GVS, with analytical routed-path turn and custom friction
+  laws; see [threadlike actuation](../api/actuation/threadlike.md#continuum-capstan-friction).
+
+- Native Warp GVS kernels for heterogeneous worlds, with FP64 dynamics,
+  kinematics and actuation across different joints and strain bases; see
+  [PR #227](https://github.com/tud-phi/soromox/pull/227).
+
 - GVS-based `Helicoidal` models for trimmed-helicoid robots, with analytic
   sectional mechanics, per-strain damping, helix-domain material inputs,
   strand-derived inertia, a simulation example, and a dedicated Viser renderer.
@@ -41,6 +49,9 @@ Describe the delta from the last release, not intermediate development changes.
 
 ### Changed
 
+- `ActuationSpaceDynamics` now uses the actuator-coordinate Jacobian for its
+  coordinate map and explicitly transforms potentially lossy actuation matrices.
+
 - Shared PCS/GVS dynamics support full sectional and tip inertia in JAX and Warp;
   see [PR #229](https://github.com/tud-phi/soromox/pull/229).
 - Refreshed the numerical and rendering dependency lock for Python 3.15,
@@ -52,6 +63,17 @@ Describe the delta from the last release, not intermediate development changes.
 
 ### Breaking changes
 
+- Replaced `Transmission.moment_matrix(...)` with `coordinate_jacobian(...)`
+  and `actuation_matrix(...)`, and added `SoftRobot.actuator_coordinate_jacobian(...)`.
+  The matrices are transposes for ideal transmissions; lossy transmissions may
+  differ. No compatibility alias is retained.
+
+- Renamed direct GVS Warp kernels and launchers to `homogeneous_*_kernel`
+  and `launch_homogeneous_*`; homogeneous kernels take the shared `*Data`
+  structs, while host launchers retain array arguments. Integration callers
+  must use the explicit names and updated kernel signatures.
+  See the [batch layout contracts](../api/execution/warp/gvs.md#batch-layouts-and-naming)
+  and [PR #227](https://github.com/tud-phi/soromox/pull/227).
 - `SoftRobot.cross_section_geometry(q, s)` now returns
   `(geometry, outer_dimensions, inner_dimensions)` instead of a pair.
   Update custom implementations to return `None` as the third value for solid
@@ -81,6 +103,9 @@ Describe the delta from the last release, not intermediate development changes.
   rendering guard, allowing image/video export and modern windows.
 
 ### Documentation
+
+- Documented the continuum Capstan derivation, actuator-coordinate scales,
+  local length-gradient notation, and distinction from discrete spacer disks.
 
 - Updated the [sequential CPU rollout results](../research.md#sequential-cpu-rollouts)
   to match the latest paper version, reporting up to 27.0× speedup over SoRoSim for

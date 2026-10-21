@@ -10,6 +10,17 @@ from .core import (
     PassiveElement,
     Transmission,
 )
+from .friction import (
+    BaseThreadlikeFrictionParams,
+    CapstanFrictionParams,
+    FrictionlessParams,
+    ThreadlikeFriction,
+    capstan_effort_ratio,
+    frictionless_effort_ratio,
+    threadlike_constant_strain_turn_rate,
+    threadlike_tangent,
+    threadlike_turn_rate,
+)
 from .joint import (
     AffineGeneralizedCoordinateActuator,
     AffineGeneralizedCoordinateActuatorParams,
@@ -38,6 +49,7 @@ from .threadlike import (
     ThreadlikeTransmissionParams,
     linear_threadlike_routing,
     linear_threadlike_routing_derivative,
+    linear_threadlike_routing_second_derivative,
 )
 
 __all__ = [
@@ -61,9 +73,13 @@ __all__ = [
     "ArticulatedMcKibbenActuatorParams",
     "ArticulatedMcKibbenTransmission",
     "ArticulatedMcKibbenTransmissionParams",
+    "BaseThreadlikeFrictionParams",
     "BaseThreadlikeRoutingParams",
+    "CapstanFrictionParams",
+    "FrictionlessParams",
     "LinearThreadlikeRoutingParams",
     "PassiveElement",
+    "ThreadlikeFriction",
     "ThreadlikeActuator",
     "ThreadlikeActuatorParams",
     "ThreadlikeImpedance",
@@ -72,6 +88,12 @@ __all__ = [
     "ThreadlikeTransmission",
     "ThreadlikeTransmissionParams",
     "Transmission",
+    "capstan_effort_ratio",
+    "frictionless_effort_ratio",
     "linear_threadlike_routing",
     "linear_threadlike_routing_derivative",
+    "linear_threadlike_routing_second_derivative",
+    "threadlike_constant_strain_turn_rate",
+    "threadlike_tangent",
+    "threadlike_turn_rate",
 ]

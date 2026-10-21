@@ -1,3 +1,4 @@
+import jax
 import jax.numpy as jnp
 import pytest
 from numpy.testing import assert_allclose
@@ -90,6 +91,22 @@ def test_antagonistic_coordinates_make_actuation_square_and_invertible(robot):
     pressure_map = antagonistic_pressure_map(robot)
     q = DEFAULT_INITIAL_CONFIGURATION
     virtual_actuation = control_model.actuation_matrix(q)
+
+    coordinate_jacobian = control_model.actuator_coordinate_jacobian(q)
+    assert coordinate_jacobian.shape == (12, 12)
+    assert_allclose(
+        coordinate_jacobian,
+        jax.jacfwd(control_model.actuator_coordinates)(q),
+        rtol=1.0e-12,
+        atol=1.0e-12,
+    )
+    qd = jnp.linspace(-0.1, 0.1, robot.num_internal_dofs)
+    assert_allclose(
+        control_model.actuator_velocities(q, qd),
+        coordinate_jacobian @ qd,
+        rtol=1.0e-12,
+        atol=1.0e-12,
+    )
 
     assert isinstance(control_model, McKibbenActuatedUMArm)
     assert pressure_map.shape == (24, 12)
