@@ -54,6 +54,41 @@ def _accumulate_mass_point(
     Diagonal inertia keeps its direct product, avoiding the extra I*J traffic.
     Tip zero checks use exact runtime values, so changing parameters or replaying
     a captured graph with a newly nonzero tip cannot silently drop its inertia.
+
+    Args:
+        environment: Batch row in the supplied arrays; zero for a packed world.
+        lane: Thread index within the cooperative chain block.
+        lane_stride: Number of active cooperative lanes; one on CPU.
+        active_dofs: Number of generalized velocities active at this mass point.
+        item: Row of weighted_masses for the current section or link tip.
+        is_tip: Whether this is a unit-weight tip contribution eligible for
+            exact zero-inertia skipping.
+        current_is_first: Whether the first transport buffers hold the current
+            state; the other buffers provide temporary storage.
+        weighted_masses: Weighted diagonal entries with shape (items, 6), or
+            full spatial inertia matrices with shape (items, 36) in row-major,
+            angular-first order. Tip entries have unit weight.
+        inertia_upper_rows: Row indices of the packed upper inertia triangle.
+        inertia_upper_columns: Column indices of the packed upper triangle.
+        jacobian_first: First Jacobian buffer, with six rows per environment.
+        jacobian_second: Second Jacobian buffer; the inactive buffer stores I*J
+            for full inertia until the next transport.
+        jacobian_dot_qd_first: First buffer for the Jacobian-derivative action.
+        jacobian_dot_qd_second: Second derivative-action buffer; the inactive
+            buffer stores the inertial wrench until the next transport.
+        velocity_first: First buffer of angular-first spatial velocities.
+        velocity_second: Second spatial-velocity buffer.
+        gravity_first: First buffer of local spatial gravity.
+        gravity_second: Second local-gravity buffer; the inactive buffer stores
+            weighted gravity until the next transport.
+        inertia: Batched generalized inertia matrices, updated by accumulation.
+        coriolis_qd: Batched convective forces, updated by accumulation.
+        gravity_force: Batched generalized gravity forces, updated by accumulation.
+
+    Returns:
+        None. Accumulates into inertia, coriolis_qd, and gravity_force and
+        overwrites inactive workspace buffers. An exactly zero tip leaves
+        outputs and transport buffers unchanged.
     """
     state_base_row = environment * 6
     scratch_is_first = not current_is_first
