@@ -455,50 +455,29 @@ class HelicoidalHelixParams(BaseSystemParams):
         )
 
     @classmethod
-    def rectangular_hollow(
-        cls, *, width: float, height: float, wall_thickness: float, **kwargs
-    ) -> Self:
-        """Construct hollow rectangular strand sections from outer size and wall [m].
+    def rectangular_hollow(cls, *, width: float, height: float, **kwargs) -> Self:
+        """Construct solid rectangular strand sections from their outer size [m].
 
-        ``width`` spans the strand's local y (radial) axis and ``height`` its
-        local z axis. Torsion uses Bredt's thin-walled formula ``4 A_m^2 t / P_m``.
+        Despite the name, the section is solid. ``width`` spans the strand's
+        local y (radial) axis and ``height`` its local z (circumferential) axis.
+        Area and second moments are the exact solid-rectangle values. Torsion
+        uses the Saint-Venant closed-form approximation for solid rectangles,
+        ``a b^3 (1/3 - 0.21 (b/a) (1 - b^4 / (12 a^4)))`` with ``a >= b`` the
+        side lengths, accurate to well under one percent for all aspect ratios.
         Remaining keyword arguments specify geometry, material and fusion as in
-        the constructor. Shear correction defaults to the thin-wall web areas
-        ``2 h t / A`` and ``2 w t / A``.
+        the constructor. Shear correction defaults to the Timoshenko value 5/6
+        along both axes.
         """
-        width, height, thickness = (
-            float(width),
-            float(height),
-            float(wall_thickness),
-        )
-        for name, value in (
-            ("width", width),
-            ("height", height),
-            ("wall_thickness", thickness),
-        ):
+        width, height = float(width), float(height)
+        for name, value in (("width", width), ("height", height)):
             if not np.isfinite(value) or value <= 0:
                 raise ValueError(f"{name} must be finite and positive.")
-        if 2 * thickness >= min(width, height):
-            raise ValueError(
-                "wall_thickness must be smaller than half the smaller outer "
-                "dimension so the section remains hollow."
-            )
-        inner_width, inner_height = width - 2 * thickness, height - 2 * thickness
-        area = width * height - inner_width * inner_height
-        moment_y = (width * height**3 - inner_width * inner_height**3) / 12
-        moment_z = (height * width**3 - inner_height * inner_width**3) / 12
-        midline_width, midline_height = width - thickness, height - thickness
-        torsion = (
-            2
-            * thickness
-            * midline_width**2
-            * midline_height**2
-            / (midline_width + midline_height)
-        )
-        kwargs.setdefault(
-            "strand_shear_factors",
-            jnp.array([2 * height * thickness / area, 2 * width * thickness / area]),
-        )
+        area = width * height
+        moment_y = width * height**3 / 12
+        moment_z = height * width**3 / 12
+        a, b = max(width, height), min(width, height)
+        torsion = a * b**3 * (1 / 3 - 0.21 * (b / a) * (1 - b**4 / (12 * a**4)))
+        kwargs.setdefault("strand_shear_factors", jnp.full(2, 5 / 6))
         return cls(
             strand_area=area,
             strand_second_moments=jnp.array([moment_y, moment_z]),

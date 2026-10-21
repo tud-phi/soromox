@@ -15,10 +15,18 @@ from soromox.systems.components import CrossSectionGeometry
 from soromox.systems.gvs.helicoidal import Helicoidal
 
 __all__ = [
+    "RECTANGULAR_STRAND_HEIGHT",
+    "RECTANGULAR_STRAND_WIDTH",
     "HelicoidalModuleVisual",
     "HelicoidalVisualConfig",
     "HelicoidalViserRenderer",
 ]
+
+
+# Default solid rectangular strand section [m]: the N6 module's 12 mm radial
+# width and its 2.9268 mm thickness evaluated at the strand mid-radius.
+RECTANGULAR_STRAND_WIDTH = 0.012
+RECTANGULAR_STRAND_HEIGHT = 0.0029268
 
 
 @dataclass(frozen=True)
@@ -33,16 +41,18 @@ class HelicoidalModuleVisual:
             tube radius of the end rings for every strand section.
         phase: Starting azimuth of the negative winding family [rad].
         family_phase: Additional azimuth of the positive winding family [rad].
-        strand_width: Outer extent of a hollow rectangular strand section along
-            the strand's local y axis, the projected outward radial direction
-            [m]. Supply with ``strand_height`` and ``strand_wall_thickness`` to
-            select the hollow rectangular section; otherwise strands are
-            circular tubes of ``strand_radius``.
-        strand_height: Outer extent of a hollow rectangular strand section
-            along the strand's local z axis, the circumferential direction [m].
-        strand_wall_thickness: Uniform wall thickness of a hollow rectangular
-            strand section [m]; must be less than half the smaller outer
-            dimension.
+        strand_shape: ``"circular"`` (the default) for tubes of
+            ``strand_radius``, or ``"rectangular_hollow"`` for a solid
+            rectangular section (the identifier is kept for compatibility; the
+            section is solid). Leave ``None`` to infer the shape: rectangular
+            when ``strand_width`` and ``strand_height`` are supplied, circular
+            otherwise.
+        strand_width: Extent of the rectangular section along the strand's
+            local y axis, the projected outward radial direction [m]. Defaults
+            to ``RECTANGULAR_STRAND_WIDTH`` for rectangular strands.
+        strand_height: Extent of the rectangular section along the strand's
+            local z axis, the circumferential direction [m]. Defaults to
+            ``RECTANGULAR_STRAND_HEIGHT`` for rectangular strands.
 
     The circular link cross section specifies the helix centerline radius.
     Geometry follows the rod's material frames, including bending and twist.
@@ -57,9 +67,9 @@ class HelicoidalModuleVisual:
     strand_radius: float = 0.002
     phase: float = 0.0
     family_phase: float = np.pi / 6
+    strand_shape: str | None = None
     strand_width: float | None = None
     strand_height: float | None = None
-    strand_wall_thickness: float | None = None
 
     def __post_init__(self) -> None:
         for name, minimum in (("segment_index", 0), ("strands_per_family", 1)):
@@ -76,30 +86,32 @@ class HelicoidalModuleVisual:
         for name in ("phase", "family_phase"):
             if not np.isfinite(getattr(self, name)):
                 raise ValueError(f"{name} must be finite.")
-        rectangular = ("strand_width", "strand_height", "strand_wall_thickness")
+        rectangular = ("strand_width", "strand_height")
         given = [getattr(self, name) is not None for name in rectangular]
-        if any(given):
-            if not all(given):
+        shape = self.strand_shape
+        if shape is None:
+            if any(given) and not all(given):
                 raise ValueError(
-                    "strand_width, strand_height and strand_wall_thickness must "
-                    "be supplied together."
+                    "strand_width and strand_height must be supplied together."
                 )
-            for name in rectangular:
-                value = getattr(self, name)
-                if not np.isfinite(value) or value <= 0:
-                    raise ValueError(f"{name} must be finite and positive.")
-            if 2 * self.strand_wall_thickness >= min(
-                self.strand_width, self.strand_height
-            ):
+            shape = "rectangular_hollow" if all(given) else "circular"
+            object.__setattr__(self, "strand_shape", shape)
+        if shape == "circular":
+            if any(given):
                 raise ValueError(
-                    "strand_wall_thickness must be smaller than half the smaller "
-                    "outer dimension so the section remains hollow."
+                    "strand_width and strand_height apply to rectangular strands."
                 )
-
-    @property
-    def strand_shape(self) -> str:
-        """``"circular"`` or ``"rectangular_hollow"``."""
-        return "circular" if self.strand_width is None else "rectangular_hollow"
+            return
+        if shape != "rectangular_hollow":
+            raise ValueError('strand_shape must be "circular" or "rectangular_hollow".')
+        if self.strand_width is None:
+            object.__setattr__(self, "strand_width", RECTANGULAR_STRAND_WIDTH)
+        if self.strand_height is None:
+            object.__setattr__(self, "strand_height", RECTANGULAR_STRAND_HEIGHT)
+        for name in rectangular:
+            value = getattr(self, name)
+            if not np.isfinite(value) or value <= 0:
+                raise ValueError(f"{name} must be finite and positive.")
 
     @property
     def strand_radial_extent(self) -> float:
@@ -218,59 +230,24 @@ def _rectangle_loop(width: float, height: float) -> np.ndarray:
     return np.array([[y, -z], [y, z], [-y, z], [-y, -z]])
 
 
-def _hollow_rectangular_vertices(
-    centers: np.ndarray,
-    radial: np.ndarray,
-    width: float,
-    height: float,
-    thickness: float,
+def _rectangular_vertices(
+    centers: np.ndarray, radial: np.ndarray, width: float, height: float
 ) -> np.ndarray:
-    """Sweep hollow rectangular sections normal to a deformed strand's tangent.
+    """Sweep solid rectangular sections normal to a deformed strand's tangent.
 
-    Width lies along local y and height along local z. The outer loops of all
-    stations precede the inner loops, four vertices each, so vertex counts and
-    ordering stay fixed during animation.
+    Width lies along local y and height along local z. Each station carries the
+    four corners of ``_rectangle_loop`` followed by the two cap centres from
+    ``_capped_vertices``, so vertex counts and ordering stay fixed during
+    animation.
     """
     normal, binormal = _strand_frames(centers, radial)
-    loops = np.stack(
-        (
-            _rectangle_loop(width, height),
-            _rectangle_loop(width - 2 * thickness, height - 2 * thickness),
-        )
-    )
+    loop = _rectangle_loop(width, height)
     rings = (
-        centers[None, :, None]
-        + loops[:, None, :, 0, None] * normal[None, :, None]
-        + loops[:, None, :, 1, None] * binormal[None, :, None]
+        centers[:, None]
+        + loop[None, :, 0, None] * normal[:, None]
+        + loop[None, :, 1, None] * binormal[:, None]
     )
-    return rings.reshape(-1, 3).astype(np.float32)
-
-
-@lru_cache(maxsize=64)
-def _hollow_rectangular_faces(rings: int) -> np.ndarray:
-    """Triangulate outer walls, cavity walls, and annular end caps.
-
-    Outer walls face away from the strand, cavity walls face into the cavity,
-    and the caps face along the negative and positive sweep tangents.
-    """
-    outer = _side_faces(rings, 4)
-    inner_offset = 4 * rings
-    inner = [
-        (a + inner_offset, c + inner_offset, b + inner_offset) for a, b, c in outer
-    ]
-    caps = []
-    last = 4 * (rings - 1)
-    for j in range(4):
-        k = (j + 1) % 4
-        caps.extend(
-            (
-                (k, j, inner_offset + j),
-                (k, inner_offset + j, inner_offset + k),
-                (last + j, last + k, inner_offset + last + k),
-                (last + j, inner_offset + last + k, inner_offset + last + j),
-            )
-        )
-    return np.asarray(outer + inner + caps, dtype=np.uint32)
+    return _capped_vertices(rings)
 
 
 def _strand_mesh(
@@ -288,14 +265,10 @@ def _strand_mesh(
             _surface_faces(len(centers), cfg.strand_sections),
         )
     return (
-        _hollow_rectangular_vertices(
-            centers,
-            radial,
-            module.strand_width,
-            module.strand_height,
-            module.strand_wall_thickness,
+        _rectangular_vertices(
+            centers, radial, module.strand_width, module.strand_height
         ),
-        _hollow_rectangular_faces(len(centers)),
+        _surface_faces(len(centers), 4),
     )
 
 
