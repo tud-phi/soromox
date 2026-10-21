@@ -346,8 +346,8 @@ def test_caller_owned_launchers_match_jax(
     with wp.ScopedDevice(device):
         if family == "gvs":
             from soromox.execution.warp.gvs import (
-                launch_gvs_threadlike_actuation_force,
-                launch_gvs_threadlike_actuation_matrix,
+                launch_homogeneous_gvs_threadlike_actuation_force,
+                launch_homogeneous_gvs_threadlike_actuation_matrix,
             )
 
             operands = GVSThreadlikeOperands.from_model(model)
@@ -386,10 +386,10 @@ def test_caller_owned_launchers_match_jax(
                 dtype=wp.float64,
                 device=device,
             )
-            launch_gvs_threadlike_actuation_matrix(
+            launch_homogeneous_gvs_threadlike_actuation_matrix(
                 *common, strain_workspace, matrix_output
             )
-            launch_gvs_threadlike_actuation_force(
+            launch_homogeneous_gvs_threadlike_actuation_force(
                 common[0],
                 warp_array(controls, wp.float64),
                 *common[1:],

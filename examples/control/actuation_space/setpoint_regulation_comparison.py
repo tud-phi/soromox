@@ -29,6 +29,13 @@ import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 
+from soromox.rendering.config import (
+    GeometryConfig,
+    GroundPlaneConfig,
+    RendererConfig,
+    SceneConfig,
+)
+
 jax.config.update("jax_enable_x64", True)  # Double precision
 
 from soromox.actuation import ThreadlikeActuator, ThreadlikeRouting
@@ -46,8 +53,10 @@ from soromox.systems import (
     LinkSpec,
     SystemState,
 )
+from soromox.utils.geometry import poses
 
 FIGURES_DIR = Path(__file__).resolve().parent / "figures"
+VIDEO_OUTPUT = Path(__file__).resolve().parent / "videos" / f"{Path(__file__).stem}.mp4"
 
 
 def create_robot() -> tuple[PCS, int]:
@@ -82,7 +91,7 @@ def create_robot() -> tuple[PCS, int]:
             )
             for index in range(num_segments)
         ],
-        gravity=jnp.array([0.0, 0.0, 9.81]),
+        gravity=jnp.array([0.0, 0.0, -9.81]),
     )
 
     # Tendon routing: 3 tendons at 120 degrees apart, parallel to backbone
@@ -104,7 +113,7 @@ def create_robot() -> tuple[PCS, int]:
 
     robot = PCS(
         params=body_params,
-        base_pose=jnp.array([0.5, -0.5, 0.5, 0.5, 0.0, 0.0, 0.0]),
+        base_pose=poses.spatial_mounting_pose("hanging"),
         actuators=ThreadlikeActuator.tendons(active_tendon_routing),
     )
 
@@ -621,19 +630,31 @@ def main(
     if not render:
         return
     if Open3DRenderer is None:
-        print("Open3DRenderer unavailable. Install open3d to view the animation.")
+        print("Open3DRenderer unavailable. Install open3d to export the video.")
     else:
         render_name = "PID (model-free)"
         if render_name not in all_results:
             render_name = next(iter(all_results.keys()))
         render_results = all_results[render_name]
-        renderer = Open3DRenderer(robot, num_points=50)
+        renderer = Open3DRenderer(
+            robot,
+            config=RendererConfig(
+                geometry=GeometryConfig(num_points=50),
+                scene=SceneConfig.technical(
+                    ground=GroundPlaneConfig(
+                        surface=False, height_reference="base_mounting_face"
+                    )
+                ),
+            ),
+        )
         renderer.render_sequence(
             ts=render_results["t"],
             q_ts=render_results["q"],
             playback_speed=1.0,
+            record_path=str(VIDEO_OUTPUT),
             window_name=f"Actuation-Space Regulation ({render_name})",
         )
+        print(f"Saved {VIDEO_OUTPUT}")
 
 
 if __name__ == "__main__":

@@ -19,6 +19,15 @@ if str(MODULE_DIR) not in sys.path:
 import plot_parallel_rollout_benchmark as plotter  # noqa: E402
 
 
+def test_output_name_defaults_to_parallel_rollout_benchmark(tmp_path):
+    args = plotter.parse_args(["--csv", str(tmp_path / "results.csv")])
+
+    assert args.output == plotter.OUTPUT_DIR / "parallel_rollout_benchmark.pdf"
+    assert args.combined_output == (
+        plotter.OUTPUT_DIR / "parallel_rollout_benchmark_combined.pdf"
+    )
+
+
 def test_shared_style_uses_truetype_fonts_for_vector_outputs():
     plotter.configure_matplotlib()
 

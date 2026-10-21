@@ -81,7 +81,7 @@ def test_render_entrypoint_uses_geometry_neutral_resolution_option(tmp_path):
     )
 
     assert captured["robot"] is robot
-    assert captured["init"]["cross_section_resolution"] == 64
+    assert captured["init"]["config"].geometry.cross_section_resolution == 64
     assert "cylinder_sections" not in captured["init"]
     assert captured["stopped"]
 
@@ -128,6 +128,12 @@ def test_sphere_surface_mesh_is_closed_and_has_requested_radius():
     assert np.allclose(np.linalg.norm(sphere.vertices - center, axis=1), radius)
     assert sphere.faces.min() == 0
     assert sphere.faces.max() == len(sphere.vertices) - 1
+
+
+def test_sphere_surface_style_remains_visible_at_publication_scale():
+    assert renderer.SURFACE_FILL_OPACITY >= 0.15
+    assert renderer.SURFACE_MESH_OPACITY >= 0.35
+    assert np.mean(renderer.SURFACE_MESH_RGB) < np.mean(renderer.SURFACE_FILL_RGB)
 
 
 def test_transformed_disk_segments_follow_desired_tangent_axes():

@@ -1,0 +1,82 @@
+{
+  "safety_times_s": [
+    0.0,
+    0.75,
+    2.0,
+    7.9
+  ],
+  "rl_times_s": [
+    0.0,
+    5.0,
+    10.0,
+    15.0
+  ],
+  "reward_interpolation_points": 500,
+  "reward_smoothing_scale": 0.5,
+  "sources": [
+    {
+      "path": "secVe_safety_constrained_control/outputs/rollout_without_cbf.mp4",
+      "sha256": "49162cae43d851c871a43aa98ae9d8f648e271d45580fc17ab1ccc916d8feebb"
+    },
+    {
+      "path": "secVe_safety_constrained_control/outputs/rollout_with_cbf.mp4",
+      "sha256": "bfd81b1b9669fcccc22fcc288b1e2caf7f5e6b3e43b1c94c036ff5477ef8f4df"
+    },
+    {
+      "path": "secVf_parallel_rl/outputs/rl_rollout_initialized_1_env.mp4",
+      "sha256": "15faf4dc9b749608e6ac5b4e84ec1c162df20ef9ee92e843c4798680d6e8b2fd"
+    },
+    {
+      "path": "secVf_parallel_rl/outputs/rl_rollout_trained_1_env.mp4",
+      "sha256": "b74525d5dfd4c0fdd03465b2aef10bf7b8567d842c6e403c868feed36ebe458f"
+    },
+    {
+      "path": "secVe_safety_constrained_control/data/rollout_with_cbf.npz",
+      "sha256": "11593ea79fc7bd64860296525fec2226bf1d27d2ab6c9b3836bad96ebe6731fe"
+    },
+    {
+      "path": "secVe_safety_constrained_control/data/rollout_without_cbf.npz",
+      "sha256": "8219dc583e48ee58e15161ed8fc01c11f7496cf028e407a683f9f00d394c989f"
+    },
+    {
+      "path": "secVf_parallel_rl/data/reward_logs/PyElastica_ec96iq1y.csv",
+      "sha256": "c82b9929008ffa65d6ab05ef301bfc909e486ee886dfdbd96d196b4b9757efdd"
+    },
+    {
+      "path": "secVf_parallel_rl/data/reward_logs/PyElastica_iuvnqh06.csv",
+      "sha256": "97fb3cea389c0623654fd9be72209b88d0b0bc1c2c79f4bb833445b1a9652c08"
+    },
+    {
+      "path": "secVf_parallel_rl/data/reward_logs/SoRoMoX_128_envs_0x75wha3.csv",
+      "sha256": "bf13abf95388f64220e3701909af77fe8e025f6db7d8cba3415e764e293fb23d"
+    },
+    {
+      "path": "secVf_parallel_rl/data/reward_logs/SoRoMoX_128_envs_y3ni29li.csv",
+      "sha256": "5d3f407deb5cda9fc655aded1a9117e051ce46ecce1eef48adeef9bc1dd42fcd"
+    },
+    {
+      "path": "secVf_parallel_rl/data/reward_logs/SoRoMoX_256_envs_0od7p9vu.csv",
+      "sha256": "e5e54b6872257c528692fdd0fbbcd99d126bd2a78c15676e7b0c3b8c000a9e4f"
+    },
+    {
+      "path": "secVf_parallel_rl/data/reward_logs/SoRoMoX_256_envs_6r7ahmhk.csv",
+      "sha256": "f75e84c6ebbf4d9202c149c0f89ae788f54084e9fb36678d3697afeb3f91a41e"
+    },
+    {
+      "path": "secVf_parallel_rl/data/reward_logs/SoRoMoX_512_envs_7q6d7fri.csv",
+      "sha256": "e8c8e16ec3bd04c485251c877df2334b08c456c3b9d3730244aede56b35aa2f4"
+    },
+    {
+      "path": "secVf_parallel_rl/data/reward_logs/SoRoMoX_512_envs_tg6kmktz.csv",
+      "sha256": "91c474a0c3571af85e8c5c31657773a1aa9f576c82c4b6048e11fd8d46414b58"
+    },
+    {
+      "path": "secVf_parallel_rl/data/reward_logs/SoRoMoX_64_envs_1bqkkr1d.csv",
+      "sha256": "afb9522f7a0d972608210ca76d0f03d7b23558798a65dfbab130dee2b4c2e5f1"
+    },
+    {
+      "path": "secVf_parallel_rl/data/reward_logs/SoRoMoX_64_envs_cg1tx8j7.csv",
+      "sha256": "20d0c8b44a2598987973308ca5ce7f53bef6716fb3848938f7e3890be337e5b8"
+    }
+  ]
+}

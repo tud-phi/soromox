@@ -110,6 +110,18 @@ def test_policy_specific_defaults_write_trajectories_to_data_directory():
     )
 
 
+def test_rollout_steps_follow_custom_horizon_when_omitted():
+    args = run_rl_policy.parse_args(["--game-time", "12", "--control-fps", "20"])
+
+    assert args.n_steps == 240
+
+
+def test_explicit_rollout_steps_override_horizon_default():
+    args = run_rl_policy.parse_args(["--game-time", "12", "--n-steps", "90"])
+
+    assert args.n_steps == 90
+
+
 def test_random_action_batch_is_seeded_uniform_and_batched():
     class FakeEnv:
         def __init__(self):

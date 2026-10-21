@@ -16,8 +16,10 @@ from soromox.systems.components import (
     JointSpec,
     LinearProfile,
     LinkSpec,
+    StrandSection,
     shear_modulus_from_poisson_ratio,
 )
+from soromox.systems.components.inertia import spatial_inertia
 from soromox.systems.dynamical_system import DynamicalSystem
 from soromox.systems.gvs.params import GVSParams
 from soromox.systems.gvs.structures import (
@@ -54,6 +56,9 @@ from .articulated import ArticulatedSoftRobot, McKibbenActuatedUMArm
 from .gvs import (
     GVS,
     GVSSegment,
+    Helicoidal,
+    HelicoidalBackboneParams,
+    HelicoidalHelixParams,
     StrainBasisSpec,
 )
 from .pcs import (
@@ -65,6 +70,7 @@ from .pcs import (
 from .pendulum import Pendulum
 
 __all__ = [
+    "spatial_inertia",
     # base classes
     "DEFAULT_GRAVITY_MAGNITUDE",
     "DynamicalSystem",
@@ -72,6 +78,7 @@ __all__ = [
     "SoftRobot",
     "CrossSectionGeometry",
     "CrossSectionParams",
+    "StrandSection",
     "ContinuumLinkParams",
     "JointParams",
     "IsotropicMaterialParams",
@@ -102,6 +109,9 @@ __all__ = [
     "GVSStrainBasisStructure",
     "GVSSegment",
     "StrainBasisSpec",
+    "Helicoidal",
+    "HelicoidalBackboneParams",
+    "HelicoidalHelixParams",
     # pendulum systems
     "Pendulum",
     "PendulumParams",

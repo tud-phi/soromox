@@ -44,7 +44,7 @@ class GVSOperandSource(Protocol):
     cell_widths: Array
     inertia_upper_rows: Array
     inertia_upper_columns: Array
-    inner_weighted_mass_diagonals: Array
+    weighted_inertias: Array
     gravity_base: Array
     g: Array
     g0: Array
@@ -99,8 +99,8 @@ class GVSOperands(eqx.Module):
         inertia_upper_rows: Row indices for packed upper-triangular inertia
             assembly.
         inertia_upper_columns: Column indices matching ``inertia_upper_rows``.
-        weighted_mass_diagonals: Quadrature-weighted diagonal spatial inertia at
-            every interior point.
+        weighted_inertias: Weighted diagonal inertia, or row-major full
+            matrices with an additional unit-weight link-tip slot.
         gravity_base: Spatial gravity acceleration expressed in the base frame.
     """
 
@@ -126,7 +126,7 @@ class GVSOperands(eqx.Module):
     cell_widths: Array
     inertia_upper_rows: Array
     inertia_upper_columns: Array
-    weighted_mass_diagonals: Array
+    weighted_inertias: Array
     gravity_base: Array
 
     @classmethod
@@ -168,7 +168,7 @@ class GVSOperands(eqx.Module):
             cell_widths=model.cell_widths,
             inertia_upper_rows=model.inertia_upper_rows,
             inertia_upper_columns=model.inertia_upper_columns,
-            weighted_mass_diagonals=model.inner_weighted_mass_diagonals,
+            weighted_inertias=model.weighted_inertias,
             gravity_base=model.gravity_base,
         )
 
@@ -205,7 +205,7 @@ class GVSFloatingOperands(eqx.Module):
     cell_widths: Array
     inertia_upper_rows: Array
     inertia_upper_columns: Array
-    weighted_mass_diagonals: Array
+    weighted_inertias: Array
     gravity_world: Array
 
     @classmethod
@@ -250,7 +250,7 @@ class GVSFloatingOperands(eqx.Module):
             cell_widths=model.cell_widths,
             inertia_upper_rows=model.inertia_upper_rows,
             inertia_upper_columns=model.inertia_upper_columns,
-            weighted_mass_diagonals=model.inner_weighted_mass_diagonals,
+            weighted_inertias=model.weighted_inertias,
             gravity_world=model.g,
         )
 
@@ -262,8 +262,8 @@ class GVSPipelineShapes:
     External integrators can construct this object once for their fixed batch
     size, allocate Warp arrays for each returned output mapping, and reuse those
     buffers for every step and CUDA graph replay. The names match the arguments
-    of :func:`launch_joint_terms`, :func:`launch_cell_terms`, and
-    :func:`launch_persistent_chain`.
+    of :func:`launch_homogeneous_joint_terms`, :func:`launch_homogeneous_cell_terms`, and
+    :func:`launch_homogeneous_persistent_chain`.
 
     Attributes:
         batch_size: Number of independent environments.

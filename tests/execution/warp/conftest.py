@@ -87,6 +87,10 @@ def make_gvs_model() -> ModelFactory:
 
         return GVS.from_segments(
             segments,
+            base_pose=jnp.asarray(
+                [0.0, 2**-0.5, 0.0, 2**-0.5, 0.03, -0.02, 0.01],
+                dtype=jnp.float64,
+            ),
             gravity=jnp.asarray([0.2, -0.1, -9.81], dtype=jnp.float64),
             scale_rotational_basis_by_length=True,
             backend=backend,
@@ -110,6 +114,10 @@ def make_pcs_model() -> ModelFactory:
 
         return PCS.from_links(
             links,
+            base_pose=jnp.asarray(
+                [0.0, 2**-0.5, 0.0, 2**-0.5, 0.03, -0.02, 0.01],
+                dtype=jnp.float64,
+            ),
             gravity=jnp.asarray([0.2, -0.1, -9.81], dtype=jnp.float64),
             structure=PCSStructure(
                 num_gauss_points=num_gauss_points,
@@ -137,6 +145,7 @@ def make_planar_pcs_model() -> ModelFactory:
 
         return PlanarPCS.from_links(
             links,
+            base_pose=jnp.asarray([0.73, 0.03, -0.02], dtype=jnp.float64),
             gravity=jnp.asarray([0.2, -9.81], dtype=jnp.float64),
             structure=PlanarPCSStructure(
                 num_gauss_points=num_gauss_points,

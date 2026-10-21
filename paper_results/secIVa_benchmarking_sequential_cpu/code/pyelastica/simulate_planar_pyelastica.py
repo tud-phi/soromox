@@ -46,7 +46,6 @@ from elastica import (
     PositionVerlet,
     RodSelfContact,
 )
-from elastica.timestepper import extend_stepper_interface
 
 DATA_DIR = Path(__file__).resolve().parents[2] / "data"
 
@@ -258,7 +257,6 @@ def simulate(
 
     # Finalize
     sim.finalize()
-    do_step, stages_and_updates = extend_stepper_interface(stepper, sim)
 
     # Time loop
     n_steps = int(np.round(final_time / dt))
@@ -271,7 +269,7 @@ def simulate(
         else:
             act_params.activation[:] = np.array([0.0, 0.0, 1.0, 0.0])  # +v bend
 
-        time = do_step(stepper, stages_and_updates, sim, time, dt)
+        time = stepper.step(sim, time, dt)
 
     return log
 

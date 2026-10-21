@@ -5,6 +5,10 @@ import jax
 import jax.numpy as jnp
 from jax import Array
 
+from soromox.systems.components.cross_sections import (
+    CrossSectionGeometry,
+    section_properties,
+)
 from soromox.systems.gvs.operands import GeometricOperand, JointOperand
 from soromox.systems.gvs.strain_bases import (
     dof_Chebychev,
@@ -232,6 +236,7 @@ class Link:
         """
         Compute area and second moments for a rectangular section along the link.
 
+        Height spans local y and width spans local z.
         Uses linear interpolation of `h_params=(h_i, h_f)` and `w_params=(w_i, w_f)`
         over `integration_points` to obtain local height and width, then evaluates:
         - Iy = (1/12) h w^3 [m^4]
@@ -255,11 +260,10 @@ class Link:
         h_at_points = Link.interpolate_param(normalized_points, *h_params)
         w_at_points = Link.interpolate_param(normalized_points, *w_params)
 
-        Iy_p = (1 / 12) * h_at_points * w_at_points**3
-        Iz_p = (1 / 12) * w_at_points * h_at_points**3
-        Ix_p = Iy_p + Iz_p
-        A_p = h_at_points * w_at_points
-        return Ix_p, Iy_p, Iz_p, A_p
+        return section_properties(
+            CrossSectionGeometry.RECTANGULAR,
+            jnp.stack((h_at_points, w_at_points), axis=-1),
+        )
 
     @staticmethod
     def compute_circular_params(
@@ -289,11 +293,7 @@ class Link:
 
         r_at_points = Link.interpolate_param(normalized_points, *r_params)
 
-        Iy_p = jnp.pi / 4 * r_at_points**4
-        Iz_p = Iy_p
-        Ix_p = Iy_p + Iz_p
-        A_p = jnp.pi * r_at_points**2
-        return Ix_p, Iy_p, Iz_p, A_p
+        return section_properties(CrossSectionGeometry.CIRCULAR, r_at_points[..., None])
 
     @staticmethod
     def compute_elliptical_params(
@@ -325,8 +325,7 @@ class Link:
         a_at_points = Link.interpolate_param(normalized_points, *a_params)
         b_at_points = Link.interpolate_param(normalized_points, *b_params)
 
-        Iy_p = jnp.pi / 4 * a_at_points * b_at_points**3
-        Iz_p = jnp.pi / 4 * b_at_points * a_at_points**3
-        Ix_p = Iy_p + Iz_p
-        A_p = jnp.pi * a_at_points * b_at_points
-        return Ix_p, Iy_p, Iz_p, A_p
+        return section_properties(
+            CrossSectionGeometry.ELLIPTICAL,
+            jnp.stack((a_at_points, b_at_points), axis=-1),
+        )

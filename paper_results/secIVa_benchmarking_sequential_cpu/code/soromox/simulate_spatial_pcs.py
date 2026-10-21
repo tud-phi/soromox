@@ -8,6 +8,12 @@ import numpy as np
 from diffrax import Tsit5
 
 from soromox.rendering import MatplotlibRenderer
+from soromox.rendering.config import (
+    GeometryConfig,
+    GroundPlaneConfig,
+    RendererConfig,
+    SceneConfig,
+)
 from soromox.systems import PCS, LinkSpec, SystemState
 
 jax.config.update("jax_enable_x64", True)  # double precision
@@ -187,7 +193,16 @@ if __name__ == "__main__":
     q_demo = q_ts[len(ts) // 2]
 
     # Color scheme demos (built-in palettes + themes)
-    demo_renderer = MatplotlibRenderer(robot, num_points=50)
+    demo_renderer = MatplotlibRenderer(
+        robot,
+        config=RendererConfig(
+            geometry=GeometryConfig(num_points=50),
+            scene=SceneConfig.studio(
+                "neutral",
+                ground=GroundPlaneConfig(height=-0.06, height_reference="world"),
+            ),
+        ),
+    )
     # demo_renderer.show(
     #     q_demo,
     #     color_config=RendererColorConfig(
@@ -204,7 +219,16 @@ if __name__ == "__main__":
     #     ),
     # )
 
-    renderer = MatplotlibRenderer(robot, num_points=50)
+    renderer = MatplotlibRenderer(
+        robot,
+        config=RendererConfig(
+            geometry=GeometryConfig(num_points=50),
+            scene=SceneConfig.studio(
+                "neutral",
+                ground=GroundPlaneConfig(height=-0.06, height_reference="world"),
+            ),
+        ),
+    )
     renderer.animate(ts=ts, q_ts=q_ts, interval=100, mode="slider")
     # renderer = Open3DRenderer(robot, num_points=50)
     # renderer.render_sequence(ts, q_ts)

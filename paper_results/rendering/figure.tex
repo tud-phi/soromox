@@ -1,0 +1,19 @@
+% Inclusion snippet; copy the generated PDF to the manuscript's figures/ directory.
+\begin{figure*}[t]
+    \centering
+    \includegraphics[width=\textwidth]{figures/renderers_and_presets.pdf}
+    \caption{\textbf{Rendering backends and visual presets in SoRoMoX.}
+    (A) The four core renderers illustrate a static equilibrium of the hanging
+    soft tentacle under gravity and tendon tensions of $[6.15,0]$\,N:
+    OpenCV Planar provides planar drawing, Matplotlib displays the backbone with
+    coordinate axes, and Viser and Open3D render shaded surfaces in a neutral
+    studio scene. OpenCV displays the equilibrium's planar projection;
+    Matplotlib uses an oblique view for axis readability.
+    (B) Six configurable presets illustrated with Open3D, with fixed geometry,
+    pose, camera, and framing. Technical is the default preset. The presets are
+    also available in Viser, with differences in lighting and shading between
+    backends. The equilibrium is computed with the fitted GVS model used in the
+    system-identification study; both tendons terminate at the first segment,
+    leaving the second segment passive.}
+    \label{fig:renderers_and_presets}
+\end{figure*}

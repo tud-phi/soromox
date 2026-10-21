@@ -8,28 +8,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Write user-facing notes under the section that best describes the change. Keep
 entries concise, link to relevant pull requests or documentation when useful,
 and include benchmark baseline and measurement context for performance claims.
+Describe the delta from the last release, not intermediate development changes.
 
 ## [Unreleased]
 
 ### Added
 
-- Added renderer-neutral cross-section contours and loft construction, with a
-  registration hook for extending both swept 3D renderers with new geometries.
-- Added opt-in routing friction to threadlike transmissions, selected with
-  `friction=` on active `ThreadlikeActuator` presets. The continuum Capstan
-  model applies `exp(-mu * accumulated_turn)` to each local force contribution
-  and supports `PCS`, `PlanarPCS`, and `GVS`. Routed-path turn includes the
-  analytical material-tangent derivative; custom routings provide an
-  analytical second derivative. Parameters remain differentiable leaves under
-  JAX transformations. See
-  [threadlike actuation](../api/actuation/threadlike.md#continuum-capstan-friction).
+- Added optional continuum Capstan friction for active threadlike actuation in
+  PCS, PlanarPCS, and GVS, with analytical routed-path turn and custom friction
+  laws; see [threadlike actuation](../api/actuation/threadlike.md#continuum-capstan-friction).
+
+- Native Warp GVS kernels for heterogeneous worlds, with FP64 dynamics,
+  kinematics and actuation across different joints and strain bases; see
+  [PR #227](https://github.com/tud-phi/soromox/pull/227).
+
+- GVS-based `Helicoidal` models for trimmed-helicoid robots, with analytic
+  sectional mechanics, per-strain damping, helix-domain material inputs,
+  strand-derived inertia, a simulation example, and a dedicated Viser renderer.
+  Shared `StrandSection` geometry supports solid and hollow circular and
+  rectangular strands for mechanics and viewer configuration; see
+  [Helicoidal](../api/systems/gvs/helicoidal.md) and
+  [PR #229](https://github.com/tud-phi/soromox/pull/229).
+- Python 3.15 support, with numerical tests and patched Open3D source-build
+  and rendering checks in Ubuntu CI.
 
 ### Changed
 
-- Open3D and Viser swept backbones now preserve circular, elliptical, and
-  rectangular cross-sections, including dimensions that vary with abscissa.
-- Made `ActuationSpaceDynamics` use the actuator-coordinate Jacobian for its
-  coordinate map and transform a potentially lossy actuation matrix explicitly.
+- `ActuationSpaceDynamics` now uses the actuator-coordinate Jacobian for its
+  coordinate map and explicitly transforms potentially lossy actuation matrices.
+
+- Shared PCS/GVS dynamics support full sectional and tip inertia in JAX and Warp;
+  see [PR #229](https://github.com/tud-phi/soromox/pull/229).
+- Refreshed the numerical and rendering dependency lock for Python 3.15,
+  including compatible Viser and `rpds-py` releases.
 
 ### Performance
 
@@ -37,23 +48,264 @@ and include benchmark baseline and measurement context for performance claims.
 
 ### Breaking changes
 
+- Replaced `Transmission.moment_matrix(...)` with `coordinate_jacobian(...)`
+  and `actuation_matrix(...)`, and added `SoftRobot.actuator_coordinate_jacobian(...)`.
+  The matrices are transposes for ideal transmissions; lossy transmissions may
+  differ. No compatibility alias is retained.
+
+- Renamed direct GVS Warp kernels and launchers to `homogeneous_*_kernel`
+  and `launch_homogeneous_*`; homogeneous kernels take the shared `*Data`
+  structs, while host launchers retain array arguments. Integration callers
+  must use the explicit names and updated kernel signatures.
+  See the [batch layout contracts](../api/execution/warp/gvs.md#batch-layouts-and-naming)
+  and [PR #227](https://github.com/tud-phi/soromox/pull/227).
+- `SoftRobot.cross_section_geometry(q, s)` now returns
+  `(geometry, outer_dimensions, inner_dimensions)` instead of a pair.
+  Update custom implementations to return `None` as the third value for solid
+  models, and update callers to unpack all three values.
+- Rendering `CrossSection.dimensions` is now `outer_dimensions`.
+  `contour(resolution)` is replaced by `contours(resolution)`, returning all
+  boundary loops with shape `(1 or 2, resolution, 3)`. Select `[0]` explicitly
+  when only the outer boundary is needed. `loft_cross_section_contours()` now
+  accepts that same loop-array shape at each endpoint.
+
+### Fixed
+
+- Viser live mode initializes the camera and lighting on its first state and
+  rebuilds static meshes as editable surfaces when switching from a static
+  view, so subsequent geometry updates reach the browser. Resizing a live
+  robot batch removes obsolete meshes.
+- Open3D scene meshes explicitly initialize missing texture coordinates,
+  preventing white surface artifacts with unpatched Open3D wheels.
+- Corrected rectangular cross-section orientation in Open3D and Viser: height
+  now spans local material y and width spans z, matching the existing GVS
+  bending stiffness and inertia. Both swept surfaces and discrete boxes use
+  this convention.
+- Restored the Section IVa PyElastica benchmarks using COOMM, with
+  PyElastica 1.0 support and short rollout tests in CI; see
+  [PR #220](https://github.com/tud-phi/soromox/pull/220).
+- Recognized the current patched Open3D 0.20 `.soromox3` build in the macOS
+  rendering guard, allowing image/video export and modern windows.
+
+### Documentation
+
+- Documented the continuum Capstan derivation, actuator-coordinate scales,
+  local length-gradient notation, and distinction from discrete spacer disks.
+
+- Updated the [sequential CPU rollout results](../research.md#sequential-cpu-rollouts)
+  to match the latest paper version, reporting up to 27.0× speedup over SoRoSim for
+  three-second rollouts on an Intel Core Ultra 7 165H CPU, with solver context
+  and tip-position agreement.
+
+### Contributors
+
+## [0.5.0] - 2026-09-18
+
+This release introduces shared renderer configuration and studio scenes, upgrades
+Open3D support, and adds UMArm operational-space tracking. Renderer API and default
+changes are listed below; see the [full changes since v0.4.1](https://github.com/tud-phi/soromox/compare/v0.4.1...v0.5.0).
+
+### Added
+
+- Shared lighting, materials, shadows and curved backdrops, with technical,
+  neutral/bright/dark studio, flat and clay presets for Open3D and Viser.
+  Preset lights and backdrops follow the ground orientation for upright, hanging
+  and tilted scenes. Mount options now include beveled disks, truncated cones
+  and flared collars; `GroundPlaneConfig(height_reference="base_mounting_face")`
+  aligns scenery with the mounting face. See
+  [PR #210](https://github.com/tud-phi/soromox/pull/210) and
+  [PR #212](https://github.com/tud-phi/soromox/pull/212).
+- A UMArm operational-space circle-tracking example using
+  `OperationalSpaceImpedanceControlTracker` and balanced antagonistic pressures,
+  extending the joint-space tracking examples available in v0.4.1; see
+  [PR #211](https://github.com/tud-phi/soromox/pull/211).
+- A reproducible Figure 13 assembler for the safety-control and reinforcement
+  learning studies, exporting PDF, SVG and PNG with a source-hash manifest; see
+  the [paper reproduction instructions](https://github.com/tud-phi/soromox/blob/v0.5.0/paper_results/README.md).
+
+### Changed
+
+- Source checkouts using `uv` now build pinned, patched Open3D 0.20.0 on macOS,
+  Linux x86-64/ARM64 and Windows x86-64. The build supports Metal rendering on
+  macOS and Vulkan image/video exports on Linux and Windows, with neutral color
+  grading, selectable linear/ACES tone mapping and a fix for uninitialized mesh
+  texture coordinates. Plain `pip install soromox[rendering]` uses PyPI packages;
+  see the [installation guide](../installation.md),
+  [PR #213](https://github.com/tud-phi/soromox/pull/213) and
+  [PR #214](https://github.com/tud-phi/soromox/pull/214).
+- Open3D static `show()` now uses the modern renderer, matching image exports.
+  Interactive animation retains the legacy renderer with matching camera
+  projection and warnings about appearance differences. Simulation and control
+  examples export videos by default. Viser adapts the shared scene settings;
+  Matplotlib and OpenCV use white backgrounds and ignore scene appearance.
+- Refreshed Section V videos, snapshots and website media with studio styling.
+  Figures 11 and 13 improve trajectory visibility, reference-surface contrast,
+  legend labels and transparent backgrounds; see
+  [PR #212](https://github.com/tud-phi/soromox/pull/212).
+- Section Vf policy rollouts now default to 20 seconds instead of 7; the step
+  count derives from duration and control FPS unless `--n-steps` is supplied.
+
+### Breaking changes
+
+- Renderer constructor settings move into `config=RendererConfig(...)`, with
+  `scene`, `camera`, `colors`, `geometry` and `output` sections. For example,
+  replace `Open3DRenderer(robot, width=1920, height=1080)` with:
+
+  ```python
+  from soromox.rendering import Open3DRenderer, RendererConfig, RenderOutputConfig
+
+  renderer = Open3DRenderer(
+      robot,
+      config=RendererConfig(output=RenderOutputConfig(width=1920, height=1080)),
+  )
+  ```
+
+  Camera and color modules move from `rendering.camera_config` and
+  `rendering.color_config` to `rendering.config.camera` and
+  `rendering.config.colors`. Import public configuration types, including
+  `VideoEncodingConfig`, from `soromox.rendering` or `soromox.rendering.config`.
+  Per-call camera, color and video overrides replace entire configuration
+  sections; see the [configuration guide](../api/rendering/configuration.md).
+- Output defaults are now shared: 800 × 600 pixels, 80 backbone samples and
+  48 cross-section samples. Compared with v0.4.1, Open3D and Viser output shrinks
+  from 1920 × 1200, OpenCV output changes from 700 × 700, Matplotlib and OpenCV
+  backbone sampling increases from 50 to 80, and Open3D cross-section sampling
+  increases from 20 to 48. Set `config.output` and `config.geometry` explicitly
+  to retain previous dimensions and sampling.
+- The automatic camera distance factor changes from 10.0 to 1.5. Ground planes
+  default to world alignment (+Z spatial, +Y planar); select
+  `GroundPlaneConfig(alignment="base")` for base alignment. Open3D and Viser
+  default to flared collar mounts; use `config.geometry.base_plate_style="disk"`
+  for the previous cylindrical shape.
+- Open3D `render_sequence(..., record_path=...)` now exports synchronously through
+  the modern renderer and returns without interactive playback. `record_every_n`
+  reduces both frame count and FPS; playback controls do not affect exports.
+  OpenCV sequence options become keyword-only and require `record_path`.
+- Extras that include Open3D now require `open3d>=0.20`, up from `>=0.18`.
+  Checkout-based `uv` installs additionally need native build tools and graphics
+  dependencies for the patched source build; see the
+  [installation guide](../installation.md).
+- Renamed the joint-space example `track_mckibben_umarm.py` to
+  `track_umarm_with_feedforward_compensation.py` in
+  `examples/control/configuration_space/`.
+
+### Fixed
+
+- Removed artificial seams and dark rings at matching swept-link boundaries in
+  Open3D and Viser by smoothing normals and removing buried end caps, while
+  preserving actual cross-section steps.
+- Open3D static viewing probes Linux window creation in a separate process and
+  reports native display failures with logs before initializing the viewer.
+- Matplotlib video exports honor configured pixel dimensions independently of
+  global DPI. Static ground surfaces no longer hide robot lines above the floor,
+  and rounded joins remove gaps between backbone segments.
+
+### Documentation
+
+- Added a [preset gallery](../api/rendering/presets.md) with upright and hanging
+  Open3D/Viser comparisons, and expanded the
+  [configuration guide](../api/rendering/configuration.md) with shared settings
+  and backend differences.
+
+### Contributors
+
+- Thanks to [@Johannap1](https://github.com/Johannap1) for identifying unused
+  ground-plane code, native window-creation failures and Open3D segment seams in
+  [PR #210](https://github.com/tud-phi/soromox/pull/210).
+- Thanks to [@zuorunze](https://github.com/zuorunze) for reviewing the UMArm
+  pressure-coordinate formulation and validating the tracking example in
+  [PR #211](https://github.com/tud-phi/soromox/pull/211).
+- Thanks to [@vdperfetta01](https://github.com/vdperfetta01) for suggestions that
+  improved trajectory visibility, reference surfaces and figure legends in
+  [PR #212](https://github.com/tud-phi/soromox/pull/212).
+
+## [0.4.1] - 2026-09-06
+
+### Added
+
+- Added `soromox.simulation.SemiImplicitEuler`, a Diffrax-compatible kick–drift
+  integrator for `SoftRobot` rollouts that supports unequal floating-base
+  configuration and velocity dimensions, manifold retraction, and trailing
+  auxiliary state; see the [Simulation Integrators](../api/simulation/integrators.md)
+  guide and [PR #201](https://github.com/tud-phi/soromox/pull/201).
+- Added reproducible six-start Section Vd control-gain optimization results,
+  with a shared dimensionless objective, tuned settings, schema-v3 archives,
+  and regression coverage; see [PR #204](https://github.com/tud-phi/soromox/pull/204)
+  and [issue #154](https://github.com/tud-phi/soromox/issues/154).
+- Added a dynamic UMArm joint-space tracking example with
+  `FeedforwardCompensationTracker`, balanced antagonistic pressure offsets,
+  tracking plots, and pressure-colored Viser recording; see
+  [PR #207](https://github.com/tud-phi/soromox/pull/207).
+- Added the generic signed direct `AffineGeneralizedCoordinateActuator`, with
+  affine generalized-coordinate routing and metadata-only input bounds; see
+  [PR #187](https://github.com/tud-phi/soromox/pull/187).
+- Added affine-curvature GVS examples for the R-SIP, force-actuated Soft
+  Cart-Pole, Soft Pendubot, and Soft Furuta Pendulum, including semantic
+  upright/hanging configurations, open-loop simulations, summary plots, and
+  Viser rendering; see [PR #187](https://github.com/tud-phi/soromox/pull/187).
+- Added renderer-neutral cross-section contours and loft construction, with a
+  registration hook for extending both swept 3D renderers with new geometries;
+  see [PR #200](https://github.com/tud-phi/soromox/pull/200).
+
+### Changed
+
+- Extended the parallel-rollout benchmark tooling with explicit solver
+  selection, including `semi-implicit-euler`, per-case checkpointing, and
+  expected out-of-memory reporting.
+- Updated the Section Vd workflow with one generator and tuning study, retuned
+  controller and optimizer settings, strict device selection, regenerated
+  figures, and distinct optimized-best and initial-median animations with a
+  shared gravity-down camera.
+- Unified fixed- and floating-base gravity with shared analytical point-mass
+  quadrature, avoiding runtime autodiff and full spatial gravity contractions;
+  see [PR #209](https://github.com/tud-phi/soromox/pull/209).
+- Standardized example mounting declarations with named poses and conventional
+  world-down gravity, and aligned Section Vf rendering with zero gravity; see
+  [PR #208](https://github.com/tud-phi/soromox/pull/208).
+- Open3D and Viser swept backbones now preserve circular, elliptical, and
+  rectangular cross-sections, including dimensions that vary with abscissa;
+  see [PR #200](https://github.com/tud-phi/soromox/pull/200).
+
+### Performance
+
+- Refreshed the committed FP64 parallel-rollout measurements on an NVIDIA RTX
+  5090 through batch size 1,024. Automatic backend selection resolves to Warp
+  for GVS; relative to batch size 1, GVS throughput reaches 679.7× for one
+  segment and 133.6× for 32 segments at batch size 1,024. The 32-segment case
+  peaks at batch size 512 and is 1.2% lower at 1,024; see the [benchmark
+  protocol](https://github.com/tud-phi/soromox/blob/v0.4.1/paper_results/secIVb_parallel_rollouts_gpu/README.md) and
+  [PR #205](https://github.com/tud-phi/soromox/pull/205).
+
+### Breaking changes
+
 - Corrected the `PlanarPCS` threadlike routing convention so a positive
   material-`y` offset shortens under positive `kappa_z`. Existing planar
   threadlike models that compensated for the previous sign must update their
   routing offsets or actuator directions.
-- Replaced `Transmission.moment_matrix(...)` with the explicit
-  `coordinate_jacobian(...)` and `actuation_matrix(...)` contracts. Added
-  `SoftRobot.actuator_coordinate_jacobian(...)`. For ideal transmissions the
-  two matrices remain transposes; lossy transmissions need not satisfy that
-  identity. No compatibility alias is retained.
 - Renamed the Viser `cylinder_sections` and Open3D `tube_resolution` options to
-  the geometry-neutral `cross_section_resolution`.
+  the geometry-neutral `cross_section_resolution`; see
+  [PR #200](https://github.com/tud-phi/soromox/pull/200).
+- Renamed `AffineJointTransmission` and `AffineJointTransmissionParams` to
+  `AffineGeneralizedCoordinateTransmission` and
+  `AffineGeneralizedCoordinateTransmissionParams` to reflect support for
+  rigid-joint, continuum, and hybrid generalized coordinates; see
+  [PR #187](https://github.com/tud-phi/soromox/pull/187).
 
 ### Fixed
 
-- Made Viser discrete cross-section markers consistent with Open3D: circular,
+- Fixed analytical gravitational forces for rotated mounts in
+  `ArticulatedSoftRobot` and `PlanarHSA`; see
+  [PR #209](https://github.com/tud-phi/soromox/pull/209).
+- Set Viser scenes to +Z-up while preserving explicit camera-up selections; see
+  [PR #208](https://github.com/tud-phi/soromox/pull/208).
+- Corrected the Section Ve camera and render artifacts so +Z gravity appears
+  downward; see [PR #208](https://github.com/tud-phi/soromox/pull/208).
+- Fixed `DynamicalSystem` API documentation to avoid assuming second-order
+  `[q, qd]` states or configuration-only projection; see
+  [PR #206](https://github.com/tud-phi/soromox/pull/206).
+- Fixed Viser discrete cross-section markers to match Open3D: circular,
   rectangular, and elliptical sections now use spheres, boxes, and ellipsoids,
-  respectively.
+  respectively; see [PR #200](https://github.com/tud-phi/soromox/pull/200).
 - Fixed Open3D and Viser lofting across link boundaries, which produced a short
   shape-morphing funnel when adjacent links used different cross-sections.
 - Fixed Open3D swept meshes reusing the first endpoint cross-section at both
@@ -61,11 +313,11 @@ and include benchmark baseline and measurement context for performance claims.
 
 ### Documentation
 
-- Documented the continuum Capstan adaptation, complete path-turn derivation,
-  all symbols, distinction from discrete spacer disks, explicit matrix
-  contracts, and custom routing and effort-ratio laws.
-
-### Contributors
+- Added the [Simulation Integrators](../api/simulation/integrators.md) API guide,
+  including solver compatibility and floating-base integration caveats.
+- Documented the low-dimensional soft-pendulum coordinate, actuation, material,
+  and rigid-body-assumption conventions; see
+  [PR #187](https://github.com/tud-phi/soromox/pull/187).
 
 ## [0.4.0] - 2026-09-01
 
@@ -213,6 +465,8 @@ and include benchmark baseline and measurement context for performance claims.
   guide, a backend-selection example in the Quick Start, and API reference
   pages for execution configuration and the reusable GVS and PCS Warp
   interfaces.
+- Documented the low-dimensional soft-pendulum coordinate, actuation, material,
+  and rigid-body-assumption conventions.
 
 ### Contributors
 
@@ -244,8 +498,7 @@ and include benchmark baseline and measurement context for performance claims.
 - Differentiable unit-response mappings from Young's modulus with either shear
   modulus or Poisson's ratio, plus optional material damping, to canonical
   generalized link matrices.
-- Continuum-component, parameter-update, material-optimization, and
-  [parameter-API migration](../user-guide/parameter-api-migration.md)
+- Continuum-component, parameter-update, and material-optimization
   documentation with complete PCS and GVS examples.
 
 - Compiled parameter-update examples and regression coverage for every public
@@ -442,9 +695,7 @@ and include benchmark baseline and measurement context for performance claims.
   arguments.
 - Moved `reference_strain` from `StrainBasisSpec` to `LinkSpec`; basis specs now
   describe only the selected strains and basis order.
-- No compatibility aliases are provided. See the compact
-  [PCS/GVS parameter migration guide](../user-guide/parameter-api-migration.md)
-  for direct replacements.
+- No compatibility aliases are provided.
 
 ## [0.2.2] - 2026-08-11
 

@@ -1,10 +1,16 @@
 # Renderer API
 
-API reference for SoRoMoX visualization and rendering backends.
+API reference for the shared renderer contract and general-purpose rendering
+backends.
 
 Start with the [Rendering overview](index.md) to compare output and choose a
 backend. Camera, color, base, ground-plane, multi-robot, and recording options
 are documented under [Shared Configuration](configuration.md).
+Robot-specific renderers are documented with their systems:
+[Planar HSA](../systems/pcs/planar-hsa.md#specialized-opencv-rendering),
+[I-Support](../systems/pcs/isupport.md#specialized-viser-rendering),
+[UMArm](../systems/articulated/mckibben-umarm.md), and
+[Helicoidal](../systems/gvs/helicoidal.md#specialized-viser-rendering).
 
 ## Shared Renderer Contract
 
@@ -17,26 +23,32 @@ BaseSoftRobotRenderer (abstract base)
 ├── MatplotlibRenderer         # Generic 2D and 3D plots
 ├── Open3DRenderer             # Interactive 3D visualization
 ├── ViserRenderer              # Browser-based interactive 3D visualization
-├── OpenCVPlanarRenderer       # Fast planar rendering
-└── OpenCVPlanarHSARenderer    # Planar HSA-specific rendering
+└── OpenCVPlanarRenderer       # Fast planar rendering
 ```
 
 | API | Shared behavior | Availability |
 | --- | --- | --- |
 | `BaseSoftRobotRenderer` | Backbone sampling, cached forward kinematics, batched layouts, color resolution, and the common rendering interface | All renderers |
 | Robot base | `fixed_base_pose` mounts fixed robots; floating renderers follow the base coordinates in each runtime configuration | All renderers |
-| Base plate | `base_plate_radius_scale` and `base_plate_thickness` configure the base geometry | Open3D and Viser; Matplotlib draws a lightweight base marker |
-| Ground plane | `show_ground_plane` and `ground_plane_size` configure a base-aligned reference plane; its colors come from `RendererColorConfig` | Matplotlib, Open3D, and Viser |
+| Base plate | `config.geometry.base_plate_style`, `base_plate_radius_scale` and `base_plate_thickness` configure the mount | Open3D and Viser; Matplotlib draws a filled disk in 3D or a transverse marker in 2D |
+| Ground plane | `config.scene.ground` configures a world floor or base-aligned planes, including colors, size, grid and opacity | Open3D and Viser, with backend approximations |
 
 ### Cross-Section Geometry
 
 Open3D and Viser evaluate `robot.cross_section_geometry(q, s)` along the
 backbone and support circular, elliptical, and rectangular sections with
-constant or abscissa-varying dimensions.
+constant or abscissa-varying dimensions. Rectangular height spans local material
+y and width spans z, matching GVS mechanics. The method returns
+`(geometry, outer_dimensions, inner_dimensions)` together. Inner dimensions
+describe a centred cavity of the same family; use `None` for entirely solid
+models, or an all-zero array at solid stations in models that also have cavities.
+Array shapes and the return structure must stay fixed across stations for JAX
+vectorization. Swept rendering preserves cavities; discrete markers use only
+the outer boundary.
 
 | `backbone_style` | Representation | Resolution controls |
 | --- | --- | --- |
-| `"swept"` | Link-local surfaces lofted from ordered material-frame contours; link interfaces remain separate and capped | `num_points` is the longitudinal station count; `cross_section_resolution` is the transverse contour resolution |
+| `"swept"` | Surfaces lofted from ordered material-frame contours; modern Open3D joins matching link ends with smooth normals and retains caps at cross-section discontinuities | `num_points` is the longitudinal station count; `cross_section_resolution` is the transverse contour resolution |
 | `"discrete"` | Independent spheres, boxes, or ellipsoids aligned with the local material frame | `num_points` is the marker count; `cross_section_resolution` is ignored |
 
 Swept rendering assigns at least two stations to every positive-length link;
@@ -90,6 +102,9 @@ corresponding `dynamic_spheres_*` arguments.
 `MatplotlibRenderer` provides static figures, notebook-friendly inspection,
 slider-based playback, and ordinary animations for planar and spatial robots.
 Spatial configurations use a 3D axes view controlled by `CameraConfig`.
+Figures use a white background and standard Matplotlib axes and grid. Scene
+backgrounds, ground planes, backdrops, lighting, materials and effects are ignored.
+Robot colors, geometry, camera direction and output settings apply.
 
 ::: soromox.rendering.matplotlib_renderer.MatplotlibRenderer
     options:
@@ -103,16 +118,40 @@ Spatial configurations use a 3D axes view controlled by `CameraConfig`.
 
 `Open3DRenderer` provides interactive spatial visualization with mesh geometry,
 camera controls, playback, screenshots, and offline frame or video capture.
-Open3D currently requires Python 3.12 or earlier because Python 3.13 wheels are
-not yet available.
+Use the [patched Open3D 0.20 dependency](../../installation.md);
+macOS needs the source build with the Metal readback patch.
 
-Set `backbone_style="discrete"` for per-point markers or `"swept"` for a
+`render_frame()` and `render_sequence(..., record_path=...)` use the modern
+Filament renderer. Recordings export selected frames synchronously and return;
+interactive playback controls do not affect the export. Meshes and actuator
+lines are rebuilt for each exported frame, with a fixed camera fitted to the
+whole trajectory.
+
+`show()` displays a fixed configuration with the modern GUI and the same
+materials, lighting and backdrop as exports. It supports mouse camera controls,
+R to reset the camera, C/L to save/restore it, S to save a modern snapshot, V to
+print the camera, and Q/Esc to close the window.
+On Linux, a separate process checks native window creation first. A failed
+display connection raises `RuntimeError` with the native log. This check adds
+GUI startup time and may briefly display a test window. Use an X11/XWayland
+session or Xvfb with GLX support for interactive viewing; headless workflows
+can use image or video export.
+
+Sequences without `record_path` use the legacy viewer for efficient geometry
+updates. A warning explains that materials, lighting, transparency, shadows and
+ambient occlusion can differ from modern rendering. Its keyboard snapshots
+capture the animated preview appearance.
+
+Set `config.geometry.backbone_style="discrete"` for per-point markers or `"swept"` for a
 material-frame surface lofted from the robot's cross-section contours.
-Multi-robot sequence scenes automatically merge each robot's backbone
+Multi-robot animated previews automatically merge each robot's backbone
 primitives to reduce Open3D registrations; `merge_backbone_meshes` can force or
 disable this behavior when measuring a particular workload.
 
 ### Keyboard Controls
+
+Playback and frame-stepping shortcuts apply to animated previews. Camera,
+snapshot and close shortcuts also work in `show()`.
 
 | Key | Action |
 | --- | --- |
@@ -162,14 +201,12 @@ callback that supplies states or by pushing states to the returned controller.
 
 ### Visual Quality
 
-Viser exposes backend-specific controls for:
-
-- lighting through `enable_default_lights`, directional-light, and
-  ambient-light parameters;
-- materials through `material`, `flat_shading`, and `wireframe`;
-- mesh quality through `sphere_resolution` and `cross_section_resolution`;
-- shadows through `cast_shadows`, `backbone_cast_shadow`, and
-  `sphere_cast_shadow`.
+Viser consumes the shared `config.scene` lighting, materials, shadows and
+scenery settings. Static output uses PBR GLB meshes; playback and live views
+use efficiently updated meshes with approximate materials. Geometry sampling
+is configured through `config.geometry`. `sphere_resolution` is a Viser-specific
+mesh tessellation control. See [backend support](configuration.md#backend-support)
+for exposure, tone-mapping and material limitations.
 
 ::: soromox.rendering.viser_renderer.ViserRenderer
     options:
@@ -191,23 +228,11 @@ Visualization in Python. *arXiv preprint arXiv:2507.22885*.
 ## OpenCV Planar Renderer
 
 `OpenCVPlanarRenderer` provides lightweight single-frame rendering and fast
-video export for planar robots.
+video export for planar robots. It uses a white canvas and ignores scene
+backgrounds, ground planes, backdrops, lighting and effects. Robot
+colors, geometry, output settings and the planar pixel projection apply.
 
 ::: soromox.rendering.opencv_planar_renderer.OpenCVPlanarRenderer
-    options:
-      show_root_heading: true
-      show_source: false
-      heading_level: 3
-      docstring_section_style: table
-      members_order: source
-
-## OpenCV Planar HSA Renderer
-
-`OpenCVPlanarHSARenderer` extends the planar OpenCV backend with HSA-specific
-geometry. Its system-level usage is documented with the
-[Planar HSA model](../systems/pcs/planar-hsa.md).
-
-::: soromox.rendering.planar_hsa.opencv_renderer.OpenCVPlanarHSARenderer
     options:
       show_root_heading: true
       show_source: false

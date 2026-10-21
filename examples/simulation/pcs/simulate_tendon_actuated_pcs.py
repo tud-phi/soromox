@@ -21,11 +21,18 @@ from soromox.rendering import (
     RendererColorConfig,
     ViserRenderer,
 )
+from soromox.rendering.config import (
+    GeometryConfig,
+    GroundPlaneConfig,
+    RendererConfig,
+    SceneConfig,
+)
 from soromox.systems import (
     PCS,
     LinkSpec,
     SystemState,
 )
+from soromox.utils.geometry import poses
 
 jax.config.update("jax_enable_x64", True)  # double precision
 
@@ -60,7 +67,7 @@ if __name__ == "__main__":
             )
             for index in range(num_segments)
         ],
-        gravity=jnp.array([0.0, 0.0, 9.81]),
+        gravity=jnp.array([0.0, 0.0, -9.81]),
     )
     active_tendon_routing = ThreadlikeRouting.linear(
         intercept=2e-2 * jnp.array([[0.0, 1.0, 0.0], [0.0, -1.0, 0.0]]),
@@ -84,7 +91,7 @@ if __name__ == "__main__":
     # ======================================================
     robot = PCS(
         params=body_params,
-        base_pose=jnp.array([0.5, -0.5, 0.5, 0.5, 0.0, 0.0, 0.0]),
+        base_pose=poses.spatial_mounting_pose("hanging"),
         actuators=ThreadlikeActuator.tendons(active_tendon_routing),
         passive_elements=(passive_tendon,),
     )
@@ -221,11 +228,13 @@ if __name__ == "__main__":
     # animate using the MatplotlibRenderer
     matplotlib_renderer = MatplotlibRenderer(
         robot,
-        num_points=60,
-        line_width=2.5,
-        actuator_line_width=2.0,
-        color_config=RendererColorConfig(
-            actuators=ActuatorStyleConfig(default_color=(0.9, 0.1, 0.1))
+        config=RendererConfig(
+            geometry=GeometryConfig(
+                num_points=60, line_width=2.5, actuator_line_width=2.0
+            ),
+            colors=RendererColorConfig(
+                actuators=ActuatorStyleConfig(default_color=(0.9, 0.1, 0.1))
+            ),
         ),
     )
     # q_ts is (T, DOF); animate in slider mode for quick inspection
@@ -234,7 +243,16 @@ if __name__ == "__main__":
     )
 
     # render using the Open3DRenderer
-    renderer = Open3DRenderer(robot)
+    renderer = Open3DRenderer(
+        robot,
+        config=RendererConfig(
+            scene=SceneConfig.technical(
+                ground=GroundPlaneConfig(
+                    surface=False, height_reference="base_mounting_face"
+                )
+            )
+        ),
+    )
     renderer.render_sequence(
         ts=ts,
         q_ts=q_ts,
@@ -247,7 +265,17 @@ if __name__ == "__main__":
     # ViserRenderer provides interactive 3D visualization in the browser
     # with GUI controls for playback, speed, and looping.
     # Plotly plots are automatically added to the GUI at the end of the sidebar
-    viser_renderer = ViserRenderer(robot, num_points=50)
+    viser_renderer = ViserRenderer(
+        robot,
+        config=RendererConfig(
+            geometry=GeometryConfig(num_points=50),
+            scene=SceneConfig.technical(
+                ground=GroundPlaneConfig(
+                    surface=False, height_reference="base_mounting_face"
+                )
+            ),
+        ),
+    )
 
     # Create custom strain plots for Tendon-Actuated PCS
     # Reshape to (T, num_segments, 6)

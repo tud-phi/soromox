@@ -7,41 +7,14 @@ that can be used by both Open3D and OpenCV renderers.
 from __future__ import annotations
 
 __all__ = [
-    "VideoEncodingConfig",
     "FFmpegVideoWriter",
 ]
 
 import subprocess
-from dataclasses import dataclass
 
 import numpy as np
 
-
-@dataclass
-class VideoEncodingConfig:
-    """Configuration for FFmpeg video encoding.
-
-    Attributes:
-        codec: Video codec (e.g., "libx264", "libx265")
-        pix_fmt: Output pixel format (e.g., "yuv444p", "yuv420p")
-        preset: Encoding preset (e.g., "veryslow", "slow", "medium", "fast")
-        crf: Constant Rate Factor (0-51, lower = higher quality)
-        tune: Tuning preset (e.g., "animation", "film", "grain")
-        profile: Codec profile (e.g., "high", "baseline")
-        bitrate: Target bitrate (e.g., "5M", "1000k")
-        gop: Group of Pictures size (keyframe interval)
-        extra_args: Additional FFmpeg arguments as tuple of strings
-    """
-
-    codec: str = "libx264"
-    pix_fmt: str = "yuv444p"
-    preset: str | None = "veryslow"
-    crf: int | None = 12
-    tune: str | None = "animation"
-    profile: str | None = None
-    bitrate: str | None = None
-    gop: int | None = None
-    extra_args: tuple[str, ...] = ()
+from soromox.rendering.config.output import VideoEncodingConfig
 
 
 class FFmpegVideoWriter:

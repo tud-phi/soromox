@@ -9,8 +9,15 @@ import os
 import shutil
 import subprocess
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
+
+from soromox.rendering.config import (
+    GeometryConfig,
+    RendererConfig,
+    RenderOutputConfig,
+    SceneConfig,
+)
 
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/soromox_matplotlib")
 
@@ -20,15 +27,15 @@ import numpy as np
 import open3d as o3d
 
 from soromox.actuation import ThreadlikeActuator, ThreadlikeRouting
-from soromox.rendering.camera_config import CameraConfig
+from soromox.rendering.config.camera import CameraConfig
+from soromox.rendering.config.output import VideoEncodingConfig
 from soromox.rendering.open3d_renderer import Open3DRenderer
-from soromox.rendering.video_encoding import FFmpegVideoWriter, VideoEncodingConfig
+from soromox.rendering.video_encoding import FFmpegVideoWriter
 from soromox.systems import PCS, LinkSpec
 
 if __package__:
     from .rl_render_style import (
         BACKBONE_NUM_POINTS,
-        BACKGROUND_COLOR,
         RENDER_HEIGHT,
         RENDER_WIDTH,
         TARGET_COLOR,
@@ -40,7 +47,6 @@ if __package__:
 else:
     from rl_render_style import (
         BACKBONE_NUM_POINTS,
-        BACKGROUND_COLOR,
         RENDER_HEIGHT,
         RENDER_WIDTH,
         TARGET_COLOR,
@@ -56,8 +62,15 @@ OUTPUT_DIR = CASE_DIR / "outputs"
 
 DEFAULT_ARM_LENGTH = 0.25
 DEFAULT_ARM_RADIUS = 0.025
-DEFAULT_GRID_SPACING = 0.16
+DEFAULT_GRID_SPACING = 0.24
+BACKBONE_STYLE = "swept"
+PARALLEL_BACKBONE_NUM_POINTS = 40
 GRID_CAMERA_DISTANCE_FACTOR = 5.5
+GRID_FRAME_FILL = 1.12
+GRID_ROBOT_WIDTH_MARGIN = 0.5
+GRID_CAMERA_LOOK_DEPTH = 0.25
+GRID_CAMERA_HEIGHT = 1.5
+GRID_CAMERA_LOOK_HEIGHT = 0.35
 # Camera offsets are expressed in the arm's base frame. This transforms to the
 # symmetric world-grid direction (0.8, -0.8, 0.9), retaining an elevated view.
 GRID_CAMERA_POSITION_OFFSET = (0.9, -0.8, 0.8)
@@ -262,7 +275,7 @@ def build_rl_robot(
             )
             for index in range(num_segments)
         ],
-        gravity=jnp.array([0.0, 0.0, 9.81]),
+        gravity=jnp.zeros((3,)),
     )
     return PCS(
         params=body_params,
@@ -419,6 +432,15 @@ def make_grid_offsets(
     return offsets
 
 
+def resolve_backbone_num_points(num_envs: int, override: int | None) -> int:
+    """Use fewer backbone samples for dense grids unless explicitly overridden."""
+    if override is not None:
+        if override <= 0:
+            raise ValueError("--num-points must be positive")
+        return override
+    return BACKBONE_NUM_POINTS if num_envs == 1 else PARALLEL_BACKBONE_NUM_POINTS
+
+
 def make_render_camera_config(
     *,
     num_envs: int,
@@ -427,11 +449,38 @@ def make_render_camera_config(
     up: tuple[float, float, float],
     distance_factor: float | None,
     position_offset: tuple[float, float, float] | None,
+    grid_span: float = 0.0,
+    aspect_ratio: float = RENDER_WIDTH / RENDER_HEIGHT,
 ) -> CameraConfig:
     """Select the fixed paper camera or a scene-aware automatic camera."""
     manual_auto_camera = distance_factor is not None or position_offset is not None
     if num_envs == 1 and not manual_auto_camera:
         return make_rl_camera_config(arm_length, fov=fov, up=up)
+    if num_envs > 1 and not manual_auto_camera:
+        if grid_span <= 0.0:
+            raise ValueError("grid_span must be positive for a multi-robot camera")
+        if aspect_ratio <= 0.0:
+            raise ValueError("aspect_ratio must be positive")
+
+        # Place the camera just beyond the front row and aim through the grid.
+        # The outer robots cross the side boundary to suggest that the parallel
+        # scene continues beyond the visible frame.
+        scene_width = grid_span + GRID_ROBOT_WIDTH_MARGIN * arm_length
+        distance = scene_width / (
+            2.0 * aspect_ratio * np.tan(np.deg2rad(fov / 2.0)) * GRID_FRAME_FILL
+        )
+        look_at_z = GRID_CAMERA_LOOK_HEIGHT * arm_length
+        camera_z = GRID_CAMERA_HEIGHT * arm_length
+        vertical_offset = camera_z - look_at_z
+        distance = max(distance, 1.05 * vertical_offset)
+        horizontal_offset = np.sqrt(max(distance**2 - vertical_offset**2, 0.0))
+        look_at_y = -(0.5 - GRID_CAMERA_LOOK_DEPTH) * grid_span
+        return CameraConfig(
+            position=(0.0, look_at_y - horizontal_offset, camera_z),
+            look_at=(0.0, look_at_y, look_at_z),
+            fov=fov,
+            up=up,
+        )
 
     defaults = (
         CameraConfig()
@@ -542,29 +591,61 @@ def render_rollout_to_mp4(
         up=args.camera_up,
         distance_factor=args.camera_distance_factor,
         position_offset=args.camera_position_offset,
+        grid_span=float(np.max(np.ptp(offsets, axis=0))),
+        aspect_ratio=args.width / args.height,
     )
 
     static_positions = static_radii = static_colors = None
-    if args.show_trajectory:
+    show_trajectory = (
+        rollout.num_envs == 1 if args.show_trajectory is None else args.show_trajectory
+    )
+    if show_trajectory:
         static_positions, static_radii, static_colors = make_target_trail_spheres(
             shifted_ball_ts
         )
 
     renderer = HeadlessRLVideoRenderer(
         robot,
-        width=args.width,
-        height=args.height,
-        num_points=args.num_points,
-        color_config=make_rl_color_config(color_label),
-        backbone_style="discrete",
         recompute_normals=False,
-        background_color=BACKGROUND_COLOR,
         sphere_resolution=args.sphere_resolution,
-        actuator_line_width=args.tendon_line_width,
-        grid_spacing=(args.grid_spacing, args.grid_spacing),
         base_offsets=offsets,
-        ground_plane_size=(args.grid_spacing if rollout.num_envs > 1 else None),
         visible=args.visible,
+        config=RendererConfig(
+            output=RenderOutputConfig(width=args.width, height=args.height),
+            geometry=GeometryConfig(
+                num_points=resolve_backbone_num_points(
+                    rollout.num_envs,
+                    args.num_points,
+                ),
+                backbone_style=BACKBONE_STYLE,
+                actuator_line_width=args.tendon_line_width,
+                grid_spacing=(args.grid_spacing, args.grid_spacing),
+            ),
+            colors=make_rl_color_config(color_label),
+            scene=SceneConfig.studio(
+                "neutral",
+                # Dense grids otherwise cast overlapping streaks across the cove.
+                backbone_cast_shadow=rollout.num_envs == 1,
+                scene_extent=max(
+                    1.2,
+                    3.0
+                    * (float(np.max(np.ptp(offsets, axis=0))) + 2 * rollout.arm_length),
+                ),
+                backdrop=replace(
+                    SceneConfig.studio().backdrop,
+                    width=12.0,
+                    depth=8.0,
+                    height=8.0,
+                    wall_offset=0.7,
+                ),
+                ground=replace(
+                    SceneConfig.studio().ground,
+                    height=-0.06,
+                    height_reference="world",
+                    size=args.grid_spacing if rollout.num_envs > 1 else None,
+                ),
+            ),
+        ),
     )
     print("Precomputing vectorized scene geometry...")
     try:
@@ -638,12 +719,23 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--show-trajectory",
         action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Show each target ball's dotted trajectory trail.",
+        default=None,
+        help=(
+            "Show each target ball's dotted trajectory trail. Defaults to enabled "
+            "for one environment and disabled for parallel grids."
+        ),
     )
     parser.add_argument("--width", type=int, default=RENDER_WIDTH)
     parser.add_argument("--height", type=int, default=RENDER_HEIGHT)
-    parser.add_argument("--num-points", type=int, default=BACKBONE_NUM_POINTS)
+    parser.add_argument(
+        "--num-points",
+        type=int,
+        default=None,
+        help=(
+            "Backbone markers per robot. Defaults to 80 for a single arm and 40 "
+            "for parallel grids."
+        ),
+    )
     parser.add_argument("--sphere-resolution", type=int, default=12)
     parser.add_argument("--tendon-line-width", type=float, default=1.0)
     parser.add_argument("--record-every-n", type=int, default=1)
@@ -689,8 +781,10 @@ def main(argv: list[str] | None = None) -> None:
         raise ValueError("--gif-fps must be positive")
     if args.gif_width < 0:
         raise ValueError("--gif-width must be nonnegative")
-    if args.width <= 0 or args.height <= 0 or args.num_points <= 0:
-        raise ValueError("--width, --height, and --num-points must be positive")
+    if args.width <= 0 or args.height <= 0:
+        raise ValueError("--width and --height must be positive")
+    if args.num_points is not None and args.num_points <= 0:
+        raise ValueError("--num-points must be positive")
     if shutil.which("ffmpeg") is None:
         raise RuntimeError("ffmpeg was not found on PATH")
 

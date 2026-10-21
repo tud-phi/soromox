@@ -40,6 +40,12 @@ from soromox.systems.components import (
     IsotropicMaterialParams,
     LinkSpec,
 )
+from soromox.systems.components.inertia import (
+    has_custom_inertia,
+    mass_first_moment,
+    spatial_mass_action,
+    weighted_inertias,
+)
 from soromox.systems.pcs.params import PlanarPCSParams
 from soromox.systems.pcs.structures import PlanarPCSStructure
 from soromox.systems.soft_robot import SoftRobot
@@ -163,6 +169,7 @@ class PlanarPCS(SoftRobot):
     active_strain_scales: Array | None = eqx.field(default=None)
     active_dof_ends: Array | None = eqx.field(default=None)
     dynamics_local_points: Array | None = eqx.field(default=None)
+    weighted_inertias: Array | None = eqx.field(default=None)
     weighted_mass_diagonals: Array | None = eqx.field(default=None)
     inertia_upper_rows: Array | None = eqx.field(default=None)
     inertia_upper_columns: Array | None = eqx.field(default=None)
@@ -466,7 +473,9 @@ class PlanarPCS(SoftRobot):
             return self._strain_basis_scaling_vector()[:, None] * B_xi
         return B_xi
 
-    def cross_section_geometry(self, q: Array, s: Array) -> tuple[Array, Array]:
+    def cross_section_geometry(
+        self, q: Array, s: Array
+    ) -> tuple[Array, Array, Array | None]:
         """Evaluate the circular cross-section at a backbone coordinate.
 
         Args:
@@ -476,8 +485,9 @@ class PlanarPCS(SoftRobot):
             s: Scalar global backbone coordinate.
 
         Returns:
-            A tuple containing the circular :class:`CrossSectionGeometry` tag
-            and a one-element array holding the selected segment radius.
+            Tuple containing the circular :class:`CrossSectionGeometry` tag,
+            a one-element array with the segment radius, and ``None`` for the
+            solid section's inner dimensions.
 
         Raises:
             ValueError: If ``s`` cannot be assigned to a segment.
@@ -485,7 +495,7 @@ class PlanarPCS(SoftRobot):
         segment_idx, _ = self.classify_segment(s)
         radius = jnp.asarray(self.r)[segment_idx]
         tag = jnp.asarray(CrossSectionGeometry.CIRCULAR, dtype=jnp.int32)
-        return tag, jnp.array([radius])
+        return (tag, jnp.array([radius]), None)
 
     def _set_params(self, params: PlanarPCSParams) -> None:
         """Set cached runtime arrays from typed parameters."""
@@ -728,13 +738,17 @@ class PlanarPCS(SoftRobot):
         D_active = self.B_xi.T @ D_full @ self.B_xi
         return M_segments, K_full, K_active, D_full, D_active
 
+    @property
+    def _has_custom_inertia(self) -> bool:
+        return has_custom_inertia(self._current_body_params().link)
+
     def _dynamics_runtime_arrays(
         self, M_segments: Array
-    ) -> tuple[Array, Array, Array, Array, Array, Array, Array, Array]:
+    ) -> tuple[Array, Array, Array, Array, Array, Array, Array, Array, Array]:
         """Build compact state-independent planar dynamics operands.
 
         The arrays encode the active strain selection, quadrature grid,
-        diagonal mass action, packed inertia layout, and base-frame gravity.
+        diagonal or full mass action, packed inertia layout, and base-frame gravity.
         They are cached on the model and shared by the JAX and Warp dynamics
         implementations, so backend execution does not repeat this structural
         preprocessing.
@@ -754,8 +768,9 @@ class PlanarPCS(SoftRobot):
             - quadrature-weighted mass diagonals, shape
               ``(num_segments, num_gauss_points, 3)``;
             - packed upper-inertia row indices;
-            - matching packed upper-inertia column indices; and
-            - gravity expressed in the base frame, shape ``(3,)``.
+            - matching packed upper-inertia column indices;
+            - gravity expressed in the base frame, shape ``(3,)``; and
+            - packed weighted inertias, with a tip slot for full matrices.
         """
 
         if self.num_internal_dofs == 0:
@@ -808,6 +823,11 @@ class PlanarPCS(SoftRobot):
             upper_rows,
             upper_columns,
             gravity_base,
+            weighted_inertias(
+                self._current_body_params().link,
+                jnp.broadcast_to(M_segments[:, None], (*weights.shape, 3, 3)),
+                weights,
+            ),
         )
 
     def precompute(self) -> None:
@@ -845,6 +865,7 @@ class PlanarPCS(SoftRobot):
                 "inertia_upper_rows",
                 "inertia_upper_columns",
                 "gravity_base",
+                "weighted_inertias",
             ),
             runtime_arrays,
             strict=True,
@@ -890,6 +911,7 @@ class PlanarPCS(SoftRobot):
                 m.inertia_upper_rows,
                 m.inertia_upper_columns,
                 m.gravity_base,
+                m.weighted_inertias,
             ),
             updated_self,
             runtime_arrays,
@@ -927,7 +949,8 @@ class PlanarPCS(SoftRobot):
         longitudinal backbone direction.
 
         Args:
-            q (Array): generalized coordinates of shape (num_active_strains,).
+            q (Array): Fixed-base generalized coordinates or total floating-base
+                configuration.
 
         Returns:
             xi (Array): strain vector of shape (num_active_strains,)
@@ -2670,6 +2693,11 @@ class PlanarPCS(SoftRobot):
         Returns:
             B (Array): Inertia matrix of shape (num_active_strains, num_active_strains).
         """
+        if self._has_custom_inertia:
+            return self._assemble_dynamics_terms(
+                q, jnp.zeros(self.num_velocities, dtype=q.dtype)
+            )[0]
+
         if self.floating_base:
             zeros = jnp.zeros((self.num_velocities,), dtype=q.dtype)
             return self._assemble_dynamics_terms(q, zeros)[0]
@@ -2731,6 +2759,12 @@ class PlanarPCS(SoftRobot):
 
         return C_full
 
+    def _assemble_floating_dynamics_terms(
+        self, q: Array, v: Array
+    ) -> tuple[Array, Array, Array]:
+        """Use the augmented chain assembly for floating-base matrix queries."""
+        return self._assemble_dynamics_terms(q, v)
+
     @eqx.filter_jit
     def coriolis_matrix(self, q: Array, qd: Array) -> Array:
         """
@@ -2743,6 +2777,21 @@ class PlanarPCS(SoftRobot):
         Returns:
             C (Array): Coriolis matrix of shape (num_active_strains, num_active_strains).
         """
+        if self._has_custom_inertia and not self.floating_base:
+            _, _, jacobians, derivatives = self._integration_kinematics(
+                q, qd, include_tip=True
+            )
+            matrices = self.weighted_inertias.reshape(
+                (*self.weighted_inertias.shape[:2], 3, 3)
+            )
+
+            def contribution(J, Jd, M):
+                return J.T @ (M @ Jd + se2.coadjoint(J @ qd) @ M @ J)
+
+            return jnp.sum(
+                vmap(vmap(contribution))(jacobians, derivatives, matrices), axis=(0, 1)
+            )
+
         if self.floating_base:
             return self._floating_coriolis_matrix(q, qd)
         C_full = self._coriolis_full_matrix(q, qd)
@@ -2751,60 +2800,59 @@ class PlanarPCS(SoftRobot):
 
         return C
 
-    @eqx.filter_jit
-    def _gravitational_full_force(self, q: Array) -> Array:
+    def _gravity_quadrature_kinematics(
+        self, q: Array, *, with_jacobians: bool
+    ) -> tuple[Array, Array, Array | None]:
         """
-        Compute the full gravitational force acting on the robot.
+        Return quadrature mass points in the active kinematics frame.
 
         Args:
-            q (Array): generalized coordinates of shape (num_active_strains,).
+            q (Array): Fixed-base generalized coordinates or total floating-base
+                configuration.
+            with_jacobians (bool): Whether to compute the analytical linear
+                Jacobians at the quadrature points.
 
         Returns:
-            G (Array): Full gravitational force of shape (num_strains,).
+            point_positions (Array): Quadrature-point positions in the inertial
+                frame for a fixed base or the base frame for a floating base.
+            weighted_masses (Array): Quadrature-weighted point masses.
+            linear_jacobians (Array | None): Linear Jacobians in the same frame
+                as ``point_positions``, or ``None`` when not requested.
         """
-        Xs_scaled, Ws_scaled = vmap(
-            scale_gaussian_quadrature, in_axes=(None, None, 0, 0)
-        )(
-            self.integration_points,
-            self.integration_weights,
-            self.L_cum[:-1],
-            self.L_cum[1:],
+        q_internal = self.split_configuration(q)[1] if self.floating_base else q
+        kinematics_robot = self._fixed_base_robot_at_pose()
+        assert self.dynamics_local_points is not None
+        assert self.weighted_mass_diagonals is not None
+        points = self.dynamics_local_points[:, :-1] + self.L_cum[:-1, None]
+        num_points = points.shape[1]
+        points_flat = points.reshape(-1)
+        point_poses = kinematics_robot._forward_kinematics_abscissa_batched(
+            q_internal, points_flat
+        ).reshape(self.num_segments, num_points, 3)
+        point_positions = point_poses[..., 1:]
+        weighted_masses = self.weighted_mass_diagonals[..., 1]
+        if not with_jacobians:
+            return point_positions, weighted_masses, None
+
+        jacobians_body_full = kinematics_robot._J_local_abscissa_batched(
+            q_internal, points_flat
+        ).reshape(
+            self.num_segments,
+            num_points,
+            3,
+            self.num_strains,
         )
-
-        chi_ps = self._forward_kinematics_abscissa_batched(q, Xs_scaled.flatten())
-        g_ps = vmap(poses.planar_pose_to_transform)(chi_ps.reshape(-1, 3))
-        g_ps = g_ps.reshape(self.num_segments, self.num_integration_points, 3, 3)
-
-        J_ps = self._J_local_abscissa_batched(q, Xs_scaled.flatten())
-        J_ps = J_ps.reshape(
-            self.num_segments, self.num_integration_points, *J_ps.shape[1:]
+        jacobians_body = jnp.einsum("...ij,jk->...ik", jacobians_body_full, self.B_xi)
+        rotations = vmap(vmap(poses.planar_pose_to_transform))(point_poses)[..., :2, :2]
+        linear_jacobians = jnp.einsum(
+            "...ij,...jk->...ik", rotations, jacobians_body[..., 1:, :]
+        ).reshape(
+            self.num_segments,
+            num_points,
+            2,
+            self.num_internal_dofs,
         )
-
-        def G_i(i: Array) -> Array:
-            M_i = self._local_mass_matrix(i)
-
-            def G_ij(j: Array) -> Array:
-                Ws_ij = Ws_scaled[i][j]
-                g_ij = g_ps[i, j]
-                J_ij = J_ps[i, j]
-
-                Ad_g_inv_ij = se2.adjoint_inverse(g_ij)
-
-                return -Ws_ij * J_ij.T @ M_i @ Ad_g_inv_ij @ self.g
-
-            G_blocks_segment_i = vmap(G_ij)(
-                jnp.arange(1, self.num_integration_points - 1)
-            )
-
-            return G_blocks_segment_i
-
-        G_blocks_tot = vmap(G_i)(jnp.arange(self.num_segments))
-
-        G_full = jnp.sum(
-            G_blocks_tot, axis=(0, 1)
-        )  # Sum over links and quadrature points
-
-        return G_full
+        return point_positions, weighted_masses, linear_jacobians
 
     @eqx.filter_jit
     def _gravitational_force(self, q: Array) -> Array:
@@ -2815,13 +2863,27 @@ class PlanarPCS(SoftRobot):
             q (Array): generalized coordinates of shape (num_active_strains,).
 
         Returns:
-            G (Array): Gravitational force of shape (num_active_strains,).
+            G (Array): Gravitational force in generalized-velocity coordinates.
         """
-        G_full = self._gravitational_full_force(q)
+        if self._has_custom_inertia:
+            return self._assemble_dynamics_terms(
+                q, jnp.zeros(self.num_velocities, dtype=q.dtype)
+            )[2]
 
-        G = self.B_xi.T @ G_full
-
-        return G
+        point_positions, weighted_masses, linear_jacobians = (
+            self._gravity_quadrature_kinematics(q, with_jacobians=True)
+        )
+        assert linear_jacobians is not None
+        if not self.floating_base:
+            return -jnp.einsum(
+                "...,...ij,i->j", weighted_masses, linear_jacobians, self.g[1:]
+            )
+        return self._gravitational_force_from_base_relative_points(
+            q,
+            point_positions,
+            weighted_masses,
+            linear_jacobians,
+        )
 
     def _material_operators(self) -> tuple[Array, Array, Array]:
         """Return unit Young, shear, and material-damping link matrices."""
@@ -3365,85 +3427,37 @@ class PlanarPCS(SoftRobot):
         Compute the gravitational energy of the robot.
 
         Args:
-            q (Array): generalized coordinates of shape (num_active_strains,).
+            q (Array): Fixed-base generalized coordinates or total floating-base
+                configuration.
 
         Returns:
-            U_G (float): Gravitational energy of the robot.
+            U_G (Array): Gravitational energy of the robot.
         """
-        Xs_scaled, Ws_scaled = vmap(
-            scale_gaussian_quadrature, in_axes=(None, None, 0, 0)
-        )(
-            self.integration_points,
-            self.integration_weights,
-            self.L_cum[:-1],
-            self.L_cum[1:],
-        )
-
-        chi_ps = self._forward_kinematics_abscissa_batched(q, Xs_scaled.flatten())
-        chi_ps = chi_ps.reshape(self.num_segments, self.num_integration_points, 3)
-
-        def U_G_i(i: Array) -> Array:
-            rho_i = self.rho[i]
-            A_i = self._local_cross_sectional_area(i)
-
-            def U_G_ij(j: Array) -> Array:
-                Ws_ij = Ws_scaled[i][j]
-                chi_ij = chi_ps[i, j]
-                p_j = chi_ij.at[0].set(0.0)
-
-                return -Ws_ij * rho_i * A_i * jnp.dot(p_j, self.g)
-
-            U_G_blocks_segment_i = vmap(U_G_ij)(
-                jnp.arange(1, self.num_integration_points - 1)
+        if self._has_custom_inertia:
+            model = self
+            if self.floating_base:
+                base_pose, internal = self.split_configuration(q)
+                model = self._fixed_base_robot_at_pose(base_pose)
+                q = internal
+            _, poses, _, _ = model._integration_kinematics(
+                q, jnp.zeros(model.num_internal_dofs, dtype=q.dtype), include_tip=True
             )
-
-            return U_G_blocks_segment_i
-
-        U_G_blocks_tot = vmap(U_G_i)(jnp.arange(self.num_segments))
-
-        U_G = jnp.sum(U_G_blocks_tot, axis=(0, 1))  # Sum over segments and Gauss points
-
-        return U_G
-
-    @eqx.filter_jit
-    def _floating_gravitational_energy(self, q: Array) -> Array:
-        """
-        Compute absolute floating-base gravitational potential energy.
-
-        The quadrature recurrence evaluates positions only. It does not build
-        Jacobians or spatial inertia matrices.
-
-        Args:
-            q: Total floating-base configuration with shape
-                ``(num_coordinates,)``.
-
-        Returns:
-            Absolute gravitational potential energy as a scalar.
-        """
-        _, q_internal = self.split_configuration(q)
-        points, weights = vmap(scale_gaussian_quadrature, in_axes=(None, None, 0, 0))(
-            self.integration_points,
-            self.integration_weights,
-            self.L_cum[:-1],
-            self.L_cum[1:],
-        )
-        relative_poses = (
-            self._fixed_base_robot_at_pose()._forward_kinematics_abscissa_batched(
-                q_internal, points.reshape(-1)
+            matrices = self.weighted_inertias.reshape(
+                (*self.weighted_inertias.shape[:2], 3, 3)
             )
+            mass, first_moment = mass_first_moment(matrices)
+            mass_positions = mass[..., None] * poses[..., :2, 2] + jnp.einsum(
+                "...ij,...j->...i", poses[..., :2, :2], first_moment
+            )
+            return -jnp.sum(mass_positions @ self.g[1:])
+
+        point_positions, weighted_masses, _ = self._gravity_quadrature_kinematics(
+            q, with_jacobians=False
         )
-        relative_positions = relative_poses.reshape(
-            self.num_segments, self.num_integration_points, 3
-        )[..., 1:]
-        weighted_masses = (
-            weights
-            * self.rho[:, None]
-            * vmap(self._local_cross_sectional_area)(
-                jnp.arange(self.num_segments, dtype=jnp.int32)
-            )[:, None]
-        )
-        return self._floating_gravitational_energy_from_points(
-            q, relative_positions, weighted_masses
+        if not self.floating_base:
+            return -jnp.sum(weighted_masses * (point_positions @ self.g[1:]))
+        return self._gravitational_energy_from_base_relative_points(
+            q, point_positions, weighted_masses
         )
 
     @eqx.filter_jit
@@ -3571,7 +3585,12 @@ class PlanarPCS(SoftRobot):
 
     @eqx.filter_jit
     def _integration_kinematics(
-        self, q: Array, qd: Array, convective_only_jd: bool = False
+        self,
+        q: Array,
+        qd: Array,
+        convective_only_jd: bool = False,
+        *,
+        include_tip: bool = False,
     ) -> tuple[Array, Array, Array, Array]:
         """
         Return weights, poses, active Jacobians, and derivatives at integration points.
@@ -3648,6 +3667,11 @@ class PlanarPCS(SoftRobot):
             self.L_cum[1:],
         )
         s_local = Xs_scaled - self.L_cum[:-1, None]
+        if include_tip:
+            s_local = jnp.concatenate((s_local, self.L[:, None]), axis=1)
+            Ws_scaled = jnp.concatenate(
+                (Ws_scaled, jnp.ones_like(Ws_scaled[:, :1])), axis=1
+            )
 
         def scan_fk(g_base: Array, i: Array) -> tuple[Array, Array]:
             xi_i = lax.dynamic_index_in_dim(xi, i, axis=0, keepdims=False)
@@ -3846,6 +3870,16 @@ class PlanarPCS(SoftRobot):
                 Jd_qd_bases,
                 s_local,
             )
+            if self._has_custom_inertia:
+                gravity_tips = jnp.einsum("nij,nj->ni", Ad_inv_tips, gravity_bases)
+                gravity_ps = jnp.concatenate(
+                    (gravity_ps, gravity_tips[:, None]), axis=1
+                )
+                J_ps = jnp.concatenate((J_ps, J_tips[:, None]), axis=1)
+                Jd_qd_ps = jnp.concatenate((Jd_qd_ps, Jd_qd_tips[:, None]), axis=1)
+                Ws_scaled = jnp.concatenate(
+                    (Ws_scaled, jnp.ones((self.num_segments, 1))), axis=1
+                )
             return Ws_scaled, gravity_ps, J_ps, Jd_qd_ps
 
         q = self.normalize_configuration(q)
@@ -3938,6 +3972,14 @@ class PlanarPCS(SoftRobot):
             Jd_qd_bases,
             s_local,
         )
+        if self._has_custom_inertia:
+            gravity_tips = jnp.einsum("nij,nj->ni", Ad_inv_tips, gravity_bases)
+            gravity_ps = jnp.concatenate((gravity_ps, gravity_tips[:, None]), axis=1)
+            J_ps = jnp.concatenate((J_ps, J_tips[:, None]), axis=1)
+            Jd_qd_ps = jnp.concatenate((Jd_qd_ps, Jd_qd_tips[:, None]), axis=1)
+            Ws_scaled = jnp.concatenate(
+                (Ws_scaled, jnp.ones((self.num_segments, 1))), axis=1
+            )
         return Ws_scaled, gravity_ps, J_ps, Jd_qd_ps
 
     def dynamics_terms(
@@ -4024,28 +4066,26 @@ class PlanarPCS(SoftRobot):
         # prefix width; scan/fori_loop require a fixed-width body and do extra work.
         for segment_index, dof_end in enumerate(self._segment_dof_ends):
             velocity_end = self.num_base_velocities + dof_end
-            mass_diagonal = jnp.diagonal(self.M_segments[segment_index])
+            packed_mass = self.weighted_inertias[segment_index]
             jacobian = jacobians[segment_index, :, :, :velocity_end]
-            weight = weights[segment_index]
 
-            def mass_action(value: Array, diagonal: Array = mass_diagonal) -> Array:
-                shape = (1, diagonal.shape[0]) + (1,) * (value.ndim - 2)
-                return diagonal.reshape(shape) * value
+            def mass_action(value: Array, packed: Array = packed_mass) -> Array:
+                return spatial_mass_action(packed, value)
 
-            flattened_rows = self.num_gauss_points * 3
+            flattened_rows = jacobian.shape[0] * 3
             jacobian_flat = jacobian.reshape(flattened_rows, velocity_end)
-            weighted_mass_jacobian = (
-                weight[:, None, None] * mass_action(jacobian)
-            ).reshape(flattened_rows, velocity_end)
+            weighted_mass_jacobian = mass_action(jacobian).reshape(
+                flattened_rows, velocity_end
+            )
             inertia_segment = jacobian_flat.T @ weighted_mass_jacobian
 
             eta = jacobian @ qd[:velocity_end]
             momentum = mass_action(eta)
             coadjoint_momentum = vmap(se2.coadjoint_action)(eta, momentum)
             wrench = mass_action(jacobian_dot_qd[segment_index]) + coadjoint_momentum
-            coriolis_segment = jacobian_flat.T @ (weight[:, None] * wrench).reshape(-1)
+            coriolis_segment = jacobian_flat.T @ wrench.reshape(-1)
             gravity_segment = -jacobian_flat.T @ (
-                weight[:, None] * mass_action(gravity[segment_index])
+                mass_action(gravity[segment_index])
             ).reshape(-1)
 
             inertia = inertia.at[:velocity_end, :velocity_end].add(inertia_segment)

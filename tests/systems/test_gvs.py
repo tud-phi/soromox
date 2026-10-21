@@ -89,11 +89,7 @@ def build_matched_gvs_pcs(
     Build a GVS model with constant-strain basis (monomial order 0) and fixed joints
     and a PCS model with the same physical parameters, so their predictions match.
 
-    Note on gravity/signs:
-    - PCS uses G = -∫ J^T M Ad_g^{-1} g ds
-    - GVS uses G =  ∫ J^T M Ad_g^{-1} g ds
-    For equivalent physical gravity (downwards), pass g=[0,0,-9.81] to PCS and
-    g=[0,0, 9.81] to GVS so the resulting generalized gravity forces match.
+    Both models consume the same world-frame gravitational acceleration vector.
     """
     # Physical parameters (kept simple, identical for each segment)
     Ls = 0.2 * jnp.ones((num_segments,))
@@ -1082,7 +1078,8 @@ def test_public_gvs_accessors_geometry_and_actuation_matrix() -> None:
     assert int(segment_idx) == 1
     assert_allclose(s_local, 0.25 * robot.segment_length[1], rtol=RTOL, atol=ATOL)
 
-    tag, geom = robot.cross_section_geometry(q, 0.5 * robot.segment_length[0])
+    tag, geom, inner = robot.cross_section_geometry(q, 0.5 * robot.segment_length[0])
+    assert inner is None
     expected_radius = robot.radius_params[0, 0] + 0.5 * (
         robot.radius_params[0, 1] - robot.radius_params[0, 0]
     )
@@ -1091,7 +1088,8 @@ def test_public_gvs_accessors_geometry_and_actuation_matrix() -> None:
         geom, jnp.array([expected_radius, expected_radius]), rtol=RTOL, atol=ATOL
     )
 
-    tag, geom = robot.cross_section_geometry(q, s_second)
+    tag, geom, inner = robot.cross_section_geometry(q, s_second)
+    assert inner is None
     expected_width = robot.width_params[1, 0] + 0.25 * (
         robot.width_params[1, 1] - robot.width_params[1, 0]
     )
@@ -1108,7 +1106,8 @@ def test_public_gvs_accessors_geometry_and_actuation_matrix() -> None:
         + robot.segment_length[1]
         + 0.75 * robot.segment_length[2]
     )
-    tag, geom = robot.cross_section_geometry(q, s_third)
+    tag, geom, inner = robot.cross_section_geometry(q, s_third)
+    assert inner is None
     expected_a = robot.semi_major_params[2, 0] + 0.75 * (
         robot.semi_major_params[2, 1] - robot.semi_major_params[2, 0]
     )
@@ -1824,6 +1823,17 @@ def test_gvs_gravitational_energy_gradient_matches_force() -> None:
     q = random_q(robot, jax.random.PRNGKey(313), scale=0.02)
 
     dU_dq = jax.grad(lambda q_: robot.gravitational_energy(q_))(q)
+
+    assert_allclose(dU_dq, robot.gravitational_force(q), rtol=RTOL, atol=ATOL)
+
+
+def test_rotated_fixed_base_gravity_matches_raw_potential_gradient() -> None:
+    robot = build_varied_basis_gvs(num_segments=1).with_fixed_base_pose(
+        jnp.array([0.0, 2**-0.5, 0.0, 2**-0.5, 0.03, -0.02, 0.01])
+    )
+    q = random_q(robot, jax.random.PRNGKey(314), scale=0.02)
+
+    dU_dq = jax.grad(robot._gravitational_energy)(q)
 
     assert_allclose(dU_dq, robot.gravitational_force(q), rtol=RTOL, atol=ATOL)
 

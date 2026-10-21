@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import copy
+import warnings
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -22,7 +24,8 @@ from soromox.rendering.actuators import (
     normalize_batched_actuator_layers,
     normalize_trajectory_actuator_layers,
 )
-from soromox.rendering.color_config import (
+from soromox.rendering.config import RendererConfig
+from soromox.rendering.config.colors import (
     DEFAULT_ROBOT_PALETTE,
     DEFAULT_SEGMENT_PALETTE,
     ColorLegend,
@@ -31,6 +34,7 @@ from soromox.rendering.color_config import (
     normalize_color_array,
     normalize_palette,
 )
+from soromox.rendering.config.renderer import validate_config
 from soromox.systems.soft_robot import SoftRobot
 
 
@@ -63,32 +67,27 @@ class BaseSoftRobotRenderer(ABC):
         base_transform: Homogeneous base transform. Shape ``(3, 3)`` for
             planar robots and ``(4, 4)`` for spatial robots.
         show_ground_plane: Whether supported backends render a ground reference
-        ground_plane_size: Optional ground-plane side length in meters
     """
 
     def __init__(
         self,
         robot: SoftRobot,
-        width: int = 800,
-        height: int = 600,
-        num_points: int = 50,
-        background_color: tuple[float, float, float] = (1.0, 1.0, 1.0),
-        color_config: RendererColorConfig | None = None,
-        show_ground_plane: bool = False,
-        ground_plane_size: float | None = None,
+        config: RendererConfig | None = None,
     ):
         """Initialize the renderer with a robot and visualization parameters.
 
         Args:
-            robot: Robot system with forward_kinematics method and length property
-            width: Image width in pixels
-            height: Image height in pixels
-            num_points: Number of points for backbone curve discretization
-            background_color: RGB background color tuple (values 0-1)
-            color_config: Shared renderer color configuration
-            show_ground_plane: Whether supported backends render a ground reference
-            ground_plane_size: Optional ground-plane side length in meters
-        """
+            config: Shared scene, camera, color, geometry and output defaults.
+            robot: Robot system with forward_kinematics method and length property"""
+        self.config = copy.deepcopy(config or RendererConfig())
+        validate_config(self.config)
+        self._appearance_warnings = set()
+        width = self.config.output.width
+        height = self.config.output.height
+        num_points = self.config.geometry.num_points
+        background_color = self.config.scene.background
+        color_config = self.config.colors
+        show_ground_plane = self.config.scene.ground.visible
         self.robot: SoftRobot = robot
         self.width = width
         self.height = height
@@ -96,12 +95,15 @@ class BaseSoftRobotRenderer(ABC):
         self.background_color = background_color
         self.color_config = color_config or RendererColorConfig()
         self.show_ground_plane = bool(show_ground_plane)
-        self.ground_plane_size = (
-            None if ground_plane_size is None else float(ground_plane_size)
-        )
-        if self.ground_plane_size is not None and self.ground_plane_size <= 0.0:
-            raise ValueError("ground_plane_size must be positive when provided")
         self._is_planar = bool(robot.is_planar)
+        if (
+            robot.floating_base
+            and self.config.scene.ground.height_reference == "base_mounting_face"
+        ):
+            raise ValueError(
+                "height_reference='base_mounting_face' is not supported for "
+                "floating-base robots; use height_reference='world'"
+            )
         floating_base = robot.floating_base
         initial_base_pose = (
             robot._identity_base_pose if floating_base else robot.fixed_base_pose
@@ -109,6 +111,10 @@ class BaseSoftRobotRenderer(ABC):
         assert initial_base_pose is not None
         self.base_pose = jnp.asarray(initial_base_pose)
         self.base_transform = jnp.asarray(robot.base_transform)
+        if self.config.scene.ground.height_reference == "base_mounting_face":
+            self._resolve_ground_height(
+                self._base_position(dim=3), self._base_tangent_axis(dim=3)
+            )
 
         self._color_cache: dict[tuple[int, int, int], ResolvedBackboneColors] = {}
         self._segment_cache: dict[int, tuple[np.ndarray, np.ndarray]] = {}
@@ -141,11 +147,222 @@ class BaseSoftRobotRenderer(ABC):
             or self._has_trajectory_actuator_visual_layers
         )
 
-    def _resolve_ground_plane_size(self, *minimum_sizes: float) -> float:
-        """Return the configured size or a robot-scaled backend default."""
-        if self.ground_plane_size is not None:
-            return self.ground_plane_size
-        return max(1.35 * self.L_max, 0.1, *minimum_sizes)
+    def _warn_appearance(self, mode: str, features: list[str]) -> None:
+        """Report unsupported or approximated appearance once per rendering mode.
+
+        Args:
+            mode: Rendering path, such as static, animated or export.
+            features: Human-readable descriptions of the approximations.
+
+        Returns:
+            None. Emits one UserWarning for a mode with unsupported features.
+        """
+        if features and mode not in self._appearance_warnings:
+            warnings.warn(
+                f"{type(self).__name__} ({mode}) approximates or ignores: "
+                + "; ".join(features),
+                UserWarning,
+                stacklevel=3,
+            )
+            self._appearance_warnings.add(mode)
+
+    def _warn_simple_appearance(self, mode: str) -> None:
+        """Report unavailable lighting features for line and pixel renderers.
+
+        Args:
+            mode: Rendering operation used to deduplicate warnings.
+
+        Returns:
+            None. Emits a warning only when requested appearance is approximated.
+        """
+        cfg = self.config.scene
+        features = []
+        if type(self).__name__.startswith("OpenCV"):
+            features.append("camera uses the planar pixel projection")
+        if cfg.material.shading != "unlit":
+            features.append("surface lighting and materials rendered as colored lines")
+        if cfg.shadows or cfg.ambient_occlusion:
+            features.append("shadows and ambient occlusion unavailable")
+        if cfg.material.opacity < 1 or cfg.ground.opacity < 1:
+            features.append("transparency uses backend line/surface support")
+        if cfg.backdrop.enabled:
+            features.append("curved backdrop represented by the ground reference")
+        if (
+            self.config.camera.exposure_ev100 != 15
+            or cfg.tone_mapping != "backend-default"
+        ):
+            features.append("exposure/tone mapping ignored to preserve line colors")
+        self._warn_appearance(mode, features)
+
+    def _world_up(self) -> np.ndarray:
+        """Resolve the configured floor normal in spatial renderer coordinates.
+
+        Returns:
+            Unit three-vector; defaults to planar +Y or spatial +Z.
+        """
+        normal = self.config.scene.ground.normal
+        if normal is None:
+            normal = (0.0, 1.0, 0.0) if self._is_planar else (0.0, 0.0, 1.0)
+        n = np.asarray(normal, dtype=float)
+        return n / np.linalg.norm(n)
+
+    def _fit_scene_bounds(self, points, padding: float | None = None) -> None:
+        """Fit stable scenery bounds from a complete arrangement or trajectory.
+
+        Args:
+            points: Array with a final coordinate axis of length two or three.
+            padding: Optional radial padding in metres; defaults to the larger
+                of 5% of robot length and base plate thickness.
+
+        Returns:
+            None. Stores the center and maximum padded extent for scene setup.
+        """
+        if getattr(self, "_appearance_bounds_locked", False):
+            return
+        points = np.asarray(points).reshape(-1, np.shape(points)[-1])
+        if points.shape[1] == 2:
+            points = np.pad(points, ((0, 0), (0, 1)))
+        if not len(points):
+            return
+        margin = (
+            max(0.05 * self.L_max, self.config.geometry.base_plate_thickness)
+            if padding is None
+            else padding
+        )
+        lower, upper = points.min(axis=0) - margin, points.max(axis=0) + margin
+        self._appearance_center = (lower + upper) / 2
+        self._appearance_extent = max(float(np.max(upper - lower)), 0.001)
+
+    def _expand_scene_bounds_for_spheres(self, positions, radii=None) -> None:
+        """Expand scene bounds to enclose static or moving helper spheres.
+
+        Args:
+            positions: Optional helper centers or trajectories ending in three
+                coordinates, in metres.
+            radii: Optional sphere radii in metres; defaults to 0.02 metres.
+
+        Returns:
+            None. Enlarges stored scenery bounds without including the scenery.
+        """
+        if positions is None or not np.asarray(positions).size:
+            return
+        points = np.asarray(positions).reshape(-1, 3)
+        radius = 0.02 if radii is None else float(np.max(radii))
+        half = self._appearance_extent / 2
+        lower = np.minimum(self._appearance_center - half, points.min(axis=0) - radius)
+        upper = np.maximum(self._appearance_center + half, points.max(axis=0) + radius)
+        self._appearance_center = (lower + upper) / 2
+        self._appearance_extent = max(float(np.max(upper - lower)), 0.001)
+
+    def _resolve_ground_planes(self, curves, base_axes=None):
+        """Compute ground plane centers, unit normals and side lengths.
+
+        Args:
+            curves: Current backbone curves, shape (robots, points, 2 or 3).
+            base_axes: Optional material-frame tangent vectors, shape (robots, 3).
+
+        Returns:
+            List of (center, normal, side length) tuples. Centers and side lengths
+            are in metres. World alignment produces one plane; base alignment
+            produces one plane for each robot, displaced below its base plate.
+        """
+        cfg = self.config.scene.ground
+        curves = np.asarray(curves)
+        if not hasattr(self, "_appearance_extent"):
+            self._fit_scene_bounds(curves)
+        size = cfg.size or max(self._appearance_extent * 1.35, 0.1)
+        if cfg.alignment == "world":
+            n = self._world_up()
+            c = self._appearance_center
+            ground_height = self._resolve_ground_height(curves[:, 0], base_axes)
+            return [(c - (c @ n) * n + ground_height * n, n, size)]
+        count = len(curves)
+        normals = (
+            np.broadcast_to(self._base_tangent_axis(dim=3), (count, 3))
+            if base_axes is None
+            else np.asarray(base_axes)
+        )
+        normals = normals / np.linalg.norm(normals, axis=-1, keepdims=True)
+        centers = np.pad(curves[:, 0], ((0, 0), (0, 3 - curves.shape[-1])))
+        if cfg.height_reference not in ("world", "base_mounting_face"):
+            raise ValueError(f"Unknown ground height reference: {cfg.height_reference}")
+        # Base alignment is already anchored to each base plate. Its zero
+        # height is the mounting face, with cfg.height applying an offset from it.
+        base_offset = cfg.height - self.config.geometry.base_plate_thickness
+        centers = centers + base_offset * normals
+        return list(zip(centers, normals, np.full(count, size)))
+
+    def _resolve_ground_height(self, base_points=None, base_axes=None) -> float:
+        """Resolve a world-aligned floor height from the configured reference.
+
+        Args:
+            base_points: Robot base points in renderer coordinates. Required for
+                ``height_reference="base_mounting_face"`` when a world floor is used.
+            base_axes: Optional base plate axes in renderer coordinates. A base
+                mounting face reference requires every axis to be parallel or
+                antiparallel to the floor normal.
+
+        Returns:
+            World-space signed height along the configured floor normal.
+
+        Raises:
+            ValueError: Base-referenced world floors have different base heights.
+        """
+        cfg = self.config.scene.ground
+        if cfg.height_reference == "world":
+            return float(cfg.height)
+        if cfg.height_reference != "base_mounting_face":
+            raise ValueError(f"Unknown ground height reference: {cfg.height_reference}")
+        if self.robot.floating_base:
+            raise ValueError(
+                "height_reference='base_mounting_face' is not supported for "
+                "floating-base robots; use height_reference='world'"
+            )
+        if self._is_planar:
+            raise ValueError(
+                "height_reference='base_mounting_face' requires a spatial fixed-base "
+                "robot with a base axis parallel or antiparallel to the floor normal"
+            )
+        if base_points is None:
+            base_points = self._base_position(dim=3)
+        points = np.asarray(base_points, dtype=np.float64)
+        if points.ndim == 1:
+            points = points[None, :]
+        if points.ndim != 2 or points.shape[1] not in (2, 3):
+            raise ValueError("base_points must have shape (N, 2) or (N, 3)")
+        if points.shape[1] == 2:
+            points = np.pad(points, ((0, 0), (0, 1)))
+        normal = self._world_up()
+        if base_axes is None:
+            axes = np.broadcast_to(self._base_tangent_axis(dim=3), (len(points), 3))
+        else:
+            axes = np.asarray(base_axes, dtype=np.float64)
+            if axes.ndim == 1:
+                axes = axes[None, :]
+            if axes.ndim != 2 or axes.shape[1] not in (2, 3):
+                raise ValueError("base_axes must have shape (N, 2) or (N, 3)")
+            if axes.shape[1] == 2:
+                axes = np.pad(axes, ((0, 0), (0, 1)))
+            axes = axes / np.linalg.norm(axes, axis=-1, keepdims=True)
+        if len(axes) != len(points):
+            raise ValueError("base_points and base_axes must have matching rows")
+        axis_alignment = np.abs(axes @ normal)
+        if not np.allclose(axis_alignment, 1.0):
+            raise ValueError(
+                "height_reference='base_mounting_face' requires the base axis to be "
+                "parallel or antiparallel to the floor normal (+z or -z for the "
+                "default spatial floor)"
+            )
+        base_heights = points @ normal - self.config.geometry.base_plate_thickness * (
+            axes @ normal
+        )
+        if not np.allclose(base_heights, base_heights[0]):
+            raise ValueError(
+                "height_reference='base_mounting_face' with world alignment requires "
+                "all robot base mounting faces to share one height; use "
+                "alignment='base' for separate base planes"
+            )
+        return float(base_heights[0] + cfg.height)
 
     def _base_position(self, dim: int | None = None) -> np.ndarray:
         """Return the configured base translation in renderer coordinates.
@@ -1059,6 +1276,9 @@ class BaseSoftRobotRenderer(ABC):
         legend_segment = per_robot_segment[0]
         legend_point = per_robot_point[0]
 
+        if cfg.robot_override is not None:
+            for values in (per_robot_point, per_robot_segment, robot_colors_rgba):
+                values[..., :3] = cfg.robot_override
         resolved = ResolvedBackboneColors(
             per_robot_point_rgba=per_robot_point,
             per_robot_segment_rgba=per_robot_segment,

@@ -22,7 +22,7 @@ Let's dive right in with a classic example - simulating a double pendulum to und
     import jax.numpy as jnp
     import matplotlib.pyplot as plt
     from soromox.systems import Pendulum, PendulumParams, SystemState
-    from soromox.rendering import ViserRenderer
+    from soromox.rendering import RendererConfig, GeometryConfig, ViserRenderer
 
     # Define parameters for a double pendulum
     num_links = 2
@@ -125,7 +125,7 @@ Let's dive right in with a classic example - simulating a double pendulum to und
     ```python
     # Interactive 3D visualization with ViserRenderer
     # Opens a web-based interface in your browser for interactive exploration
-    viser_renderer = ViserRenderer(robot, num_points=50, backbone_style="discrete")
+    viser_renderer = ViserRenderer(robot, config=RendererConfig(geometry=GeometryConfig(num_points=50, backbone_style="discrete")))
     viser_renderer.render_sequence(
         ts,
         q_ts,
@@ -188,9 +188,6 @@ performance settings.
 - **JAX Compatibility**: Full support for JIT compilation, automatic differentiation, and vectorization
 - **Type Safety**: Clear interfaces with static type checking
 - **Performance**: Optimized computation graphs compiled at runtime
-
-!!! note "Migration from Factory Pattern"
-    SoRoMoX previously used a factory pattern, but has migrated to object-oriented classes for better extensibility and maintainability. All systems now inherit from `DynamicalSystem` or `SoftRobot` base classes. See the [API Reference](../api/overview.md) for details.
 
 ### 📋 Typed Parameters
 

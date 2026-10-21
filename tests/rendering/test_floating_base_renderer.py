@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 from numpy.testing import assert_allclose
 
+from soromox.rendering import GeometryConfig, RendererConfig
 from soromox.rendering.base import BaseSoftRobotRenderer
 from soromox.systems import (
     PCS,
@@ -85,7 +86,9 @@ def test_renderer_follows_runtime_base_pose(factory) -> None:
     q = robot.pack_configuration(
         jnp.zeros((robot.num_internal_dofs,)), base_pose=base_pose
     )
-    renderer = _FloatingRendererProbe(robot, num_points=5)
+    renderer = _FloatingRendererProbe(
+        robot, config=RendererConfig(geometry=GeometryConfig(num_points=5))
+    )
 
     backbone_poses = renderer.compute_backbone_poses(q)
     expected_base = robot.base_transform_from_configuration(q)

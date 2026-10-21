@@ -2,16 +2,21 @@
 
 Visualization and rendering utilities for soft robot systems.
 
-## Overview
-
 The rendering module provides a class-based architecture for visualizing soft robots. All renderers inherit from a common base class `BaseSoftRobotRenderer` which provides cached forward kinematics and a unified interface.
 
-### Core renderer gallery
+## Core renderer gallery
 
-The Matplotlib, Open3D, and Viser samples show the same three-segment spatial
-PCS configuration with the paper color theme, a dark base, and a base-aligned
-ground plane. The OpenCV sample uses its three-segment planar counterpart with
-the same dark-base and warm-backbone styling.
+The Matplotlib, Open3D, and Viser samples show the same upright tapered GVS
+tentacle with `SceneConfig.studio()` (the neutral studio variant), a pastel
+purple backbone and a dark base. OpenCV shows a two-link planar PCS counterpart
+with the same lengths and prescribed bending coordinates. Matplotlib uses a
+white background and its standard axes, ignoring scene appearance presets.
+OpenCV also uses a white background, with colored robot geometry and no scene
+lighting or ground scenery.
+
+The [preset gallery](presets.md) compares all six scene presets in Open3D and
+Viser. These examples select neutral studio explicitly; the renderer-wide default
+is the technical preset.
 
 <div class="grid cards soromox-gallery" markdown>
 
@@ -52,10 +57,14 @@ the same dark-base and warm-backbone styling.
 
 </div>
 
+Reproduce these images with `examples/rendering/backend_gallery.py --backend`
+followed by `matplotlib`, `open3d`, `viser` or `opencv`.
+
 System-specific renderer designs are documented alongside their robots: the
-[Planar HSA OpenCV renderer](../systems/pcs/planar-hsa.md),
-[I-SUPPORT Viser renderer](../systems/pcs/isupport.md), and
-[UMArm Viser renderer](../systems/articulated/mckibben-umarm.md).
+[Planar HSA OpenCV renderer](../systems/pcs/planar-hsa.md#specialized-opencv-rendering),
+[I-Support Viser renderer](../systems/pcs/isupport.md#specialized-viser-rendering),
+[UMArm Viser renderer](../systems/articulated/mckibben-umarm.md), and
+[Helicoidal Viser renderer](../systems/gvs/helicoidal.md#specialized-viser-rendering).
 
 ## Choosing a Renderer
 
@@ -65,25 +74,25 @@ System-specific renderer designs are documented alongside their robots: the
 | `Open3DRenderer` | Interactive 3D inspection | Rich camera controls, headless capture | Requires Open3D, 3D only |
 | `ViserRenderer` | Live demos, web-based visualization | Browser UI, live streaming, multi-robot | Requires web server, 3D only |
 | `OpenCVPlanarRenderer` | Fast 2D animations, video export | Lightweight, fast output | Planar robots only |
-| `OpenCVPlanarHSARenderer` | PlanarHSA-specific visuals | HSA-specific geometry | PlanarHSA only |
 
 ## Documentation
 
 ### [Renderer API](renderers.md)
 
-Complete API reference for all renderer classes:
+API reference for the shared base class and general-purpose backends:
 
 - `BaseSoftRobotRenderer` - Abstract base class
 - `MatplotlibRenderer` - Matplotlib-based visualization
 - `Open3DRenderer` - Open3D-based 3D visualization
 - `ViserRenderer` - Web-based visualization
 - `OpenCVPlanarRenderer` - OpenCV-based 2D visualization
-- `OpenCVPlanarHSARenderer` - HSA-specific visualization
 
 ### [Shared Configuration](configuration.md)
 
 Settings shared by multiple renderer backends:
 
+- `RendererConfig` - Scene, camera, colors, geometry and output settings
+- Scene presets, physical light units and backend approximations
 - `CameraConfig` - Camera positioning and field of view
 - Robot base, base-plate, and ground-plane behavior
 - Multi-robot layouts and spacing
@@ -98,9 +107,9 @@ All renderers accept a robot model at construction and expose a single-frame
 entry point. For example:
 
 ```python
-from soromox.rendering import MatplotlibRenderer
+from soromox.rendering import RendererConfig, GeometryConfig, MatplotlibRenderer
 
-renderer = MatplotlibRenderer(robot, num_points=50)
+renderer = MatplotlibRenderer(robot, config=RendererConfig(geometry=GeometryConfig(num_points=50)))
 renderer.show(q)
 ```
 

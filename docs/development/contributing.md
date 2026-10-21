@@ -55,6 +55,9 @@ Follow our coding standards:
 
 ### 3. Run Tests
 
+Paper figure tests decode committed videos and require the `ffmpeg` executable
+on `PATH` (for example, `sudo apt-get install ffmpeg` on Ubuntu).
+
 ```bash
 # Run all tests
 pytest
@@ -138,12 +141,19 @@ The documentation site uses Zensical. Use its CLI for both local preview and
 production builds:
 
 ```bash
+# Fetch the documentation videos and GIFs stored in Git LFS
+git lfs pull --include="docs/assets/**" --exclude=""
+
 # Serve documentation locally
 uv run --extra docs zensical serve
 
 # Build documentation
 uv run --extra docs zensical build --clean
 ```
+
+For browser playback, encode documentation MP4s as H.264 with `yuv420p`
+pixel format and `-movflags +faststart`. Keep an animated GIF link below
+each player so it remains accessible if video playback fails.
 
 ### 6. Commit Changes
 

@@ -133,8 +133,9 @@ def _joint_basis_column(
     )
 
 
-@wp.kernel(enable_backward=False)
-def joint_terms_kernel(
+@wp.func
+def joint_terms_at(
+    work_item: int,
     q: wp.array2d[wp.float64],
     qd: wp.array2d[wp.float64],
     basis: wp.array2d[wp.float64],
@@ -148,7 +149,11 @@ def joint_terms_kernel(
 ):
     """Evaluate one joint per ``(environment, segment)`` work item.
 
+    Explicit indices address the supplied array views. Homogeneous wrappers pass the
+    full batch; packed wrappers pass one world's views and local indices.
+
     Args:
+        work_item: Flattened environment-segment index in the supplied arrays.
         q: Batched active generalized coordinates.
         qd: Batched active generalized velocities.
         basis: Flattened padded joint bases.
@@ -163,13 +168,10 @@ def joint_terms_kernel(
     Returns:
         None. All results are written to the caller-owned output arrays.
     """
-
-    work_item = wp.tid()
     num_segments = reference.shape[0]
     environment = work_item // num_segments
     segment = work_item - environment * num_segments
     output_base_row = work_item * SPATIAL_DIM
-
     xi = _joint_strain(basis, reference, q, local_to_global, environment, segment)
     xid = _joint_strain_rate(basis, qd, local_to_global, environment, segment)
     angle_sq = xi[0] * xi[0] + xi[1] * xi[1] + xi[2] * xi[2]
@@ -180,20 +182,13 @@ def joint_terms_kernel(
     linear = wp.vec3d(xi[3], xi[4], xi[5])
     exponential_coefficients = _forward_coefficients(angle_sq)
     translation = _translation(omega, linear, exponential_coefficients)
-
     velocity = _left_action(xi, xid, coefficients)
     eta = _adjoint_inverse_action(
         omega, translation, angle_sq, exponential_coefficients, velocity
     )
     derivative_velocity = _left_total_derivative_action(
-        xi,
-        xid,
-        xid,
-        Vec6d(),
-        coefficients,
-        coefficient_derivatives * angle_sq_dot,
+        xi, xid, xid, Vec6d(), coefficients, coefficient_derivatives * angle_sq_dot
     )
-
     row = int(0)
     while row < SPATIAL_DIM:
         tangent_dot_qd[output_base_row + row, 0] = derivative_velocity[row]
@@ -201,19 +196,11 @@ def joint_terms_kernel(
         column = int(0)
         while column < SPATIAL_DIM:
             adjoint_value = _adjoint_inverse_entry(
-                omega,
-                translation,
-                angle_sq,
-                exponential_coefficients,
-                row,
-                column,
+                omega, translation, angle_sq, exponential_coefficients, row, column
             )
             adjoint[output_base_row + row, column] = adjoint_value
             column += 1
         row += 1
-
-    # Ad_inv_dot = -ad(Ad_inv * joint_velocity) * Ad_inv.  Applying ad to
-    # each already-computed adjoint column avoids materializing a dense ad.
     column = int(0)
     while column < SPATIAL_DIM:
         adjoint_column = Vec6d()
@@ -227,13 +214,10 @@ def joint_terms_kernel(
             adjoint_dot[output_base_row + row, column] = derivative_column[row]
             row += 1
         column += 1
-
     local_column = int(0)
     while local_column < local_to_global.shape[1]:
         tangent = _left_action(
-            xi,
-            _joint_basis_column(basis, segment, local_column),
-            coefficients,
+            xi, _joint_basis_column(basis, segment, local_column), coefficients
         )
         row = int(0)
         while row < SPATIAL_DIM:
@@ -242,7 +226,119 @@ def joint_terms_kernel(
         local_column += 1
 
 
-def launch_joint_terms(
+@wp.struct
+class JointTermsData:
+    """Joint state, bases and Lie-operator buffers for a compatible batch.
+
+    Array fields are non-owning views; the caller must retain their allocations
+    for every launch and captured graph. Homogeneous kernels receive this struct
+    directly with batched fields spanning E worlds and shared structural fields.
+    Packed kernels select it from a device array with E = 1 per descriptor; each
+    descriptor may have its own structural dimensions and parameter values.
+
+    Attributes:
+        q: Batched active generalized coordinates.
+        qd: Batched active generalized velocities.
+        basis: Flattened padded joint bases.
+        reference: Reference joint strains.
+        local_to_global: Padded local-to-active coordinate map.
+        adjoint: Caller-owned inverse-adjoint output.
+        adjoint_dot: Caller-owned inverse-adjoint derivative output.
+        tangent_local: Caller-owned local-tangent output.
+        tangent_dot_qd: Caller-owned tangent-derivative action output.
+        joint_velocity: Caller-owned joint-velocity output.
+    """
+
+    q: wp.array2d[wp.float64]
+    qd: wp.array2d[wp.float64]
+    basis: wp.array2d[wp.float64]
+    reference: wp.array2d[wp.float64]
+    local_to_global: wp.array2d[wp.int32]
+    adjoint: wp.array2d[wp.float64]
+    adjoint_dot: wp.array2d[wp.float64]
+    tangent_local: wp.array2d[wp.float64]
+    tangent_dot_qd: wp.array2d[wp.float64]
+    joint_velocity: wp.array2d[wp.float64]
+
+
+@wp.kernel(enable_backward=False)
+def homogeneous_joint_terms_kernel(data: JointTermsData):
+    """Evaluate joint operators for a homogeneous batch.
+
+    All worlds use the same structural dimensions and coordinate layout. Dimensions:
+    E = worlds, S = segments.
+
+    Shared across worlds: ``basis``, ``reference``, ``local_to_global``.
+
+    State, computed operator, workspace and output arrays carry the world axis,
+    either explicitly or flattened as documented by the struct. Values may differ by
+    world.
+
+    Launch with ``dim=E*S``: one thread per flattened world/segment index.
+
+    Args:
+        data: Shared JointTermsData layout referencing the complete homogeneous
+            batch (E worlds). See the struct for field shapes and ownership.
+
+    Returns:
+        None. All results are written to the caller-owned output arrays.
+    """
+    work_item = wp.tid()
+    joint_terms_at(
+        work_item,
+        data.q,
+        data.qd,
+        data.basis,
+        data.reference,
+        data.local_to_global,
+        data.adjoint,
+        data.adjoint_dot,
+        data.tangent_local,
+        data.tangent_dot_qd,
+        data.joint_velocity,
+    )
+
+
+@wp.kernel(enable_backward=False)
+def packed_joint_terms_kernel(
+    world_data: wp.array[JointTermsData], work_items: wp.array[wp.vec3i]
+):
+    """Evaluate one joint per ``(environment, segment)`` work item using packed world data.
+
+    Each selected descriptor contains one world (E = 1). Structure and numerical
+    model parameters may differ between worlds. Descriptors may share allocations
+    when their values match.
+
+    Launch with ``dim=len(work_items)``; each thread handles one work item.
+
+    Args:
+        world_data: Device array of per-world data views, including caller-owned
+            outputs and workspaces. Keep every referenced allocation alive.
+        work_items: INT32 triples ``(world_index, local_index, 0)``. The local
+            index is local segment. The third component is reserved.
+
+    Returns:
+        None. All results are written to the caller-owned output arrays.
+    """
+    item = wp.tid()
+    entry = work_items[item]
+    data = world_data[entry[0]]
+    joint_terms_at(
+        entry[1],
+        data.q,
+        data.qd,
+        data.basis,
+        data.reference,
+        data.local_to_global,
+        data.adjoint,
+        data.adjoint_dot,
+        data.tangent_local,
+        data.tangent_dot_qd,
+        data.joint_velocity,
+    )
+
+
+def launch_homogeneous_joint_terms(
     q: wp.array2d[wp.float64],
     qd: wp.array2d[wp.float64],
     basis: wp.array2d[wp.float64],
@@ -254,11 +350,22 @@ def launch_joint_terms(
     tangent_dot_qd: wp.array2d[wp.float64],
     joint_velocity: wp.array2d[wp.float64],
 ):
-    """Launch one shape-generic joint work item per segment and environment.
+    """Launch joint terms for a homogeneous batch.
+
+    All worlds use the same structural dimensions and coordinate layout.
+
+    Shared across worlds: ``basis``, ``reference``, ``local_to_global``.
+
+    State, computed operator, workspace and output arrays carry the world axis,
+    either explicitly or flattened as documented in Args. Their values may differ by
+    world.
+
+    The launcher derives its work grid from these common dimensions and enqueues the
+    homogeneous kernels on the current Warp stream.
 
     This direct Warp entry point is intended for CPU execution and diagnostic
     use. GPU integrations should normally use
-    :func:`launch_cooperative_joint_terms`, which distributes the local basis
+    :func:`launch_homogeneous_cooperative_joint_terms`, which distributes the local basis
     columns across a CUDA block.
 
     Args:
@@ -283,22 +390,29 @@ def launch_joint_terms(
         None. Outputs are written in place.
     """
 
+    data = JointTermsData()
+    data.q = q
+    data.qd = qd
+    data.basis = basis
+    data.reference = reference
+    data.local_to_global = local_to_global
+    data.adjoint = adjoint
+    data.adjoint_dot = adjoint_dot
+    data.tangent_local = tangent_local
+    data.tangent_dot_qd = tangent_dot_qd
+    data.joint_velocity = joint_velocity
     wp.launch(
-        joint_terms_kernel,
+        homogeneous_joint_terms_kernel,
         dim=q.shape[0] * reference.shape[0],
-        inputs=[q, qd, basis, reference, local_to_global],
-        outputs=[
-            adjoint,
-            adjoint_dot,
-            tangent_local,
-            tangent_dot_qd,
-            joint_velocity,
-        ],
+        inputs=[data],
         block_dim=128,
     )
 
 
-scalable_joint_terms = wp.jax_callable(launch_joint_terms, num_outputs=5)
+scalable_joint_terms = wp.jax_callable(launch_homogeneous_joint_terms, num_outputs=5)
 
 
-__all__ = ["joint_terms_kernel", "launch_joint_terms"]
+__all__ = ["homogeneous_joint_terms_kernel", "launch_homogeneous_joint_terms"]
+
+
+__all__ += ["JointTermsData", "packed_joint_terms_kernel"]

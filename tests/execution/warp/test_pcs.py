@@ -39,7 +39,7 @@ def test_pcs_operands_are_views_over_precomputed_model_data(
     assert operands.block_dim == model.backend_params.warp_block_dim
     assert operands.active_strain_indices is model.active_strain_indices
     assert operands.reference_strain is model.xi_ref
-    assert operands.weighted_mass_diagonals is model.weighted_mass_diagonals
+    assert operands.weighted_inertias is model.weighted_inertias
 
 
 def test_spatial_pcs_pipeline_shapes_cover_workspace_and_results(

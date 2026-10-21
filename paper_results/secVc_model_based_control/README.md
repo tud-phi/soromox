@@ -7,8 +7,7 @@ Section Vc is reproduced by two independent cases:
   tracking.
 - [`operational_space_impedance_control/`](operational_space_impedance_control/README.md)
   evaluates operational-space impedance tracking with partial feedback
-  linearization. A full-versus-partial comparison remains available as a
-  standalone diagnostic.
+  linearization.
 
 Run commands from the repository root after installing paper dependencies:
 

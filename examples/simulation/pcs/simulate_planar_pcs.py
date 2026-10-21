@@ -7,9 +7,16 @@ import jax.numpy as jnp
 import matplotlib.pyplot as plt
 from diffrax import Tsit5
 
+from soromox.rendering.config import (
+    GeometryConfig,
+    RendererConfig,
+    RenderOutputConfig,
+)
+
 jax.config.update("jax_enable_x64", True)  # double precision
 from soromox.rendering import MatplotlibRenderer, OpenCVPlanarRenderer
 from soromox.systems import LinkSpec, PlanarPCS, SystemState
+from soromox.utils.geometry import poses
 
 jnp.set_printoptions(
     threshold=jnp.inf,
@@ -45,7 +52,7 @@ if __name__ == "__main__":
             )
             for index in range(num_segments)
         ],
-        gravity=jnp.array([0.0, 9.81]),  # gravity vector [m/s^2] UP!
+        gravity=jnp.array([0.0, -9.81]),
     )
 
     # ======================================================
@@ -53,7 +60,7 @@ if __name__ == "__main__":
     # ======================================================
     robot = PlanarPCS(
         params=params,
-        base_pose=jnp.array([jnp.pi / 2, 0.0, 0.0]),
+        base_pose=poses.planar_mounting_pose("hanging"),
     )
 
     J, Jd = robot.jacobian_and_time_derivative(
@@ -191,14 +198,21 @@ if __name__ == "__main__":
     # =====================================================
     # Plot the robot configuration upon time
     # =====================================================
-    renderer = MatplotlibRenderer(robot, num_points=50)
+    renderer = MatplotlibRenderer(
+        robot, config=RendererConfig(geometry=GeometryConfig(num_points=50))
+    )
     renderer.animate(ts=ts, q_ts=q_ts, interval=100, mode="slider")
 
     # =====================================================
     # OpenCV-based rendering example
     # =====================================================
     opencv_renderer = OpenCVPlanarRenderer(
-        robot, num_points=50, width=700, height=700, length_scale=3.0
+        robot,
+        length_scale=3.0,
+        config=RendererConfig(
+            geometry=GeometryConfig(num_points=50),
+            output=RenderOutputConfig(width=700, height=700),
+        ),
     )
     opencv_renderer.render_sequence(
         ts,

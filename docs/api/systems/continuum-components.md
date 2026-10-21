@@ -39,9 +39,14 @@ link. The static system structure determines how each row is interpreted:
 The supported solid cross-sections are circular, rectangular, and elliptical.
 `CrossSectionGeometry` identifies the family, while shared geometry utilities
 calculate area and second moments of area. Geometry dimensions are finite and
-strictly positive. Shared evaluators and `robot.cross_section_geometry(...)`
-use `[height, width]` for rectangular sections and
-`[semi_major, semi_minor]` for elliptical sections.
+strictly positive. `robot.cross_section_geometry(q, s)` returns
+`(geometry, outer_dimensions, inner_dimensions)`, with `None` for entirely
+solid models.
+Shared evaluators and this query use
+`[height, width]` for rectangular sections and `[semi_major, semi_minor]` for
+elliptical sections. Height and semi-major radius span local material y; width
+and semi-minor radius span local material z. These axes rotate with the link
+and do not imply a world-up direction.
 
 `LinkSpec` provides the ergonomic construction interface:
 
@@ -70,8 +75,8 @@ tapered_rectangle = LinkSpec.rectangular(
 )
 ```
 
-PCS currently accepts constant circular links. GVS accepts constant or linear
-circular, rectangular, and elliptical cross-sections.
+PCS currently accepts constant solid circular links. GVS accepts constant or
+linear solid circular, rectangular, and elliptical cross-sections.
 
 ## Continuum links
 
@@ -85,6 +90,9 @@ circular, rectangular, and elliptical cross-sections.
 | `cross_section.coefficients` | `(N, max_coefficients)` | Packed geometry profiles |
 | `stiffness` | `(N, generalized_dimension, generalized_dimension)` | Generalized link stiffness |
 | `damping` | same as `stiffness` | Generalized link damping |
+| `sectional_inertia` | `(N, d, d)` or `(N, Q, d, d)`, optional | Angular-first inertia per reference length |
+| `sectional_inertia_mask` | `(N,)`, optional boolean | Select supplied sectional inertia per link; other links use geometry and density |
+| `tip_inertia` | `(N, d, d)`, optional | Attached-body inertia about each link tip |
 
 Stiffness and damping are finite symmetric matrices. They are not required to
 be diagonal or positive definite, which permits anisotropic, coupled, fitted,
@@ -100,6 +108,39 @@ The generalized dimension depends on the system:
 | GVS | `(N, max_dof, max_dof)` |
 
 GVS matrices are zero-padded beyond each link's active basis coordinates.
+
+## Distributed and attached-body inertia
+
+Optional `sectional_inertia` and `tip_inertia` matrices describe mass and
+rotational inertia in each link's local material frame, including an offset
+center of mass. Use angular-first order with `d=3` for planar mechanics and
+`d=6` for spatial mechanics. Sectional matrices are per unit reference length;
+tip matrices describe the whole attached body about the link tip. Omitting
+sectional inertia uses geometry and density; omitting tip inertia adds no attached
+body. With supplied sectional matrices, `sectional_inertia_mask` selects which
+links use them: `True` selects the override and `False` keeps geometry-and-density
+evaluation. Omitting the mask selects every supplied row. This allows mixed
+geometric and prepared inertia distributions, including subsequent density updates.
+
+A sectional matrix may be constant along a link or sampled at its interior
+Gauss nodes. Sampled arrays must match the model's quadrature grid, including
+GVS padding. Matrices must be finite, symmetric, positive semidefinite, and
+have an isotropic translational mass block.
+
+`spatial_inertia` constructs these matrices from mass, center of mass, and
+rotational inertia about that center, including parallel-axis and coupling terms:
+
+```python
+from soromox.systems import spatial_inertia
+
+tip = spatial_inertia(masses, centers_of_mass, inertias_about_centers)
+robot = robot.update_link_params(tip_inertia=tip)
+```
+
+Numeric updates preserve the model structure when shapes and optional-field
+presence remain fixed. Allocate zero tip matrices before compilation if masses
+will be attached later. See the helper's API reference below for input shapes
+and units.
 
 ## Isotropic material model
 

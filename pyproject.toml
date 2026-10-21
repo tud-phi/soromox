@@ -17,7 +17,7 @@ name = "soromox"  # Required
 #
 # For a discussion on single-sourcing the version, see
 # https://packaging.python.org/guides/single-sourcing-package-version/
-version = "0.4.0"  # Required
+version = "0.5.0"  # Required
 
 # This is a one-line description or tagline of what your project does. This
 # corresponds to the "Summary" metadata field:
@@ -98,6 +98,7 @@ classifiers = [  # Optional
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
     "Programming Language :: Python :: 3 :: Only",
 ]
 
@@ -161,7 +162,7 @@ examples = [
     "ipython",
     "matplotlib",
     "numpy",
-    "open3d>=0.18",
+    "open3d>=0.20",
     "ipywidgets>=8.0.4",
     "opencv-python",
     "optax",
@@ -172,12 +173,13 @@ examples = [
     "viser",
 ]
 paper_results = [
+    "coomm @ git+https://github.com/mstoelzle/COOMM.git@0df454a44e70be941941be3c6b521b1cd891aef3",
     "cbfpy",
     "gymnasium",
     "ipython",
     "matplotlib",
     "numpy",
-    "open3d>=0.18",
+    "open3d>=0.20",
     "ipywidgets>=8.0.4",
     "opencv-python",
     "openpyxl",
@@ -185,7 +187,7 @@ paper_results = [
     "optimistix",
     "pandas",
     "plotly",
-    "pyelastica",
+    "pyelastica>=0.3.3.post2,<2",
     "seaborn",
     "stable-baselines3",
     "trimesh",
@@ -193,7 +195,7 @@ paper_results = [
 ]
 rendering = [
     "matplotlib",
-    "open3d>=0.18",
+    "open3d>=0.20",
     "ipywidgets>=8.0.4",
     "opencv-python",
     "plotly",
@@ -222,12 +224,13 @@ test = [
     "warp-lang>=1.16.0",
 ]
 all = [
+    "coomm @ git+https://github.com/mstoelzle/COOMM.git@0df454a44e70be941941be3c6b521b1cd891aef3",
     "bump2version",
     "cbfpy",
     "check-manifest",
     "codecov",
     "coverage[toml]",
-    "pyelastica",
+    "pyelastica>=0.3.3.post2,<2",
     "gymnasium",
     "ipython",
     "matplotlib",
@@ -235,7 +238,7 @@ all = [
     "mkdocstrings",
     "mkdocstrings-python",
     "numpy",
-    "open3d>=0.18",
+    "open3d>=0.20",
     "ipywidgets>=8.0.4",
     "opencv-python",
     "openpyxl",
@@ -243,7 +246,7 @@ all = [
     "pandas",
     "plotly",
     "pre-commit",
-    "pyelastica",
+    "pyelastica>=0.3.3.post2,<2",
     "pytest",
     "pytest-cov",
     "pytest-html",
@@ -312,6 +315,7 @@ ignore = [
   "paper_results/**",
   "tests/**",
   "tools/**",
+  "third_party/**",
   "uv.lock",
 ]
 
@@ -325,6 +329,8 @@ build-backend = "setuptools.build_meta"
 [tool.pytest.ini_options]
 markers = [
     "memory_intensive: tests isolated in CI because they require substantial JAX/XLA memory",
+    "rendering_integration: opt-in tests requiring native graphics, display, or video services",
+    "slow: tests that integrate a full-length rollout; deselect with -m 'not slow'",
 ]
 
 # ==================== Coverage Configuration ====================
@@ -399,3 +405,12 @@ skip-magic-trailing-comma = false
 
 # Auto-detect line ending
 line-ending = "auto"
+
+# macOS, Linux x86-64, Linux ARM64 and Windows x86-64 build the checked-in
+# Open3D 0.20 release with the renderer fixes; other platforms use stable
+# upstream wheels.
+
+[tool.uv.sources]
+open3d = [
+    { path = "third_party/open3d", marker = "sys_platform == 'darwin' or sys_platform == 'win32' or (sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'aarch64' or platform_machine == 'arm64') and platform_python_implementation == 'CPython')" },
+]

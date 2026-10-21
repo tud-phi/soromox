@@ -11,6 +11,9 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array, jit, vmap
 
+from soromox.rendering.config import RendererConfig
+from soromox.rendering.config.camera import CameraConfig
+from soromox.rendering.config.colors import RendererColorConfig
 from soromox.rendering.opencv_base import BaseOpenCVRenderer
 from soromox.systems import PlanarHSA
 
@@ -32,39 +35,48 @@ class OpenCVPlanarHSARenderer(BaseOpenCVRenderer):
     def __init__(
         self,
         robot: PlanarHSA,
-        width: int = 700,
-        height: int = 700,
-        num_points: int = 50,
-        background_color: tuple[float, float, float] = (1.0, 1.0, 1.0),
-        base_color: tuple[int, int, int] = (0, 0, 0),
-        backbone_color: tuple[int, int, int] = (255, 0, 0),
-        rod_color: tuple[int, int, int] = (0, 255, 0),
-        platform_color: tuple[int, int, int] = (0, 0, 255),
-        backbone_thickness: int = 5,
+        config: RendererConfig | None = None,
         rod_thickness: int = 10,
     ):
         """Initialize OpenCV renderer for Planar HSA.
 
         Args:
+            config: Shared robot color, geometry and output defaults. Scene
+                appearance is ignored; the canvas is white.
             robot: PlanarHSA robot instance
-            width: Image width in pixels
-            height: Image height in pixels
-            num_points: Number of points for curve discretization
-            background_color: RGB background color (0-1 range)
-            base_color: BGR color for base rectangle
-            backbone_color: BGR color for virtual backbone
-            rod_color: BGR color for rods
-            platform_color: BGR color for platforms
-            backbone_thickness: Line thickness for backbone
             rod_thickness: Line thickness for rods
         """
-        super().__init__(robot, width, height, num_points, background_color)
+        super().__init__(robot, config=config)
+        base_color = tuple(
+            int(x * 255) for x in self.config.colors.base_plate_color[::-1]
+        )
+        backbone_color = tuple(
+            int(x * 255)
+            for x in self.resolve_backbone_colors(1).per_robot_point_rgba[0, 0, :3][
+                ::-1
+            ]
+        )
+        rod_color = tuple(
+            int(x * 255)
+            for x in (
+                self.color_config.robot_override
+                or self.color_config.actuators.color_for_kind("rod")
+            )[:3][::-1]
+        )
+        platform_color = tuple(
+            int(x * 255)
+            for x in (
+                self.color_config.robot_override
+                or self.color_config.actuators.color_for_kind("platform")
+            )[:3][::-1]
+        )
+        backbone_thickness = self.config.geometry.line_width
 
         self.base_color = base_color
         self.backbone_color = backbone_color
         self.rod_color = rod_color
         self.platform_color = platform_color
-        self.backbone_thickness = backbone_thickness
+        self.backbone_thickness = max(1, round(backbone_thickness or 4))
         self.rod_thickness = rod_thickness
 
         # Cache HSA-specific FK functions
@@ -98,10 +110,14 @@ class OpenCVPlanarHSARenderer(BaseOpenCVRenderer):
         q: Array,
         *,
         base_offsets: Array | None = None,
+        color_config: RendererColorConfig | None = None,
+        camera_config: CameraConfig | None = None,
     ) -> np.ndarray:
         """Render single configuration to BGR image array.
 
         Args:
+            color_config: Complete sRGB robot color override.
+            camera_config: Camera override; the planar pixel projection is unchanged.
             q: Robot configuration array
             base_offsets: Optional positional offset with shape ``(2,)`` or
                 ``(3,)``. The z component is ignored for this planar renderer.
@@ -109,11 +125,34 @@ class OpenCVPlanarHSARenderer(BaseOpenCVRenderer):
         Returns:
             BGR image as numpy array of shape (height, width, 3), dtype uint8
         """
+        self._warn_simple_appearance(getattr(self, "_rendering_mode", "static"))
+        cfg = color_config or self.color_config
+        base_color = tuple(int(c * 255) for c in cfg.base_plate_color[:3][::-1])
+        backbone_color = tuple(
+            int(c * 255)
+            for c in self.resolve_backbone_colors(
+                1, color_config=cfg
+            ).per_robot_point_rgba[0, 0, :3][::-1]
+        )
+        rod_color = tuple(
+            int(c * 255)
+            for c in (cfg.robot_override or cfg.actuators.color_for_kind("rod"))[:3][
+                ::-1
+            ]
+        )
+        platform_color = tuple(
+            int(c * 255)
+            for c in (cfg.robot_override or cfg.actuators.color_for_kind("platform"))[
+                :3
+            ][::-1]
+        )
         robot = self.robot
         h, w = self.height, self.width
 
         # Pixel per meter
-        ppm = h / (2.0 * jnp.sum(robot.proximal_cap_length + robot.L + robot.distal_cap_length))
+        ppm = h / (
+            2.0 * jnp.sum(robot.proximal_cap_length + robot.L + robot.distal_cap_length)
+        )
 
         # Arc-length points
         s_ps = jnp.linspace(0, robot.length, self.num_points)
@@ -133,10 +172,7 @@ class OpenCVPlanarHSARenderer(BaseOpenCVRenderer):
             chip_ps = chip_ps.at[:, 1:3].add(offset_jax[None, :])
 
         # Initialize white background
-        bg_uint8 = tuple(
-            int(c * 255) for c in self.background_color[::-1]
-        )  # RGB to BGR
-        img = np.full((h, w, 3), bg_uint8, dtype=np.uint8)
+        img = self._blank_frame()
 
         # World origin in pixel coordinates
         uv_robot_origin = np.array([w // 2, int(h * 0.9)], dtype=np.int32)
@@ -156,15 +192,14 @@ class OpenCVPlanarHSARenderer(BaseOpenCVRenderer):
             base_xy = base_xy + np.asarray(offset)
         base_uv = np.asarray(chi2u(jnp.array([0.0, base_xy[0], base_xy[1]])))
 
-        # Draw base support below the transformed base position.
-        cv2.rectangle(
-            img, (0, int(base_uv[1])), (w, h), color=self.base_color, thickness=-1
-        )
+        cv2.circle(img, tuple(base_uv), 5, base_color, -1)
 
         # Add proximal and distal cap points to backbone
         chiv_ps = jnp.concatenate(
             [
-                (chiv_ps[:, 0] - jnp.array([0.0, 0.0, robot.proximal_cap_length[0]])).reshape(3, 1),
+                (
+                    chiv_ps[:, 0] - jnp.array([0.0, 0.0, robot.proximal_cap_length[0]])
+                ).reshape(3, 1),
                 chiv_ps,
                 (
                     chiv_ps[:, -1]
@@ -184,14 +219,16 @@ class OpenCVPlanarHSARenderer(BaseOpenCVRenderer):
             img,
             [curve_backbone],
             isClosed=False,
-            color=self.backbone_color,
+            color=backbone_color,
             thickness=self.backbone_thickness,
         )
 
         # Add cap points to left rod
         chiL_ps = jnp.concatenate(
             [
-                (chiL_ps[:, 0] - jnp.array([0.0, 0.0, robot.proximal_cap_length[0]])).reshape(3, 1),
+                (
+                    chiL_ps[:, 0] - jnp.array([0.0, 0.0, robot.proximal_cap_length[0]])
+                ).reshape(3, 1),
                 chiL_ps,
                 (
                     chiL_ps[:, -1]
@@ -211,14 +248,16 @@ class OpenCVPlanarHSARenderer(BaseOpenCVRenderer):
             img,
             [curve_rod_left],
             isClosed=False,
-            color=self.rod_color,
+            color=rod_color,
             thickness=self.rod_thickness,
         )
 
         # Add cap points to right rod
         chiR_ps = jnp.concatenate(
             [
-                (chiR_ps[:, 0] - jnp.array([0.0, 0.0, robot.proximal_cap_length[0]])).reshape(3, 1),
+                (
+                    chiR_ps[:, 0] - jnp.array([0.0, 0.0, robot.proximal_cap_length[0]])
+                ).reshape(3, 1),
                 chiR_ps,
                 (
                     chiR_ps[:, -1]
@@ -238,7 +277,7 @@ class OpenCVPlanarHSARenderer(BaseOpenCVRenderer):
             img,
             [curve_rod_right],
             isClosed=False,
-            color=self.rod_color,
+            color=rod_color,
             thickness=self.rod_thickness,
         )
 
@@ -252,16 +291,32 @@ class OpenCVPlanarHSARenderer(BaseOpenCVRenderer):
                 ]
             )
             platform_llc = chip_ps[i, :] + platform_R @ jnp.array(
-                [0, -robot.platform_dimension[i, 0] / 2, -robot.platform_dimension[i, 1] / 2]
+                [
+                    0,
+                    -robot.platform_dimension[i, 0] / 2,
+                    -robot.platform_dimension[i, 1] / 2,
+                ]
             )
             platform_ulc = chip_ps[i, :] + platform_R @ jnp.array(
-                [0, -robot.platform_dimension[i, 0] / 2, +robot.platform_dimension[i, 1] / 2]
+                [
+                    0,
+                    -robot.platform_dimension[i, 0] / 2,
+                    +robot.platform_dimension[i, 1] / 2,
+                ]
             )
             platform_urc = chip_ps[i, :] + platform_R @ jnp.array(
-                [0, +robot.platform_dimension[i, 0] / 2, +robot.platform_dimension[i, 1] / 2]
+                [
+                    0,
+                    +robot.platform_dimension[i, 0] / 2,
+                    +robot.platform_dimension[i, 1] / 2,
+                ]
             )
             platform_lrc = chip_ps[i, :] + platform_R @ jnp.array(
-                [0, +robot.platform_dimension[i, 0] / 2, -robot.platform_dimension[i, 1] / 2]
+                [
+                    0,
+                    +robot.platform_dimension[i, 0] / 2,
+                    -robot.platform_dimension[i, 1] / 2,
+                ]
             )
             platform_curve = jnp.stack(
                 [platform_llc, platform_ulc, platform_urc, platform_lrc, platform_llc],
@@ -270,20 +325,35 @@ class OpenCVPlanarHSARenderer(BaseOpenCVRenderer):
             cv2.fillPoly(
                 img,
                 [np.array(batched_chi2u(platform_curve))],
-                color=self.platform_color,
+                color=platform_color,
             )
 
         return img
 
-    def show(self, q: Array, *, base_offsets: Array | None = None) -> None:
+    def show(
+        self,
+        q: Array,
+        *,
+        base_offsets: Array | None = None,
+        color_config: RendererColorConfig | None = None,
+        camera_config: CameraConfig | None = None,
+    ) -> None:
         """Display single frame in OpenCV window.
 
         Args:
-            q: Robot configuration
+            q: Robot configuration.
+            color_config: Complete robot color override.
+            camera_config: Camera override, approximated by the planar projection.
             base_offsets: Optional positional offset with shape ``(2,)`` or
                 ``(3,)``.
         """
-        img = self.render_frame(q, base_offsets=base_offsets)
+        self._warn_simple_appearance(getattr(self, "_rendering_mode", "static"))
+        img = self.render_frame(
+            q,
+            base_offsets=base_offsets,
+            color_config=color_config,
+            camera_config=camera_config,
+        )
         win = "Planar HSA"
         cv2.namedWindow(win, cv2.WINDOW_NORMAL)
         cv2.imshow(win, img)

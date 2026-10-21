@@ -270,6 +270,7 @@ def resolve_actuator_rgba(
     | TrajectoryActuatorVisualLayer,
     *,
     default_color: tuple[float, float, float],
+    override_color: tuple[float, float, float] | None = None,
     scalar_field: str | None = None,
     scalar_colormap: str = "viridis",
 ) -> np.ndarray:
@@ -280,6 +281,10 @@ def resolve_actuator_rgba(
     """
     points = np.asarray(layer.points)
     target_shape = points.shape[:-2]
+    if override_color is not None:
+        return np.broadcast_to(
+            _as_rgba(np.asarray(override_color)), (*target_shape, 4)
+        ).copy()
     if layer.colors is not None:
         colors = _as_rgba(np.asarray(layer.colors, dtype=np.float64))
         if colors.shape[:-1] == target_shape:

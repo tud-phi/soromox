@@ -2,20 +2,6 @@
 
 **Get started with SoRoMoX in minutes!** Choose from multiple installation methods to get Soft Robot Models in jaX (SoRoMoX) running on your system.
 
-!!! warning "📢 Migration from JSRM"
-    
-    If you're migrating from the [JSRM package](https://github.com/tud-phi/jax-soft-robot-modeling), please note that SoRoMoX introduces breaking changes:
-    
-    - **Package Name**: `import jsrm` → `import soromox`
-    - **Architecture**: Functional approach → Object-oriented Equinox dataclasses
-    - **Performance**: Symbolic derivations → Numerical implementations
-    - **New Soft Robot Models**: Support for Spatial PCS, GVS, and articulated soft robot systems
-    - **Actuation**: Popular soft robot actuation modalities such as tendon and pressure actuation are implemented into the models (instead of just direct-torque actuation like in JSRM)
-    - **Renderers**: SoRoMoX includes built-in renderers for visualization
-    - **Control**: Model-based control implementations are included
-
----
-
 ## 🔧 Requirements
 
 !!! note "System Requirements"
@@ -25,7 +11,17 @@
     - **NumPy**
 
 !!! warning "Python Version Compatibility"
-    - **Open3D Rendering**: Open3D rendering is currently not compatible with Python 3.13+
+    - **Python 3.15**: Use current numerical dependencies or the updated
+      repository lockfile. Until Python 3.15 final is released, CI uses the
+      available release candidate. Some rendering and test dependencies build
+      from source and require C/C++ and, for some packages, Rust build tools.
+    - **PyTorch extras on Python 3.15**: PyTorch currently has no 3.15 wheels.
+      The `cuda13`, `rl`, `paper_results`, and `all` extras include PyTorch
+      directly or through Stable-Baselines3. Core simulation and the `warp`
+      extra can be installed independently.
+    - **Open3D Rendering**: Patched Open3D 0.20 source builds are tested
+      with Python 3.11–3.14 on Ubuntu x86-64. Python 3.12–3.14 and 3.15.0rc2
+      are tested on Apple Silicon; Ubuntu CI also covers Python 3.15.
     - **Python 3.14 on Windows**: There may currently exist an incompatibility of Python 3.14 on Windows with the package
 
 ---
@@ -79,10 +75,10 @@ SoRoMoX provides several optional dependency groups for different use cases:
 
 ### 🎨 Rendering Dependencies
 
-For 3D visualization and animation:
+For 3D visualization and animation, install from a source checkout:
 
 ```bash
-pip install soromox[rendering]
+uv sync --extra rendering
 ```
 
 **Includes:**
@@ -100,7 +96,29 @@ pip install soromox[rendering]
     encoding when FFmpeg is unavailable.
 
 !!! note "Open3D Compatibility"
-    Open3D rendering is currently not compatible with Python 3.13+. If you need 3D visualization, please use Python 3.12 or earlier, or use the `viser` renderer instead.
+    This checkout pins the immutable Open3D 0.20.0 release commit. On Ubuntu,
+    macOS, and Windows, `uv sync --extra rendering` builds the patched source
+    locally; the first build takes time and disk space. Ubuntu needs the
+    documented compiler, Vulkan, Xvfb, and FFmpeg packages. macOS needs Xcode
+    with its Metal Toolchain and Homebrew `cmake`, `ninja`, `openblas`,
+    `glslang`, and `spirv-cross`. See the
+    [build instructions](https://github.com/tud-phi/soromox/tree/main/third_party/open3d)
+    for prerequisites, environment variables, cache controls, validation commands,
+    and other platforms. On Ubuntu 26.04 x86-64, Python 3.11–3.14 pass real
+    Vulkan image and MP4 export plus modern and animated viewers under Xvfb.
+    Apple Silicon image, video, and modern-window checks pass with Python
+    3.12–3.14 and 3.15.0rc2. Native Windows builds are validated in CI. Plain
+    `pip install soromox[rendering]` uses PyPI and does not include the required
+    Open3D patches.
+
+    The patched Open3D source build is required for all supported Python
+    versions. In a source checkout, use `uv sync --extra rendering`, or install
+    the local build before the rendering extra with pip:
+
+    ```bash
+    python -m pip install ./third_party/open3d
+    python -m pip install -e ".[rendering]"
+    ```
 
 ### 📚 Examples Dependencies
 

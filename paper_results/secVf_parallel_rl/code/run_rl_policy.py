@@ -36,6 +36,8 @@ DEFAULT_VECNORMALIZE_PATH = DATA_DIR / "checkpoints" / "env_vecnormalize.pkl"
 DEFAULT_TRAINED_TRAJECTORY_OUTPUT = TRAJECTORY_DIR / "rl_rollout_trained_1_env.npz"
 DEFAULT_RANDOM_TRAJECTORY_OUTPUT = TRAJECTORY_DIR / "rl_rollout_initialized_1_env.npz"
 POLICY_CHOICES = ("trained", "random")
+DEFAULT_GAME_TIME = 20.0
+DEFAULT_CONTROL_FPS = 15.0
 
 
 class Progress:
@@ -267,10 +269,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
 
     parser.add_argument("--num-envs", type=int, default=64)
-    parser.add_argument("--n-steps", type=int, default=105)
+    parser.add_argument(
+        "--n-steps",
+        type=int,
+        default=None,
+        help="Policy steps to save. Defaults to --game-time * --control-fps.",
+    )
     parser.add_argument("--seed", type=int, default=40)
-    parser.add_argument("--game-time", type=float, default=7.0)
-    parser.add_argument("--control-fps", type=float, default=15.0)
+    parser.add_argument("--game-time", type=float, default=DEFAULT_GAME_TIME)
+    parser.add_argument("--control-fps", type=float, default=DEFAULT_CONTROL_FPS)
     parser.add_argument("--arm-length", type=float, default=0.25)
     parser.add_argument("--arm-radius", type=float, default=0.025)
     parser.add_argument("--ball-radius", type=float, default=0.10)
@@ -279,6 +286,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--stochastic", action="store_true")
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args(argv)
+    if args.n_steps is None:
+        args.n_steps = int(round(args.game_time * args.control_fps))
     if args.trajectory_output is None:
         args.trajectory_output = default_trajectory_output(args.policy)
     return args

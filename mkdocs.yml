@@ -77,13 +77,16 @@ nav:
             - McKibben UMArm: api/systems/articulated/mckibben-umarm.md
           - PCS Systems:
             - Overview: api/systems/pcs/index.md
-            - Spatial PCS: api/systems/pcs/pcs.md
             - Planar PCS: api/systems/pcs/planar-pcs.md
+            - Spatial PCS: api/systems/pcs/pcs.md
             - Planar HSA: api/systems/pcs/planar-hsa.md
             - I-Support: api/systems/pcs/isupport.md
           - GVS Systems:
             - Overview: api/systems/gvs/index.md
             - GVS: api/systems/gvs/gvs.md
+            - Helicoidal: api/systems/gvs/helicoidal.md
+      - Simulation:
+          - Integrators: api/simulation/integrators.md
       - Execution Backends:
           - Overview: api/execution/index.md
           - Configuration: api/execution/configuration.md
@@ -95,9 +98,10 @@ nav:
           - Overview: api/rendering/index.md
           - Renderer API: api/rendering/renderers.md
           - Shared Configuration: api/rendering/configuration.md
+          - Preset Gallery: api/rendering/presets.md
       - Actuation:
           - Actuation Model: api/actuation/index.md
-          - Joint-Space Actuation: api/actuation/joint-space.md
+          - Generalized-Coordinate Actuation: api/actuation/generalized-coordinate.md
           - Threadlike Actuation: api/actuation/threadlike.md
           - API Reference: api/actuation/reference.md
       - Control:

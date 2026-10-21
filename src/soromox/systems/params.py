@@ -207,12 +207,7 @@ class BaseSystemParams(eqx.Module):
 
 
 class BaseSoftRobotParams(BaseSystemParams):
-    """Common dynamic parameters for soft robot systems.
-
-    Physical parameter trees contain gravity but deliberately do not contain a
-    mounting or initial floating pose. Fixed mounting is model state and
-    floating pose is runtime configuration state.
-    """
+    """Common dynamic parameters, with gravity expressed in the world frame."""
 
     is_planar: ClassVar[bool | None] = None
 

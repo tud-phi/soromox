@@ -64,6 +64,32 @@ energies, Jacobians and derivatives, and forward dynamics.
 
 </div>
 
+## Renderer examples
+
+The renderer gallery compares the same soft-tentacle scene across backends and
+scene presets. The neutral studio view uses Open3D's offline renderer; the
+technical view uses Viser's browser-based renderer.
+
+<div class="grid cards soromox-gallery" markdown>
+
+-   **Open3D · neutral studio**
+
+    ![Open3D neutral studio preset](assets/rendering/presets/open3d_neutral.png)
+
+    A softly lit studio backdrop for presentation figures and offline captures.
+
+    [Explore the preset gallery :octicons-arrow-right-24:](api/rendering/presets.md)
+
+-   **Viser · technical**
+
+    ![Viser technical preset](assets/rendering/presets/viser_technical.png)
+
+    A white, gridded scene for interactive inspection in the browser.
+
+    [Open the renderer guide :octicons-arrow-right-24:](api/rendering/index.md)
+
+</div>
+
 ## Get started
 
 Install the core package from PyPI:

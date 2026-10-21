@@ -65,6 +65,26 @@ Following the model organization in Table II of the paper:
 | Piecewise constant strain (PCS) | [Planar PCS](https://github.com/tud-phi/soromox/blob/main/examples/simulation/pcs/simulate_planar_pcs.py) | Generalized-strain, threadlike, and functional-metamaterial (HSA) actuation | [I-SUPPORT](https://tud-phi.github.io/soromox/api/systems/pcs/isupport/) and [planar HSA](https://tud-phi.github.io/soromox/api/systems/pcs/planar-hsa/) |
 | Geometric variable strain (GVS) | — | Generalized-coordinate and threadlike actuation | [Tapered cable-driven soft tentacle](https://github.com/tud-phi/soromox/blob/main/examples/simulation/gvs/simulate_tendon_actuated_gvs.py) |
 
+## Renderer examples
+
+The renderer gallery uses the same soft-tentacle scene to compare backends and
+scene presets. These examples show the neutral studio preset in Open3D and the
+technical preset in Viser:
+
+<p align="center">
+  <a href="https://tud-phi.github.io/soromox/api/rendering/presets/">
+    <img src="docs/assets/rendering/presets/open3d_neutral.png" alt="Open3D neutral studio preset" width="48%"/>
+  </a>
+  <a href="https://tud-phi.github.io/soromox/api/rendering/presets/">
+    <img src="docs/assets/rendering/presets/viser_technical.png" alt="Viser technical preset" width="48%"/>
+  </a>
+</p>
+
+Generate the gallery with
+`python examples/rendering/preset_gallery.py --backend open3d` or
+`--backend viser`. See the [full preset gallery](https://tud-phi.github.io/soromox/api/rendering/presets/)
+for all six styles and both backends.
+
 ## Installation
 
 Install the core package from PyPI:
@@ -117,22 +137,22 @@ maps complete scripts to the supported models and workflows.
 
 ## Performance
 
-For the paper's sequential CPU rollouts, SoRoMoX is up to 18.1× faster than
-SoRoSim in matched PCS and GVS cases:
+SoRoMoX runs sequential CPU simulations up to **27.0× faster than SoRoSim**
+in the paper's matched PCS and GVS benchmarks:
 
 | Formulation | Case | SoRoSim (s) | SoRoMoX (s) | Speedup |
 | --- | --- | ---: | ---: | ---: |
-| FEM/PCS | Planar | 75.73 | 4.18 | 18.1× |
-| FEM/PCS | Spatial | 78.65 | 13.26 | 5.9× |
-| FEM/GVS | Spatial | 55.54 | 36.33 | 1.5× |
-| FEM/GVS | Tendons | 75.80 | 36.47 | 2.1× |
+| PCS | Planar | 75.73 | 2.81 | 27.0× |
+| PCS | Spatial | 78.65 | 6.53 | 12.0× |
+| GVS | Spatial | 55.54 | 10.63 | 5.2× |
+| GVS | Tendon-driven | 75.80 | 11.72 | 6.5× |
 
 <p align="center">
-  <img src="docs/assets/paper/gpu-batch-scaling.png" alt="GPU batch simulation throughput scaling for articulated, PCS, and GVS models" width="760"/>
+  <img src="docs/assets/paper/gpu-batch-scaling.png" alt="GPU batch simulation throughput scaling through 1,024 environments for articulated, PCS, and GVS models" width="760"/>
 </p>
 
-On the paper's RTX 5090 benchmark, increasing the leading batch size from 1 to
-256 raises GVS simulation throughput by up to 172.1×. See
+On the reported RTX 5090 benchmark, increasing the leading batch size from 1 to
+1,024 raises GVS simulation throughput by up to 679.7×. See
 [Paper & Results](https://tud-phi.github.io/soromox/research/) for the full
 benchmark context and reproduction pointers.
 
@@ -162,7 +182,7 @@ reinforcement learning.
 ### Parallel reinforcement learning
 
 <p align="center">
-  <img src="docs/assets/paper/parallel-rl.gif" alt="Comparison of initialized and trained reinforcement-learning policies for a tendon-driven PCS robot" width="760"/>
+  <img src="docs/assets/paper/parallel-rl-trained-64-envs.gif" alt="Trained reinforcement-learning policy in an 8-by-8 grid of 64 parallel tendon-driven PCS robot environments" width="760"/>
 </p>
 
 See all six studies on the

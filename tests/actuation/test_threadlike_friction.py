@@ -397,7 +397,7 @@ def test_actuation_space_preserves_the_lossy_force_map():
     q = _constant_bending_configuration(robot, 5.0)
     expected = transform.jacobian_inverse(q).T @ robot.actuation_matrix(q)
 
-    assert_allclose(transform.actuation_matrix(q), expected)
+    assert_allclose(transform.actuation_matrix(q), expected, rtol=1e-12, atol=1e-14)
     assert not jnp.allclose(
         transform.actuation_matrix(q), jnp.array([[1.0], [0.0], [0.0]])
     )

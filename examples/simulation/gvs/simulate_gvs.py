@@ -1,7 +1,17 @@
 from functools import partial
+from pathlib import Path
 
 import jax
 import jax.numpy as jnp
+
+from soromox.rendering.config import (
+    GeometryConfig,
+    GroundPlaneConfig,
+    RendererConfig,
+    SceneConfig,
+)
+
+VIDEO_OUTPUT = Path(__file__).resolve().parent / "videos" / f"{Path(__file__).stem}.mp4"
 
 jax.config.update("jax_enable_x64", True)
 
@@ -109,7 +119,17 @@ if __name__ == "__main__":
         raise ImportError("Open3DRenderer is unavailable. Install open3d to run this.")
 
     # Visualize the initial configuration using Open3DRenderer
-    renderer = Open3DRenderer(robot, num_points=50)
+    renderer = Open3DRenderer(
+        robot,
+        config=RendererConfig(
+            geometry=GeometryConfig(num_points=50),
+            scene=SceneConfig.technical(
+                ground=GroundPlaneConfig(
+                    surface=False, height_reference="base_mounting_face"
+                )
+            ),
+        ),
+    )
     renderer.show(q0)
 
     # Actuation parameters
@@ -173,7 +193,10 @@ if __name__ == "__main__":
     # =====================================================
     # Plot the robot configuration upon time
     # =====================================================
-    renderer.render_sequence(ts=ts, q_ts=q_ts, playback_speed=1.0)
+    renderer.render_sequence(
+        ts=ts, q_ts=q_ts, playback_speed=1.0, record_path=str(VIDEO_OUTPUT)
+    )
+    print(f"Saved {VIDEO_OUTPUT}")
 
     # =====================================================
     # Viser web-based visualization (trajectory + transparent q0 overlay)
@@ -193,7 +216,17 @@ if __name__ == "__main__":
             ]
         )
     )
-    viser_renderer = ViserRenderer(robot, num_points=50)
+    viser_renderer = ViserRenderer(
+        robot,
+        config=RendererConfig(
+            geometry=GeometryConfig(num_points=50),
+            scene=SceneConfig.technical(
+                ground=GroundPlaneConfig(
+                    surface=False, height_reference="base_mounting_face"
+                )
+            ),
+        ),
+    )
     viser_renderer.render_sequence(
         ts=ts,
         q_ts=q_ts_overlay,

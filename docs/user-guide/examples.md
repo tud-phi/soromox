@@ -156,13 +156,10 @@ python examples/simulation/pcs/simulate_planar_hsa.py
 
 GVS robots use flexible strain basis functions for advanced continuum robot modeling.
 
-#### GVS Robots
+#### Basic GVS Robots
 ```bash
 # Basic GVS simulation
 python examples/simulation/gvs/simulate_gvs.py
-
-# Tendon-actuated GVS
-python examples/simulation/gvs/simulate_tendon_actuated_gvs.py
 ```
 
 **What you'll learn:**
@@ -171,6 +168,92 @@ python examples/simulation/gvs/simulate_tendon_actuated_gvs.py
 - Advanced continuum robot dynamics
 
 **Key concepts:** GVS modeling, basis functions, advanced kinematics
+
+#### Low-Dimensional Rigid-Soft Pendulums
+
+```bash
+# Fixed-base affine Soft Inverted Pendulum
+python examples/simulation/gvs/simulate_soft_inverted_pendulum.py
+
+# Base-torque-actuated R-SIP
+python examples/simulation/gvs/simulate_r_soft_inverted_pendulum.py
+
+# Force-actuated cart with a passive revolute pole hinge
+python examples/simulation/gvs/simulate_soft_cart_pole.py
+
+# The same Cart-Pole with stiffness derived from E, radius, and link length
+python examples/simulation/gvs/simulate_soft_cart_pole.py --stiffness-mode material_derived
+
+# First-joint-torque-actuated two-link Pendubot
+python examples/simulation/gvs/simulate_soft_pendubot.py
+
+# First-joint-torque-actuated spatial Furuta pendulum
+python examples/simulation/gvs/simulate_soft_furuta.py
+```
+
+Every soft link uses two dimensionless affine bending-angle coefficients,
+`kappa(X) = (a0 + a1 X/L) / L`, through
+`scale_rotational_basis_by_length=True`. The fixed SIP, R-SIP, and Cart-Pole
+use the explicit affine constitutive matrices and link properties from
+[Della Santina (2020)](https://doi.org/10.1109/CDC42340.2020.9303976); their
+1 kg link mass is distributed rather than concentrated at the tip. The R-SIP
+base-joint damping follows
+[Caradonna et al. (2024)](https://doi.org/10.1109/LRA.2024.3389348).
+
+The Cart-Pole coordinate order is `[d, theta, a0, a1]`. Only `d` is actuated,
+the revolute hinge is passive, and the all-zero configuration points straight
+upward. This differs by an angle offset from the convention in
+[Caradonna et al. (2026)](https://arxiv.org/abs/2602.03435):
+`theta_model = theta_paper - pi`. Its finite rigid cart/pivot link has exposed
+assumed length, radius, and mass parameters.
+
+The SIP, R-SIP, and Cart-Pole support `explicit_affine` and
+`material_derived` soft-link stiffness modes. The backward-compatible explicit
+mode uses `K = k H`. The material mode uses `K = E I/L H` with
+`I = pi r^4/4`; its defaults are `E = 1 MPa` and `r = 0.03 m`, giving
+`E I/L = 0.6362 N m`. Only stiffness changes between modes: soft-link mass,
+inertial geometry, and damping remain the SIP defaults.
+
+The Pendubot and Furuta use the 2026 paper's cylindrical soft-link properties
+(`L = 1 m`, `R = 0.03 m`, `rho = 1000 kg/m^3`, `E = 1 MPa`, and
+`beta = 0.01 MPa s`) but restrict deformation to affine bending. SoRoMoX uses
+`G = E/3` instead of the boundary value `nu = 0.5`. The Pendubot splits the
+soft length equally between its two links. Because the paper does not report
+Furuta rigid-arm inertia, its default `0.5 m` length, `0.02 m` radius, and
+`0.5 kg` mass are documented, configurable assumptions.
+
+Actuation matches the cited systems: base torque for R-SIP, cart force for the
+Cart-Pole, and first-joint torque for Pendubot and Furuta. Metadata bounds are
+respectively unbounded, `+/-200 N`, `+/-10 N m`, and `+/-80 N m`; the model does
+not implicitly clip an input. Controllers are intentionally outside these
+open-loop examples.
+
+Each script saves a four-panel summary figure and launches an interactive Viser
+rendering by default. The Cart-Pole renderer synchronizes the backbone with a
+moving cart, wheels, and rail. Use `--record-viser` to capture one playback or
+`--no-viser --no-show` for headless execution. Default ports are 8080 through
+8084 in the command order above, and every script accepts `--viser-port`.
+
+**What you'll learn:**
+- Affine-curvature GVS construction with two bending coordinates
+- Hybrid rigid-joint, rigid-link, and affine soft-link topology
+- Signed direct force/torque routing with passive coordinates
+- Physically named upright and hanging configuration helpers
+- Interactive trajectory playback and recording with Viser
+
+**Key concepts:** Affine curvature, underactuation, R-SIP, Cart-Pole, Pendubot, Furuta, Viser
+
+#### Tendon-Actuated GVS Robot
+
+```bash
+python examples/simulation/gvs/simulate_tendon_actuated_gvs.py
+```
+
+**What you'll learn:**
+- Routing tendon actuation through a variable-strain continuum model
+- Simulating and rendering an actuated GVS robot
+
+**Key concepts:** GVS modeling, tendon actuation, continuum routing
 
 ---
 

@@ -23,16 +23,8 @@ from PIL import Image
 SECTION_DIR = Path(__file__).resolve().parent.parent
 PAPER_RESULTS_DIR = SECTION_DIR.parent
 PAPER_STYLE = PAPER_RESULTS_DIR / "paper.mplstyle"
-CONFIGURATION_CODE_DIR = (
-    SECTION_DIR
-    / "configuration_space_comparison"
-    / "code"
-)
-OPERATIONAL_CODE_DIR = (
-    SECTION_DIR
-    / "operational_space_impedance_control"
-    / "code"
-)
+CONFIGURATION_CODE_DIR = SECTION_DIR / "configuration_space_comparison" / "code"
+OPERATIONAL_CODE_DIR = SECTION_DIR / "operational_space_impedance_control" / "code"
 for code_dir in (CONFIGURATION_CODE_DIR, OPERATIONAL_CODE_DIR):
     if str(code_dir) not in sys.path:
         sys.path.insert(0, str(code_dir))
@@ -48,7 +40,7 @@ from operational_space_impedance_common import (  # noqa: E402
     operational_tracking_data,
 )
 
-FIGURE_SIZE_CM = (18.1, 15.1)
+FIGURE_SIZE_CM = (18.1, 16.2)
 CM_TO_INCH = 1.0 / 2.54
 
 FONT_SIZE = 8.0
@@ -63,16 +55,12 @@ MARKER_SIZE = 2.5
 
 DEFAULT_CONFIGURATION_INPUT = configuration_plot.CANONICAL_INPUT
 DEFAULT_OPERATIONAL_INPUT = DEFAULT_TRAJECTORY_OUTPUT
-DEFAULT_SNAPSHOT_DIR = OPERATIONAL_CODE_DIR.parent / "outputs" / (
-    "operational_space_impedance_snapshots"
+DEFAULT_SNAPSHOT_DIR = (
+    OPERATIONAL_CODE_DIR.parent / "outputs" / ("operational_space_impedance_snapshots")
 )
-DEFAULT_OUTPUT_BASE = (
-    SECTION_DIR / "outputs" / "model_based_control"
-)
+DEFAULT_OUTPUT_BASE = SECTION_DIR / "outputs" / "model_based_control"
 
-SNAPSHOT_PATTERN = re.compile(
-    r"^snapshot_t(?P<seconds>\d+)p(?P<fraction>\d+)s\.png$"
-)
+SNAPSHOT_PATTERN = re.compile(r"^snapshot_t(?P<seconds>\d+)p(?P<fraction>\d+)s\.png$")
 
 COMPOSITE_RC_PARAMS = {
     "font.family": "serif",
@@ -177,7 +165,29 @@ def _set_line_role(line: Line2D, role: str) -> None:
     if marker not in (None, "None", "", " "):
         line.set_markersize(MARKER_SIZE)
         point_count = len(line.get_xdata())
-        line.set_markevery(max(1, point_count // 50))
+        line.set_markevery(max(1, point_count // 24))
+
+
+def _add_actual_markers(
+    ax: Axes,
+    t: np.ndarray,
+    values: np.ndarray,
+    color: str,
+) -> Line2D:
+    """Keep nearly overlapping actual and desired traces distinguishable."""
+    markers = ax.plot(
+        t,
+        values,
+        color=color,
+        linestyle="none",
+        marker="o",
+        markeredgecolor="white",
+        markeredgewidth=0.35,
+        label="_actual samples",
+        zorder=6,
+    )[0]
+    _set_line_role(markers, "primary")
+    return markers
 
 
 def _normalize_configuration_lines(axes: tuple[Axes, ...]) -> None:
@@ -327,6 +337,12 @@ def _plot_operational_group(
         )[0]
         _set_line_role(actual, "primary")
         _set_line_role(desired, "reference")
+        _add_actual_markers(
+            position_axis,
+            t,
+            np.asarray(x_pos[:, component]),
+            color,
+        )
         error = position_error_axis.plot(
             t,
             1e3 * np.asarray(position_error[:, component]),
@@ -357,6 +373,12 @@ def _plot_operational_group(
         )[0]
         _set_line_role(actual, "primary")
         _set_line_role(desired, "reference")
+        _add_actual_markers(
+            orientation_axis,
+            t,
+            np.asarray(run.x_traj_full[:, component]),
+            color,
+        )
         error = orientation_error_axis.plot(
             t,
             np.rad2deg(np.asarray(orientation_error[:, component])),
@@ -395,9 +417,7 @@ def load_snapshots(snapshot_dir: Path) -> list[tuple[float, Path]]:
         if match is None:
             continue
         fraction = match.group("fraction")
-        time_seconds = float(
-            f"{int(match.group('seconds'))}.{fraction}"
-        )
+        time_seconds = float(f"{int(match.group('seconds'))}.{fraction}")
         snapshots.append((time_seconds, path))
     snapshots.sort(key=lambda item: item[0])
     if len(snapshots) != 4:
@@ -487,9 +507,27 @@ def _operational_legend_handles() -> tuple[list[Line2D], list[str]]:
                 linestyle="--",
                 linewidth=REFERENCE_LINE_WIDTH,
             ),
+            Line2D(
+                [],
+                [],
+                color="0.25",
+                alpha=0.7,
+                linewidth=SECONDARY_LINE_WIDTH,
+            ),
         )
     )
-    return handles, [r"$x$", r"$y$", r"$z$", "Actual", "Desired"]
+    handles[3].set_marker("o")
+    handles[3].set_markersize(MARKER_SIZE)
+    handles[3].set_markeredgecolor("white")
+    handles[3].set_markeredgewidth(0.35)
+    return handles, [
+        r"$x$",
+        r"$y$",
+        r"$z$",
+        "Actual",
+        "Desired",
+        "Zero error",
+    ]
 
 
 def build_composite_figure(
@@ -512,7 +550,7 @@ def build_composite_figure(
             right=0.975,
             bottom=0.019,
             top=0.985,
-            height_ratios=(6.15, 1.05, 7.35),
+            height_ratios=(6.15, 1.05, 8.47),
             hspace=0.0,
         )
 
@@ -525,7 +563,7 @@ def build_composite_figure(
         operational_grid = outer[2, 0].subgridspec(
             7,
             2,
-            height_ratios=(0.42, 1.0, 0.12, 1.0, 0.82, 1.90, 0.18),
+            height_ratios=(0.42, 1.0, 0.12, 1.0, 0.72, 3.10, 0.18),
             hspace=0.05,
             wspace=0.24,
         )
@@ -556,7 +594,7 @@ def build_composite_figure(
             operational_handles,
             operational_labels,
             operational_grid[0, :],
-            ncol=5,
+            ncol=6,
         )
 
         snapshot_grid = operational_grid[5, :].subgridspec(
@@ -565,11 +603,10 @@ def build_composite_figure(
             wspace=0.06,
         )
         snapshot_axes = tuple(
-            fig.add_subplot(snapshot_grid[0, column])
-            for column in range(4)
+            fig.add_subplot(snapshot_grid[0, column]) for column in range(4)
         )
         for snapshot_axis in snapshot_axes:
-            snapshot_axis.set_anchor("C")
+            snapshot_axis.set_anchor("S")
         _plot_snapshots(snapshot_axes, snapshots)
 
         _panel_label(fig, "A", outer[0, 0])
@@ -610,8 +647,12 @@ def save_composite_figure(
         )
     pdf_output.parent.mkdir(parents=True, exist_ok=True)
     with plt.style.context(PAPER_STYLE), mpl.rc_context(COMPOSITE_RC_PARAMS):
-        fig.savefig(pdf_output, dpi=300, facecolor="white", bbox_inches=None)
-        fig.savefig(svg_output, dpi=300, facecolor="white", bbox_inches=None)
+        fig.savefig(pdf_output, dpi=300, transparent=True, bbox_inches=None)
+        fig.savefig(svg_output, dpi=300, transparent=True, bbox_inches=None)
+    svg_output.write_text(
+        "\n".join(line.rstrip() for line in svg_output.read_text().splitlines())
+        + "\n"
+    )
     return pdf_output, svg_output
 
 

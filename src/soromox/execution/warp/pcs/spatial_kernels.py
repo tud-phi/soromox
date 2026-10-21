@@ -18,6 +18,10 @@ from soromox.execution.warp.common.se3 import (
     _translation,
 )
 from soromox.execution.warp.common.spatial import _coadjoint_wrench
+from soromox.execution.warp.common.spatial_inertia import (
+    _mass_jacobian_action,
+    _mass_vector_action,
+)
 from soromox.execution.warp.common.storage import (
     _matrix_value,
     _vector_value,
@@ -289,7 +293,9 @@ def spatial_persistent_chain_kernel(
     num_dofs = qd.shape[1]
     num_segments = active_indices.shape[0]
     num_quadrature = weighted_masses.shape[0] // num_segments
-    points_per_segment = num_quadrature + 1
+    points_per_segment = adjoint_inverse.shape[0] // (
+        qd.shape[0] * num_segments * SPATIAL_DIM
+    )
     lane_stride = block_dim
     state_base_row = environment * SPATIAL_DIM
     barrier = wp.tile_zeros(shape=(1,), dtype=wp.int32, storage="shared")
@@ -476,24 +482,22 @@ def spatial_persistent_chain_kernel(
                         spatial = int(0)
                         mass_item = segment * num_quadrature + point
                         while spatial < SPATIAL_DIM:
-                            value += (
-                                _matrix_value(
-                                    jacobian_first,
-                                    jacobian_second,
-                                    destination_is_first,
-                                    state_base_row,
-                                    spatial,
-                                    output_row,
-                                )
-                                * weighted_masses[mass_item, spatial]
-                                * _matrix_value(
-                                    jacobian_first,
-                                    jacobian_second,
-                                    destination_is_first,
-                                    state_base_row,
-                                    spatial,
-                                    output_column,
-                                )
+                            value += _matrix_value(
+                                jacobian_first,
+                                jacobian_second,
+                                destination_is_first,
+                                state_base_row,
+                                spatial,
+                                output_row,
+                            ) * _mass_jacobian_action(
+                                weighted_masses,
+                                mass_item,
+                                spatial,
+                                jacobian_first,
+                                jacobian_second,
+                                destination_is_first,
+                                state_base_row,
+                                output_column,
                             )
                             spatial += 1
                         inertia[environment, output_row, output_column] += value
@@ -527,23 +531,21 @@ def spatial_persistent_chain_kernel(
                             column,
                         )
                         coriolis_value += jacobian_value * wrench[spatial]
-                        gravity_force_value -= (
-                            jacobian_value
-                            * weighted_masses[mass_item, spatial]
-                            * _vector_value(
-                                gravity_first,
-                                gravity_second,
-                                destination_is_first,
-                                state_base_row,
-                                spatial,
-                            )
+                        gravity_force_value -= jacobian_value * _mass_vector_action(
+                            weighted_masses,
+                            mass_item,
+                            spatial,
+                            gravity_first,
+                            gravity_second,
+                            destination_is_first,
+                            state_base_row,
                         )
                         spatial += 1
                     coriolis_qd[environment, column] += coriolis_value
                     gravity_force[environment, column] += gravity_force_value
                     column += lane_stride
                 wp.tile_scatter_masked(barrier, 0, int(0), lane == 0)
-            else:
+            if point == points_per_segment - 1:
                 current_is_first = destination_is_first
             point += 1
         segment += 1

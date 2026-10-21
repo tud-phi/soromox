@@ -7,6 +7,13 @@ from pathlib import Path
 
 import jax
 
+from soromox.rendering.config import (
+    GeometryConfig,
+    GroundPlaneConfig,
+    RendererConfig,
+    SceneConfig,
+)
+
 jax.config.update("jax_enable_x64", True)
 
 import jax.numpy as jnp
@@ -17,14 +24,14 @@ from soromox.systems import (
     McKibbenActuatedUMArm,
     SystemState,
 )
+from soromox.utils.geometry import poses
 
 PSI_TO_PA = 6894.75729
 DEFAULT_VIDEO_PATH = (
     Path(__file__).resolve().parent / "videos" / "simulate_mckibben_umarm.mp4"
 )
-UMARM_Z_DOWN_BASE_POSE = jnp.array(
-    [0.0, 2**-0.5, 0.0, 2**-0.5, 0.0, 0.0, 1.2],
-    dtype=jnp.float64,
+UMARM_Z_DOWN_BASE_POSE = poses.spatial_mounting_pose(
+    "hanging", jnp.array([0.0, 0.0, 1.2], dtype=jnp.float64)
 )
 
 
@@ -142,7 +149,9 @@ def render_robot(
         record_path.parent.mkdir(parents=True, exist_ok=True)
 
     if backend == "matplotlib":
-        renderer = MatplotlibRenderer(robot, num_points=80)
+        renderer = MatplotlibRenderer(
+            robot, config=RendererConfig(geometry=GeometryConfig(num_points=80))
+        )
         if record_path is None:
             renderer.animate(ts=ts, q_ts=q_ts, mode="slider", interval=60)
         else:
@@ -161,9 +170,15 @@ def render_robot(
             return
         renderer = UMArmViserRenderer(
             robot,
-            num_points=80,
-            backbone_style="discrete",
             actuator_color_mode="pressure",
+            config=RendererConfig(
+                geometry=GeometryConfig(num_points=80, backbone_style="discrete"),
+                scene=SceneConfig.technical(
+                    ground=GroundPlaneConfig(
+                        surface=False, height_reference="base_mounting_face"
+                    )
+                ),
+            ),
         )
         renderer.render_sequence(
             ts=ts,

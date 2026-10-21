@@ -13,7 +13,7 @@ GPU execution is the default. If JAX cannot initialize a compatible GPU, the
 generator warns and exits without writing CPU timings under a GPU configuration.
 Pass `--device cpu` explicitly to benchmark the same workload on the CPU.
 
-Every generator run writes `data/benchmark_results.csv` by default. Pass
+Every generator run writes `data/parallel_rollout_benchmark.csv` by default. Pass
 `--csv PATH` to override the destination. The CSV records the source revision
 and dirty state, software versions, FP64 mode, UTC timestamp, and
 accelerator/runtime identity needed to interpret results across machines. Use
@@ -22,6 +22,20 @@ accelerator/runtime identity needed to interpret results across machines. Use
 PlanarPCS. Run each backend in a separate process for a controlled comparison;
 JAX-only systems continue to use JAX. The CSV records the requested backend,
 the backend resolved for each system, and whether backend selection applies.
+
+Each `(system, size, Gauss-point setting, batch size)` case runs in a fresh
+process. Successful rows are checkpointed to the results CSV immediately, so
+an out-of-memory failure cannot discard earlier measurements. Failed cases are
+skipped and summarized after the remaining cases finish; the machine-readable
+report defaults to `data/parallel_rollout_benchmark_failures.csv`. Pass
+`--failures-csv PATH` to choose another location. Expected OOM-only failures do
+not make the generator exit unsuccessfully, while unexpected worker errors do.
+
+Use `--solver` to select `euler`, `semi-implicit-euler`, `heun`, `bosh3`,
+`tsit5`, or `dopri5`; the default remains `tsit5`. The selected solver applies
+to every requested system and model size. The CSV records the solver together
+with `rollout_finite` and `max_abs_state`, so throughput measurements can be
+screened for numerical divergence rather than interpreted on timing alone.
 
 Install dependencies and confirm that JAX sees the intended GPU:
 
@@ -36,8 +50,8 @@ Generate the segment-scaling CSV with the paper integration settings:
 uv run python paper_results/secIVb_parallel_rollouts_gpu/code/generate_parallel_rollout_benchmark.py \
   --systems articulated_soft_robot planar_pcs pcs gvs \
   --gvs-scaling segments --segment-counts 1 2 4 8 16 32 \
-  --batch-sizes 1 2 4 8 16 32 64 128 256 \
-  --duration 1 --solver-dt 1e-4 --save-dt 1e-2
+  --batch-sizes 1 2 4 8 16 32 64 128 256 512 1024 \
+  --duration 1 --solver tsit5 --solver-dt 1e-4 --save-dt 1e-2
 ```
 
 Generate the GVS strain-basis-order sweep:
@@ -50,13 +64,18 @@ uv run python paper_results/secIVb_parallel_rollouts_gpu/code/generate_parallel_
   --csv paper_results/secIVb_parallel_rollouts_gpu/data/gvs_basis_order_1s.csv
 ```
 
-Regenerate the canonical segment-scaling figures from the committed CSVs:
+Regenerate the canonical segment-scaling figures from the committed CSV:
 
 ```bash
 uv run python paper_results/secIVb_parallel_rollouts_gpu/code/plot_parallel_rollout_benchmark.py \
+  --csv paper_results/secIVb_parallel_rollouts_gpu/data/parallel_rollout_benchmark.csv \
   --systems articulated_soft_robot planar_pcs pcs gvs \
   --segment-counts 1 2 4 8 16 32
 ```
+
+In the current FP64 RTX 5090 results, automatic backend selection resolves to
+Warp for GVS. Increasing the batch size from 1 to 1,024 raises one-segment GVS
+throughput by 679.7× and 32-segment GVS throughput by 133.6×.
 
 Use an explicit temporary `--csv` path for validation runs to avoid replacing
 the committed hardware measurements.

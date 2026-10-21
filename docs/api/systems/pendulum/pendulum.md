@@ -76,8 +76,9 @@ robot = Pendulum(
 )
 ```
 
-See [Joint-space actuation](../../actuation/joint-space.md) for coordinate,
-sign, power, and update conventions.
+See
+[Generalized-coordinate actuation](../../actuation/generalized-coordinate.md)
+for coordinate, sign, power, and update conventions.
 
 ## API Reference
 

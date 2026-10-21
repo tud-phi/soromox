@@ -307,13 +307,32 @@ reactions.
 
 ### Generalized-force integration
 
-For spatial strain, the local unscaled length-gradient density is
-\(g_\xi=[r\times u;u]\). If \(B(s)\) maps generalized coordinates to strain
-and \(c\) is the modality coordinate scale, the active force map is
+For spatial strain \(\xi=(\omega,v)\), expressed in the material frame,
+the local unscaled routed-length gradient is
+
+\[
+\Phi_\xi=\frac{\partial \lVert a\rVert}{\partial\xi}
+=\begin{bmatrix}r\times u\\u\end{bmatrix}.
+\]
+
+Multiplying \(\Phi_\xi\) by the signed local axial force gives the corresponding
+material-frame moment and force contribution.
+
+For each path, the actuator coordinate is \(y_a=c\ell\), where \(\ell\) is
+physical path length and \(c\) is constant along that path. The
+[modality presets](#modality-presets) use \(c=-1\) for tendons and contractile
+muscles, \(c=+1\) for push rods, and \(c=A_\mathrm{eff}\) for pressure chambers.
+This scale makes positive effort produce the intended pulling or pushing action;
+for chambers, it converts pressure to axial force. Thus \(c\,e(s)\) is the
+signed local axial force, and \(c\,e(s)\Phi_\xi\) is its moment and force
+contribution.
+
+If \(B(s)\) maps generalized-coordinate variations to strain variations,
+the active force-map column for this path is
 
 \[
 A_\mu(q)=c\int_{s_0}^{s_1}
-\eta(q,s)B(s)^Tg_\xi(q,s)\,ds.
+\eta(q,s)B(s)^T\Phi_\xi(q,s)\,ds.
 \]
 
 The ratio weights every quadrature contribution; it does not merely scale the

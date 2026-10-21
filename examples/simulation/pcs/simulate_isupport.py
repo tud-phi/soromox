@@ -12,6 +12,13 @@ import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 
+from soromox.rendering.config import (
+    GeometryConfig,
+    GroundPlaneConfig,
+    RendererConfig,
+    SceneConfig,
+)
+
 jax.config.update("jax_enable_x64", True)  # double precision
 from soromox.rendering import (
     ISupportViserRenderer,
@@ -103,6 +110,7 @@ if __name__ == "__main__":
     # ======================================================
     robot = ISupport(
         params=params,
+        # Hanging mounting with an additional 90-degree backbone-axis roll.
         base_pose=jnp.array([0.5, 0.5, -0.5, 0.5, 0.0, 0.0, 0.0]),
         structure=ISupportStructure(
             pcs_segment_counts=pcs_segment_counts,
@@ -221,7 +229,9 @@ if __name__ == "__main__":
     # =====================================================
     # Plot the robot configuration upon time
     # =====================================================
-    renderer = MatplotlibRenderer(robot, num_points=50)
+    renderer = MatplotlibRenderer(
+        robot, config=RendererConfig(geometry=GeometryConfig(num_points=50))
+    )
     renderer.animate(ts=ts, q_ts=q_ts, interval=100, mode="slider")
 
     # =====================================================
@@ -232,8 +242,15 @@ if __name__ == "__main__":
     else:
         viser_renderer = ISupportViserRenderer(
             robot,
-            num_points=50,
             visual_config=ISupportVisualConfig(pressure_range=(0.0, float(jnp.max(u)))),
+            config=RendererConfig(
+                geometry=GeometryConfig(num_points=50),
+                scene=SceneConfig.technical(
+                    ground=GroundPlaneConfig(
+                        surface=False, height=-0.06, height_reference="world"
+                    )
+                ),
+            ),
         )
         viser_renderer.render_sequence(
             ts=ts,

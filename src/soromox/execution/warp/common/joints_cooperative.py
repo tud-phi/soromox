@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import warp as wp
 
+from soromox.execution.warp.common.joints import JointTermsData
 from soromox.execution.warp.common.se3 import (
     Vec6d,
     _ad_action,
@@ -26,8 +27,10 @@ SPATIAL_DIM = 6
 JOINT_BLOCK_DIM = 32
 
 
-@wp.kernel(enable_backward=False)
-def cooperative_joint_terms_kernel(
+@wp.func
+def cooperative_joint_terms_at(
+    work_item: int,
+    lane: int,
     q: wp.array2d[wp.float64],
     qd: wp.array2d[wp.float64],
     basis: wp.array2d[wp.float64],
@@ -41,7 +44,12 @@ def cooperative_joint_terms_kernel(
 ):
     """Evaluate one general joint cooperatively per warp-sized block.
 
+    Explicit indices address the supplied array views. Homogeneous wrappers pass the
+    full batch; packed wrappers pass one world's views and local indices.
+
     Args:
+        work_item: Flattened environment-segment index in the supplied arrays.
+        lane: Thread index within the cooperative work item.
         q: Batched active generalized coordinates.
         qd: Batched active generalized velocities.
         basis: Flattened padded joint bases.
@@ -56,13 +64,10 @@ def cooperative_joint_terms_kernel(
     Returns:
         None. All results are written to the caller-owned output arrays.
     """
-
-    work_item, lane = wp.tid()
     num_segments = reference.shape[0]
     environment = work_item // num_segments
     segment = work_item - environment * num_segments
     output_base_row = work_item * SPATIAL_DIM
-
     xi_shared = wp.tile_zeros(shape=(SPATIAL_DIM,), dtype=wp.float64, storage="shared")
     xid_shared = wp.tile_zeros(shape=(SPATIAL_DIM,), dtype=wp.float64, storage="shared")
     coefficients_shared = wp.tile_zeros(shape=(4,), dtype=wp.float64, storage="shared")
@@ -71,7 +76,6 @@ def cooperative_joint_terms_kernel(
     eta_shared = wp.tile_zeros(shape=(SPATIAL_DIM,), dtype=wp.float64, storage="shared")
     angle_sq_shared = wp.tile_zeros(shape=(1,), dtype=wp.float64, storage="shared")
     barrier = wp.tile_zeros(shape=(1,), dtype=wp.int32, storage="shared")
-
     component = lane
     xi_value = wp.float64(0.0)
     xid_value = wp.float64(0.0)
@@ -92,7 +96,6 @@ def cooperative_joint_terms_kernel(
             local_column += 1
     wp.tile_scatter_masked(xi_shared, component, xi_value, component < SPATIAL_DIM)
     wp.tile_scatter_masked(xid_shared, component, xid_value, component < SPATIAL_DIM)
-
     angle_sq_value = wp.float64(0.0)
     if lane == 0:
         angle_sq_value = (
@@ -101,29 +104,20 @@ def cooperative_joint_terms_kernel(
             + xi_shared[2] * xi_shared[2]
         )
     wp.tile_scatter_masked(angle_sq_shared, 0, angle_sq_value, lane == 0)
-
     coefficient_index = lane
     coefficient_value = wp.float64(0.0)
     if coefficient_index < 4:
         coefficient_value = _left_coefficients(angle_sq_shared[0])[coefficient_index]
     wp.tile_scatter_masked(
-        coefficients_shared,
-        coefficient_index,
-        coefficient_value,
-        coefficient_index < 4,
+        coefficients_shared, coefficient_index, coefficient_value, coefficient_index < 4
     )
-
     forward_index = lane
     forward_value = wp.float64(0.0)
     if forward_index < 3:
         forward_value = _forward_coefficients(angle_sq_shared[0])[forward_index]
     wp.tile_scatter_masked(
-        forward_shared,
-        forward_index,
-        forward_value,
-        forward_index < 3,
+        forward_shared, forward_index, forward_value, forward_index < 3
     )
-
     translation_index = lane
     translation_value = wp.float64(0.0)
     if translation_index < 3:
@@ -133,12 +127,8 @@ def cooperative_joint_terms_kernel(
             wp.vec3d(forward_shared[0], forward_shared[1], forward_shared[2]),
         )[translation_index]
     wp.tile_scatter_masked(
-        translation_shared,
-        translation_index,
-        translation_value,
-        translation_index < 3,
+        translation_shared, translation_index, translation_value, translation_index < 3
     )
-
     xi = Vec6d(
         xi_shared[0],
         xi_shared[1],
@@ -168,12 +158,7 @@ def cooperative_joint_terms_kernel(
             xi[0] * xid[0] + xi[1] * xid[1] + xi[2] * xid[2]
         )
         derivative_velocity = _left_total_derivative_action(
-            xi,
-            xid,
-            xid,
-            Vec6d(),
-            coefficients,
-            coefficient_derivatives * angle_sq_dot,
+            xi, xid, xid, Vec6d(), coefficients, coefficient_derivatives * angle_sq_dot
         )
         row = int(0)
         while row < SPATIAL_DIM:
@@ -181,7 +166,6 @@ def cooperative_joint_terms_kernel(
             joint_velocity[output_base_row + row, 0] = velocity[row]
             row += 1
     wp.tile_scatter_masked(barrier, 0, int(0), lane == 0)
-
     eta_component = lane
     eta_value = wp.float64(0.0)
     if eta_component < SPATIAL_DIM:
@@ -196,9 +180,7 @@ def cooperative_joint_terms_kernel(
         eta = _adjoint_inverse_action(
             wp.vec3d(xi[0], xi[1], xi[2]),
             wp.vec3d(
-                translation_shared[0],
-                translation_shared[1],
-                translation_shared[2],
+                translation_shared[0], translation_shared[1], translation_shared[2]
             ),
             angle_sq_shared[0],
             wp.vec3d(forward_shared[0], forward_shared[1], forward_shared[2]),
@@ -206,12 +188,8 @@ def cooperative_joint_terms_kernel(
         )
         eta_value = eta[eta_component]
     wp.tile_scatter_masked(
-        eta_shared,
-        eta_component,
-        eta_value,
-        eta_component < SPATIAL_DIM,
+        eta_shared, eta_component, eta_value, eta_component < SPATIAL_DIM
     )
-
     entry = lane
     while entry < SPATIAL_DIM * SPATIAL_DIM:
         row = entry // SPATIAL_DIM
@@ -219,9 +197,7 @@ def cooperative_joint_terms_kernel(
         adjoint[output_base_row + row, column] = _adjoint_inverse_entry(
             wp.vec3d(xi[0], xi[1], xi[2]),
             wp.vec3d(
-                translation_shared[0],
-                translation_shared[1],
-                translation_shared[2],
+                translation_shared[0], translation_shared[1], translation_shared[2]
             ),
             angle_sq_shared[0],
             wp.vec3d(forward_shared[0], forward_shared[1], forward_shared[2]),
@@ -230,7 +206,6 @@ def cooperative_joint_terms_kernel(
         )
         entry += JOINT_BLOCK_DIM
     wp.tile_scatter_masked(barrier, 0, int(0), lane == 0)
-
     column = lane
     if column < SPATIAL_DIM:
         adjoint_column = Vec6d(
@@ -256,13 +231,10 @@ def cooperative_joint_terms_kernel(
         while row < SPATIAL_DIM:
             adjoint_dot[output_base_row + row, column] = derivative_column[row]
             row += 1
-
     local_column = lane
     while local_column < local_to_global.shape[1]:
         tangent = _left_action(
-            xi,
-            _joint_basis_column(basis, segment, local_column),
-            coefficients,
+            xi, _joint_basis_column(basis, segment, local_column), coefficients
         )
         row = int(0)
         while row < SPATIAL_DIM:
@@ -271,7 +243,88 @@ def cooperative_joint_terms_kernel(
         local_column += JOINT_BLOCK_DIM
 
 
-def launch_cooperative_joint_terms(
+@wp.kernel(enable_backward=False)
+def homogeneous_cooperative_joint_terms_kernel(data: JointTermsData):
+    """Evaluate homogeneous joint operators with 32 threads per joint.
+
+    All worlds use the same structural dimensions and coordinate layout. Dimensions:
+    E = worlds, S = segments.
+
+    Shared across worlds: ``basis``, ``reference``, ``local_to_global``.
+
+    State, computed operator, workspace and output arrays carry the world axis,
+    either explicitly or flattened as documented by the struct. Values may differ by
+    world.
+
+    Launch with ``wp.launch_tiled(..., dim=E*S, block_dim=32)``. Exactly 32 threads
+    cooperate on each world/segment index.
+
+    Args:
+        data: Shared JointTermsData layout referencing the complete homogeneous
+            batch (E worlds). See the struct for field shapes and ownership.
+
+    Returns:
+        None. All results are written to the caller-owned output arrays.
+    """
+    work_item, lane = wp.tid()
+    cooperative_joint_terms_at(
+        work_item,
+        lane,
+        data.q,
+        data.qd,
+        data.basis,
+        data.reference,
+        data.local_to_global,
+        data.adjoint,
+        data.adjoint_dot,
+        data.tangent_local,
+        data.tangent_dot_qd,
+        data.joint_velocity,
+    )
+
+
+@wp.kernel(enable_backward=False)
+def packed_cooperative_joint_terms_kernel(
+    world_data: wp.array[JointTermsData], work_items: wp.array[wp.vec3i]
+):
+    """Evaluate one general joint cooperatively per warp-sized block using packed world data.
+
+    Each selected descriptor contains one world (E = 1). Structure and numerical
+    model parameters may differ between worlds. Descriptors may share allocations
+    when their values match.
+
+    Launch with ``wp.launch_tiled(..., dim=len(work_items), block_dim=32)``.
+    Each block cooperates on one work item; all lanes must participate.
+
+    Args:
+        world_data: Device array of per-world data views, including caller-owned
+            outputs and workspaces. Keep every referenced allocation alive.
+        work_items: INT32 triples ``(world_index, local_index, 0)``. The local
+            index is local segment. The third component is reserved.
+
+    Returns:
+        None. All results are written to the caller-owned output arrays.
+    """
+    item, lane = wp.tid()
+    entry = work_items[item]
+    data = world_data[entry[0]]
+    cooperative_joint_terms_at(
+        entry[1],
+        lane,
+        data.q,
+        data.qd,
+        data.basis,
+        data.reference,
+        data.local_to_global,
+        data.adjoint,
+        data.adjoint_dot,
+        data.tangent_local,
+        data.tangent_dot_qd,
+        data.joint_velocity,
+    )
+
+
+def launch_homogeneous_cooperative_joint_terms(
     q: wp.array2d[wp.float64],
     qd: wp.array2d[wp.float64],
     basis: wp.array2d[wp.float64],
@@ -283,7 +336,18 @@ def launch_cooperative_joint_terms(
     tangent_dot_qd: wp.array2d[wp.float64],
     joint_velocity: wp.array2d[wp.float64],
 ):
-    """Launch cooperative spatial-joint evaluation on a CUDA device.
+    """Launch cooperative joint terms for a homogeneous batch.
+
+    All worlds use the same structural dimensions and coordinate layout.
+
+    Shared across worlds: ``basis``, ``reference``, ``local_to_global``.
+
+    State, computed operator, workspace and output arrays carry the world axis,
+    either explicitly or flattened as documented in Args. Their values may differ by
+    world.
+
+    The launcher derives its work grid from these common dimensions and enqueues the
+    homogeneous kernels on the current Warp stream.
 
     One CUDA block processes each ``(environment, segment)`` pair. Threads
     cooperatively evaluate active local basis columns while sharing the joint
@@ -306,25 +370,34 @@ def launch_cooperative_joint_terms(
         None. Outputs are written in place.
     """
 
+    data = JointTermsData()
+    data.q = q
+    data.qd = qd
+    data.basis = basis
+    data.reference = reference
+    data.local_to_global = local_to_global
+    data.adjoint = adjoint
+    data.adjoint_dot = adjoint_dot
+    data.tangent_local = tangent_local
+    data.tangent_dot_qd = tangent_dot_qd
+    data.joint_velocity = joint_velocity
     wp.launch_tiled(
-        cooperative_joint_terms_kernel,
+        homogeneous_cooperative_joint_terms_kernel,
         dim=q.shape[0] * reference.shape[0],
-        inputs=[q, qd, basis, reference, local_to_global],
-        outputs=[
-            adjoint,
-            adjoint_dot,
-            tangent_local,
-            tangent_dot_qd,
-            joint_velocity,
-        ],
+        inputs=[data],
         block_dim=JOINT_BLOCK_DIM,
     )
 
 
-cooperative_joint_terms = wp.jax_callable(launch_cooperative_joint_terms, num_outputs=5)
+cooperative_joint_terms = wp.jax_callable(
+    launch_homogeneous_cooperative_joint_terms, num_outputs=5
+)
 
 
 __all__ = [
-    "cooperative_joint_terms_kernel",
-    "launch_cooperative_joint_terms",
+    "homogeneous_cooperative_joint_terms_kernel",
+    "launch_homogeneous_cooperative_joint_terms",
 ]
+
+
+__all__ += ["JointTermsData", "packed_cooperative_joint_terms_kernel"]

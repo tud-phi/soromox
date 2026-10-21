@@ -7,6 +7,15 @@ import matplotlib.pyplot as plt
 from jax import numpy as jnp
 
 from soromox.rendering import OpenCVPlanarRenderer, ViserRenderer
+from soromox.rendering.config import (
+    BackboneColorConfig,
+    GeometryConfig,
+    GroundPlaneConfig,
+    RendererColorConfig,
+    RendererConfig,
+    RenderOutputConfig,
+    SceneConfig,
+)
 from soromox.systems import Pendulum, PendulumParams, SystemState
 
 jax.config.update("jax_enable_x64", True)  # double precision
@@ -156,10 +165,13 @@ if __name__ == "__main__":
     output_path.parent.mkdir(parents=True, exist_ok=True)
     renderer = OpenCVPlanarRenderer(
         robot,
-        width=video_width,
-        height=video_height,
-        backbone_color=(0, 0, 0),
         length_scale=2.5,
+        config=RendererConfig(
+            output=RenderOutputConfig(width=video_width, height=video_height),
+            colors=RendererColorConfig(
+                backbone=BackboneColorConfig(segment_colors=(0.0, 0.0, 0.0))
+            ),
+        ),
     )
     renderer.render_sequence(video_ts, q_ts, record_path=str(output_path))
     print(f"Video saved to {output_path}")
@@ -173,7 +185,15 @@ if __name__ == "__main__":
     # Plotly plots are automatically added to the GUI at the end of the sidebar
     if not args.no_viser:
         viser_renderer = ViserRenderer(
-            robot, num_points=50, backbone_style="discrete"
+            robot,
+            config=RendererConfig(
+                geometry=GeometryConfig(num_points=50, backbone_style="discrete"),
+                scene=SceneConfig.technical(
+                    ground=GroundPlaneConfig(
+                        surface=False, height=-0.06, height_reference="world"
+                    )
+                ),
+            ),
         )
         viser_renderer.render_sequence(
             ts,

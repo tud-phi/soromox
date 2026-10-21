@@ -20,6 +20,11 @@ publication figures/videos under `outputs/`.
 outputs. Trained model checkpoints are stored with Git LFS; section data and
 paper figures remain regular Git objects unless their size requires otherwise.
 
+The [rendering overview](rendering/README.md) compares the four core backends
+and all six visual presets. Its captures, generator, and LaTeX inclusion snippet
+live under `rendering/`; the composed PDF, SVG, and PNG are saved as
+`final_outputs/renderers_and_presets.*`.
+
 The model-based-control application composite is regenerated directly from the
 canonical Section Vc data and operational snapshots. Control-gain optimization
 remains a separate Section Vd figure:
@@ -31,6 +36,22 @@ uv run --extra paper_results python paper_results/secVc_model_based_control/code
 The command writes `model_based_control.pdf` and a matching SVG under the
 Section Vc `outputs/` directory, and requires `--force` before replacing either
 existing output.
+
+Figure 13 combines the safety-control and reinforcement-learning studies:
+
+```bash
+uv run --extra paper_results python paper_results/assemble_safety_rl_figure.py --force
+```
+
+This assembles panels A–D from the Section Ve rollout data, Section Vf reward
+CSVs, and the current single-environment videos. It writes PDF, SVG, PNG and a
+source-hash manifest to `final_outputs/control_barrier_function_reinforcement_learning.*`.
+The plots remain vector graphics; snapshots retain the current studio composition.
+Each comparison uses a common crop across both controllers and all four times.
+Use `--safety-times` and `--rl-times` to select four timestamps per study; defaults
+are 0, 0.75, 2, 7.9 seconds and 0, 5, 10, 15 seconds, respectively. Videos must
+already exist and FFmpeg must be installed. Regenerate the section videos first
+when changing rendering settings. The script does not rerun simulations or training.
 
 ## Shared conventions
 

@@ -19,6 +19,13 @@ import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 
+from soromox.rendering.config import (
+    GeometryConfig,
+    GroundPlaneConfig,
+    RendererConfig,
+    SceneConfig,
+)
+
 jax.config.update("jax_enable_x64", True)  # Double precision
 
 from soromox.actuation import ThreadlikeActuator, ThreadlikeRouting
@@ -35,8 +42,10 @@ from soromox.systems import (
     LinkSpec,
     SystemState,
 )
+from soromox.utils.geometry import poses
 
 FIGURES_DIR = Path(__file__).resolve().parent / "figures"
+VIDEO_OUTPUT = Path(__file__).resolve().parent / "videos" / f"{Path(__file__).stem}.mp4"
 
 
 def main(
@@ -51,8 +60,7 @@ def main(
     num_segments = 2
     rho = 1070 * jnp.ones((num_segments,))  # Volumetric density [kg/m^3]
 
-    # Define the initial scalar-last quaternion base pose.
-    base_pose = jnp.array([0.5, -0.5, 0.5, 0.5, 0.0, 0.0, 0.0])
+    base_pose = poses.spatial_mounting_pose("hanging")
 
     segment_lengths = 1e-1 * jnp.ones((num_segments,))
     material_damping_coefficient = 362.0
@@ -69,7 +77,7 @@ def main(
             )
             for index in range(num_segments)
         ],
-        gravity=jnp.array([0.0, 0.0, 9.81]),
+        gravity=jnp.array([0.0, 0.0, -9.81]),
     )
 
     # Tendons
@@ -148,7 +156,7 @@ def main(
     def x_des_fn(t):
         """Desired FULL end-effector pose as a function of time."""
         # Start from rest position and move in y-z plane
-        # The robot initially points along the x-axis (after the base rotation)
+        # The robot initially hangs along the world -z axis.
         period = 4.0
         amplitude_y = 0.02  # 2 cm amplitude in y
         amplitude_z = 0.01  # 1 cm amplitude in z
@@ -373,20 +381,32 @@ def main(
     if not render:
         return
     if Open3DRenderer is None:
-        print("\nOpen3DRenderer unavailable. Install open3d to view the animation.")
+        print("\nOpen3DRenderer unavailable. Install open3d to export the video.")
     else:
         target_radius = float(jnp.mean(robot.params.r)) * 0.5
         target_positions = jnp.asarray(x_des_traj_pos)[None, :, :]
-        renderer = Open3DRenderer(robot, num_points=50)
+        renderer = Open3DRenderer(
+            robot,
+            config=RendererConfig(
+                geometry=GeometryConfig(num_points=50),
+                scene=SceneConfig.technical(
+                    ground=GroundPlaneConfig(
+                        surface=False, height_reference="base_mounting_face"
+                    )
+                ),
+            ),
+        )
         renderer.render_sequence(
             ts=t_traj,
             q_ts=q_traj,
             playback_speed=1.0,
+            record_path=str(VIDEO_OUTPUT),
             dynamic_spheres_positions=target_positions,
             dynamic_spheres_radii=jnp.array([target_radius]),
             dynamics_spheres_colors=jnp.array([[0.1, 0.6, 0.9]]),
             window_name="Operational-Space Tracking (Open3D)",
-        )  # '''
+        )
+        print(f"Saved {VIDEO_OUTPUT}")
 
 
 if __name__ == "__main__":

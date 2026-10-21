@@ -66,7 +66,7 @@ def gauss_quadrature(
         Convergence predicate for the Newton iterations in Gauss–Legendre.
 
         Computes the next Newton update and checks if the maximum absolute
-        change across all entries is larger than machine epsilon (float32).
+        change across all entries is larger than machine epsilon of the node dtype.
         Used as the loop condition in `lax.while_loop`.
 
         Args:
@@ -82,7 +82,7 @@ def gauss_quadrature(
         L_ = jnp.stack(L_ls_, axis=1)
         Lp = N2 * (L_[:, N1 - 1] - y * L_[:, N1]) / (1 - y**2)
         y_new = y - L_[:, N1] / Lp
-        needs_more_its = jnp.max(jnp.abs(y_new - y)) > jnp.finfo(jnp.float32).eps
+        needs_more_its = jnp.max(jnp.abs(y_new - y)) > jnp.finfo(y.dtype).eps
         return needs_more_its
 
     y = lax.while_loop(convergence_condition, legendre_iteration, y)

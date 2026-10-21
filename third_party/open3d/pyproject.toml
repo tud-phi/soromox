@@ -1,0 +1,12 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "build_backend"
+backend-path = ["."]
+
+[tool.uv]
+cache-keys = [
+    { file = "pyproject.toml" },
+    { file = "OPEN3D_REVISION" },
+    { file = "build_backend.py" },
+    { file = "*.patch" },
+]

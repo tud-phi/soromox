@@ -1,0 +1,235 @@
+{
+  "backend": "open3d",
+  "version": "0.20.0+d32b4fc.soromox2",
+  "configuration": {
+    "scene": {
+      "background": [
+        0.58,
+        0.58,
+        0.58
+      ],
+      "ground": {
+        "visible": true,
+        "surface": true,
+        "alignment": "world",
+        "height": 0.0,
+        "height_reference": "base_mounting_face",
+        "normal": [
+          0.0,
+          0.0,
+          -1.0
+        ],
+        "size": null,
+        "color": [
+          0.58,
+          0.58,
+          0.58
+        ],
+        "opacity": 1.0,
+        "grid": false,
+        "grid_spacing": null,
+        "grid_color": [
+          0.86,
+          0.86,
+          0.86
+        ],
+        "grid_major_every": 5,
+        "grid_major_color": [
+          0.72,
+          0.72,
+          0.72
+        ],
+        "receive_shadow": true
+      },
+      "backdrop": {
+        "enabled": true,
+        "width": 5.0,
+        "depth": 2.5,
+        "height": 2.5,
+        "radius": 0.4,
+        "wall_offset": 0.02,
+        "vertical_radius": 0.23,
+        "curvature_easing": 0.8
+      },
+      "ambient": {
+        "strength": 1.05,
+        "color": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "lights": [
+        {
+          "direction": [
+            -0.25,
+            0.55,
+            -1.0
+          ],
+          "illuminance_lux": 70000,
+          "color": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "cast_shadow": true,
+          "reference": "ground"
+        },
+        {
+          "position": [
+            0.0,
+            -0.8,
+            0.8
+          ],
+          "intensity_candela": 16910.21270351388,
+          "color": [
+            1.0,
+            0.98,
+            0.96
+          ],
+          "range_m": 6.0,
+          "cast_shadow": false,
+          "reference": "ground"
+        },
+        {
+          "position": [
+            0.0,
+            0.4,
+            0.75
+          ],
+          "intensity_candela": 8952.465548919114,
+          "color": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "range_m": 6.0,
+          "cast_shadow": false,
+          "reference": "ground"
+        }
+      ],
+      "material": {
+        "shading": "standard",
+        "roughness": 0.72,
+        "metallic": 0.0,
+        "reflectance": 0.35,
+        "opacity": 1.0,
+        "flat_shading": false,
+        "wireframe": false
+      },
+      "shadows": true,
+      "ambient_occlusion": true,
+      "tone_mapping": "backend-default",
+      "backbone_cast_shadow": true,
+      "sphere_cast_shadow": true
+    },
+    "camera": {
+      "exposure_ev100": 15.0,
+      "fov": 35,
+      "position": [
+        0.085,
+        -0.46,
+        -0.25
+      ],
+      "look_at": [
+        0.085,
+        0,
+        -0.105
+      ],
+      "up": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "distance_factor": 1.5,
+      "position_offset": [
+        0.8,
+        -0.8,
+        0.5
+      ]
+    },
+    "colors": {
+      "robot_override": null,
+      "backbone": {
+        "segment_palette": [
+          [
+            0.9450980392156862,
+            0.3333333333333333,
+            0.1803921568627451
+          ]
+        ],
+        "robot_palette": "soromox:okabe-ito",
+        "point_palette": null,
+        "robot_colors": null,
+        "segment_colors": null,
+        "robot_segment_colors": null,
+        "point_colors": null,
+        "robot_point_colors": null
+      },
+      "base_plate_color": [
+        0.2,
+        0.2,
+        0.2
+      ],
+      "actuators": {
+        "default_color": [
+          0.9,
+          0.15,
+          0.15
+        ],
+        "default_radius": null,
+        "scalar_colormap": "viridis",
+        "kind_colors": {},
+        "kind_radii": {}
+      }
+    },
+    "geometry": {
+      "num_points": 155,
+      "cross_section_resolution": 48,
+      "backbone_style": "swept",
+      "base_plate_style": "flared_collar",
+      "base_plate_radius_scale": 1.8170019467878002,
+      "base_plate_thickness": 0.012,
+      "line_width": 4.0,
+      "actuator_line_width": 2.0,
+      "grid_spacing": [
+        0.5,
+        0.5
+      ]
+    },
+    "output": {
+      "width": 1400,
+      "height": 700,
+      "video": {
+        "codec": "libx264",
+        "pix_fmt": "yuv444p",
+        "preset": "veryslow",
+        "crf": 12,
+        "tune": "animation",
+        "profile": null,
+        "bitrate": null,
+        "gop": null,
+        "extra_args": []
+      }
+    }
+  },
+  "q": [
+    -4.913379433142427e-16,
+    0.06856739272378728,
+    -2.1087979353774045,
+    -0.11876220794012854,
+    3.652545166970019,
+    -0.007979355713097332,
+    -0.09914276739795808,
+    0.05637330859943091,
+    -0.0976414346849738
+  ],
+  "pose_source": "verified Section Va fitted-model equilibrium under tendon tension and gravity",
+  "equilibrium_sha256": "99f8ac1c3d832ef0de6ffa7a27fe826ba5d783b4e4d10294a83e9707320b0189",
+  "tendon_tensions_N": [
+    6.153846153846153,
+    0.0
+  ],
+  "capture_settings": {},
+  "sha256": "9a517cbe03ced9bb53912733a50fe80e7db1faa4eab75eaaeb7eac0813732999"
+}

@@ -1,0 +1,53 @@
+{
+  "figure_mm": [
+    180,
+    110
+  ],
+  "renderer_order": [
+    "OpenCV Planar",
+    "Matplotlib",
+    "Viser",
+    "Open3D"
+  ],
+  "preset_order": [
+    "technical",
+    "neutral",
+    "bright",
+    "flat",
+    "clay",
+    "dark"
+  ],
+  "preset_backend": "Open3D",
+  "display_crops_px": {
+    "opencv": [
+      30,
+      40,
+      859,
+      720
+    ],
+    "matplotlib": [
+      160,
+      0,
+      980,
+      770
+    ]
+  },
+  "panel_outline": {
+    "color": "#d6d6d6",
+    "width_pt": 0.35
+  },
+  "equilibrium_sha256": "99f8ac1c3d832ef0de6ffa7a27fe826ba5d783b4e4d10294a83e9707320b0189",
+  "generator_sha256": "6280568a97b1acf38fa45ad8760ee98bae72ff840d3e7f0c7daa081a25b94add",
+  "captures": {
+    "matplotlib.png": "67fe5d9bf11df067ce710a13146517e31cdfdbcceba6dcffdf4f91777db3503b",
+    "open3d.png": "3d72b909846be3107700142da42427b96f5c2d00d75f805e7e49a5a8995c91be",
+    "opencv.png": "629f82dc562aeab2dd18c7005ff3eec99d25f9834d76f1eb353c1deb7ea77f2c",
+    "preset_bright.png": "03fbadf875d9b3b287e729bdaef9bc20dec2152667403b7056f4177f16d6311e",
+    "preset_clay.png": "5bfb3f0b258408c93c23b2fe7921f0e84cd4c5977597aeb05e9f4ab4af218686",
+    "preset_dark.png": "e3ac0157f9daebdbdbd3c06daa119eab78ca0f36d35cfd69e8cd4c13026abc03",
+    "preset_flat.png": "bd26954508a48b2043235799d2c16ab41616f110bd14e17424f2c809f0a342ec",
+    "preset_neutral.png": "9a517cbe03ced9bb53912733a50fe80e7db1faa4eab75eaaeb7eac0813732999",
+    "preset_technical.png": "4c95a8135abf1f0ec0cc9c70da9e6cf8680fdc1a7da12df09279516c61bbe557",
+    "viser.png": "fd3af93511b63ba37c434586aa8c30435c86d6a7f26ad01b60f03dfb47638e99"
+  }
+}

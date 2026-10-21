@@ -7,6 +7,13 @@ from pathlib import Path
 
 import jax
 
+from soromox.rendering.config import (
+    GeometryConfig,
+    GroundPlaneConfig,
+    RendererConfig,
+    SceneConfig,
+)
+
 jax.config.update("jax_enable_x64", True)  # double precision
 
 import jax.numpy as jnp
@@ -189,9 +196,10 @@ def render_robot(
     if backend in {"matplotlib", "all"}:
         renderer = MatplotlibRenderer(
             robot,
-            num_points=80,
-            color_config=get_color_theme("soromox:paper"),
-            line_width=5.0,
+            config=RendererConfig(
+                geometry=GeometryConfig(num_points=80, line_width=5.0),
+                colors=get_color_theme("soromox:paper"),
+            ),
         )
         if record_path is None:
             renderer.animate(
@@ -215,16 +223,31 @@ def render_robot(
         if Open3DRenderer is None:
             print("Open3DRenderer is unavailable. Install the optional Open3D extras.")
         else:
-            renderer = Open3DRenderer(robot, num_points=80)
+            renderer = Open3DRenderer(
+                robot,
+                config=RendererConfig(
+                    geometry=GeometryConfig(num_points=80),
+                    scene=SceneConfig.technical(
+                        ground=GroundPlaneConfig(
+                            surface=False, height_reference="base_mounting_face"
+                        )
+                    ),
+                ),
+            )
+            open3d_output = record_path or (
+                Path(__file__).resolve().parent
+                / "videos"
+                / "articulated_soft_robot.mp4"
+            )
             renderer.render_sequence(
                 ts,
                 q_ts,
                 playback_speed=1.0,
-                loop=record_path is None,
-                record_path=None if record_path is None else str(record_path),
+                record_path=str(open3d_output),
                 camera_config=open3d_camera,
                 window_name="Articulated Soft Robot",
             )
+            print(f"Saved {open3d_output}")
 
     if backend in {"viser", "all"}:
         if ViserRenderer is None:
@@ -232,7 +255,14 @@ def render_robot(
         else:
             renderer = ViserRenderer(
                 robot,
-                num_points=80,
+                config=RendererConfig(
+                    geometry=GeometryConfig(num_points=80),
+                    scene=SceneConfig.technical(
+                        ground=GroundPlaneConfig(
+                            surface=False, height_reference="base_mounting_face"
+                        )
+                    ),
+                ),
             )
             renderer.render_sequence(
                 ts,

@@ -33,28 +33,52 @@ built around this model layer.
 
 ### Sequential CPU rollouts
 
-The paper reports wall-clock time for three seconds of simulated motion. The
-table below retains the matched PCS and GVS comparison with SoRoSim:
+The paper reports wall-clock time for three seconds of simulated motion on an
+Intel Core Ultra 7 165H CPU with 16 GB RAM. SoRoMoX is up to 27.0× faster than
+SoRoSim across the four cases:
 
-| Formulation | Case | SoRoSim (s) | SoRoMoX (s) | Speedup |
-| --- | --- | ---: | ---: | ---: |
-| FEM/PCS | Planar | 75.73 | 4.18 | 18.1× |
-| FEM/PCS | Spatial | 78.65 | 13.26 | 5.9× |
-| FEM/GVS | Spatial | 55.54 | 36.33 | 1.5× |
-| FEM/GVS | Tendons | 75.80 | 36.47 | 2.1× |
+| Case | PyElastica (s) | SoRoSim (s) | SoRoMoX (s) | Speedup over SoRoSim |
+| --- | ---: | ---: | ---: | ---: |
+| Planar PCS | 2.25 | 75.73 | 2.81 | 27.0× |
+| Spatial PCS | 2.45 | 78.65 | 6.53 | 12.0× |
+| Spatial GVS | — | 55.54 | 10.63 | 5.2× |
+| Tendon-driven GVS | 11.40 | 75.80 | 11.72 | 6.5× |
+
+The case labels describe the strain-based models in SoRoMoX and SoRoSim, which
+use two piecewise elements. PyElastica uses a discrete Cosserat-rod model with
+10–100 elements. SoRoSim uses MATLAB's adaptive `ode45` solver; SoRoMoX uses
+`Tsit5` with a fixed 0.1 ms step. PyElastica uses the second-order symplectic
+`PositionVerlet` solver with the same fixed step size.
+
+The paper also compares SoRoSim and SoRoMoX tip positions at identical saved
+timestamps, without temporal or phase alignment:
+
+| Case | Tip-position RMSE (mm) | RMSE / beam length (%) |
+| --- | ---: | ---: |
+| Planar PCS | 2.75 | 0.46 |
+| Spatial PCS | 7.21 | 1.20 |
+| Spatial GVS | 0.86 | 0.14 |
+| Tendon-driven GVS | 5.82 | 0.97 |
+
+These RMSE values correspond to 0.14–1.20% of the 0.6 m beam length. The largest
+instantaneous tip-position difference is 14.14 mm for spatial PCS.
+See the [CPU benchmark reproduction instructions](https://github.com/tud-phi/soromox/tree/main/paper_results/secIVa_benchmarking_sequential_cpu)
+for the simulation scripts, saved trajectories, and plotting command.
 
 ### Batched GPU rollouts
 
 <figure markdown>
-  ![GPU batch simulation throughput for articulated, PCS, and GVS models as the leading batch size increases](assets/paper/gpu-batch-scaling.png){ .soromox-figure .soromox-figure--plot }
-  <figcaption>On the reported RTX 5090 benchmark, scaling the leading batch size from 1 to 256 raises GVS simulation throughput by up to 172.1×.</figcaption>
+  ![GPU batch simulation throughput through 1,024 parallel environments for articulated, PCS, and GVS models](assets/paper/gpu-batch-scaling.png){ .soromox-figure .soromox-figure--plot }
+  <figcaption>On the reported RTX 5090 benchmark, scaling the leading batch size from 1 to 1,024 raises GVS simulation throughput by up to 679.7×.</figcaption>
 </figure>
 
 The exact scaling depends on the model, number of links or segments, hardware,
-and discretization. Under the paper's settings, GVS reaches 172.1× the
-single-environment throughput for one segment at batch size 256 and retains a
-50.3× increase for 32 segments. Aggregate throughput increases monotonically
-for every tested GVS configuration.
+and discretization. In this FP64 run, automatic backend selection resolves to
+Warp for GVS. At batch size 1,024, GVS reaches 679.7× the single-environment
+throughput for one segment and 133.6× for 32 segments. Throughput increases
+monotonically through batch size 1,024 for the GVS cases with 1, 2, 4, 8, or 16
+segments; the 32-segment case peaks at batch size 512 and is 1.2% lower at
+1,024.
 
 ## Application case studies
 
@@ -97,16 +121,19 @@ and 2.29° orientation RMSE.
   <figcaption>Paper results for configuration-space regulation/tracking and operational-space pose tracking.</figcaption>
 </figure>
 
-<video class="soromox-video" controls muted loop playsinline preload="metadata" poster="assets/paper/model-based-control-poster.jpg" aria-label="Operational-space model-based control demonstration">
+<!-- Poster paths are relative to the generated /research/ page; Zensical does not rewrite this attribute. -->
+<video class="soromox-video" controls muted loop playsinline preload="metadata" poster="../assets/paper/model-based-control-poster.jpg" aria-label="Operational-space model-based control demonstration">
   <source src="assets/paper/model-based-control.mp4" type="video/mp4">
-  Your browser cannot play this video. View the <a href="assets/paper/model-based-control.gif">animated GIF</a> instead.
+  Your browser does not support embedded video.
 </video>
+
+[Watch the MP4](assets/paper/model-based-control.mp4) · [View the animated GIF](assets/paper/model-based-control.gif)
 
 ### 4. Control-gain optimization
 
-Here, gradients are propagated through full closed-loop rollouts while several
-gain initializations are evaluated in parallel. For actuation-space and
-operational-space control, the optimized losses decrease by 62% and 57%,
+Gradients are propagated through full closed-loop rollouts while six gain
+initializations are evaluated in parallel. For actuation-space and
+operational-space control, the optimized losses decrease by 47% and 99%,
 respectively, relative to their initial median values.
 
 <figure markdown>
@@ -122,10 +149,15 @@ safety-unaware controller reaches about 33.5 N of pairwise normal force. The
 HOCBF-constrained controller stays at or below the prescribed 5 N limit while
 accepting a larger final goal distance.
 
-<video class="soromox-video" controls muted loop playsinline preload="metadata" poster="assets/paper/safety-constrained-control-poster.jpg" aria-label="Safety-unaware and HOCBF-constrained soft-robot control">
+The video shows the HOCBF-constrained controller approaching the green goal
+among the purple obstacles.
+
+<video class="soromox-video" controls muted loop playsinline preload="metadata" poster="../assets/paper/safety-constrained-control-poster.jpg" aria-label="HOCBF-constrained soft robot approaching a goal among obstacles">
   <source src="assets/paper/safety-constrained-control.mp4" type="video/mp4">
-  Your browser cannot play this video. View the <a href="assets/paper/safety-constrained-control.gif">animated GIF</a> instead.
+  Your browser does not support embedded video.
 </video>
+
+[Watch the MP4](assets/paper/safety-constrained-control.mp4) · [View the animated GIF](assets/paper/safety-constrained-control.gif)
 
 ### 6. Parallel reinforcement learning
 
@@ -136,20 +168,27 @@ and 512 environments relative to the CPU PyElastica baseline jointly reflect
 model formulation, JIT compilation, hardware acceleration, and rollout
 parallelization.
 
-<video class="soromox-video" controls muted loop playsinline preload="metadata" poster="assets/paper/parallel-rl-poster.jpg" aria-label="Initialized and trained parallel reinforcement-learning policies">
+The video shows the trained policy tracking the green target in one environment.
+
+<video class="soromox-video" controls muted loop playsinline preload="metadata" poster="../assets/paper/parallel-rl-poster.jpg" aria-label="Trained reinforcement-learning policy tracking a target in one soft-robot environment">
   <source src="assets/paper/parallel-rl.mp4" type="video/mp4">
-  Your browser cannot play this video. View the <a href="assets/paper/parallel-rl.gif">animated GIF</a> instead.
+  Your browser does not support embedded video.
 </video>
 
-Soromox can roll out many soft-robot environments in parallel, accelerating the
+[Watch the MP4](assets/paper/parallel-rl.mp4) · [View the animated GIF](assets/paper/parallel-rl.gif)
+
+SoRoMoX can roll out many soft-robot environments in parallel, accelerating the
 experience collection that dominates reinforcement-learning training. The
-animation below visualizes a trained policy acting simultaneously in 64
-independently simulated environments.
+20 second animation below visualizes a trained policy acting simultaneously in
+64 independently simulated environments, with each robot rendered as a swept
+surface.
 
-<video class="soromox-video" controls muted loop playsinline preload="metadata" poster="assets/paper/parallel-rl-trained-64-envs-poster.jpg" aria-label="Trained reinforcement-learning policy in 64 parallel soft-robot environments">
+<video class="soromox-video" controls muted loop playsinline preload="metadata" poster="../assets/paper/parallel-rl-trained-64-envs-poster.jpg" aria-label="Trained reinforcement-learning policy in 64 parallel soft-robot environments">
   <source src="assets/paper/parallel-rl-trained-64-envs.mp4" type="video/mp4">
-  Your browser cannot play this video. View the <a href="assets/paper/parallel-rl-trained-64-envs.gif">animated GIF</a> instead.
+  Your browser does not support embedded video.
 </video>
+
+[Watch the MP4](assets/paper/parallel-rl-trained-64-envs.mp4) · [View the animated GIF](assets/paper/parallel-rl-trained-64-envs.gif)
 
 ## Reproducing the results
 

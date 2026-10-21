@@ -3,6 +3,8 @@
 # ruff: noqa: E402
 import jax
 
+from soromox.rendering.config import GeometryConfig, RendererConfig
+
 jax.config.update("jax_enable_x64", True)
 
 import equinox as eqx
@@ -369,9 +371,9 @@ def test_isupport_uses_threadlike_pressure_chambers_and_resolves_area():
         == ()
     )
     assert (
-        MatplotlibRenderer(robot, num_points=5).compute_actuator_visual_layers(
-            jnp.zeros((robot.num_internal_dofs,))
-        )
+        MatplotlibRenderer(
+            robot, config=RendererConfig(geometry=GeometryConfig(num_points=5))
+        ).compute_actuator_visual_layers(jnp.zeros((robot.num_internal_dofs,)))
         == ()
     )
 
@@ -810,3 +812,39 @@ def test_isupport_layout_validation_and_updates():
     assert jnp.allclose(
         updated.r[jnp.array([0, 3, 5])], jnp.array([0.015, 0.016, 0.017])
     )
+
+
+@pytest.mark.parametrize("selected", [True, False])
+def test_isupport_inertia_overrides_follow_physical_link_subdivision(selected):
+    from soromox.systems import spatial_inertia
+
+    params = make_isupport_params()
+    section = spatial_inertia(0.3, jnp.array([0.0, 0.003, -0.002]), jnp.eye(3) * 1e-4)[
+        None
+    ]
+    tip = spatial_inertia(0.05, jnp.array([0.01, -0.02, 0.0]), jnp.eye(3) * 1e-5)[None]
+    params = params.replace(
+        link=params.link.replace(
+            sectional_inertia=section,
+            tip_inertia=tip,
+            sectional_inertia_mask=jnp.array([selected]),
+        )
+    )
+    robot = ISupport(
+        params,
+        structure=ISupportStructure(
+            num_gauss_points=3, pcs_segment_counts=(2,), rigid_segment_selector=(False,)
+        ),
+    )
+    assert jnp.allclose(
+        robot.pcs_params.link.sectional_inertia, jnp.repeat(section, 2, axis=0)
+    )
+    assert jnp.array_equal(
+        robot.pcs_params.link.sectional_inertia_mask, jnp.array([selected, selected])
+    )
+    assert jnp.allclose(robot.pcs_params.link.tip_inertia[0], 0.0)
+    assert jnp.allclose(robot.pcs_params.link.tip_inertia[1], tip[0])
+    changed = robot.with_params(
+        params.replace(link=params.link.replace(tip_inertia=2 * tip))
+    )
+    assert jnp.allclose(changed.weighted_inertias[-1, -1], (2 * tip[0]).reshape(-1))

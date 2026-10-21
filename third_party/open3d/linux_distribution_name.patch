@@ -1,0 +1,12 @@
+diff --git a/python/setup.py b/python/setup.py
+index 8fc181a..73069a5 100644
+--- a/python/setup.py
++++ b/python/setup.py
+@@ -154,7 +154,6 @@ if "@BUILD_CUDA_MODULE@" == "ON":
+ elif (sys.platform.startswith("linux") and
+       platform.machine() in ("i386", "x86_64", "AMD64") and
+       "@BUILD_SYCL_MODULE@" == "OFF"):
+-    name += "-cpu"
+     long_description += ("\n\nThis wheel only contains CPU functionality. "
+                          "Use the open3d wheel for full functionality.")
+ elif "@BUILD_SYCL_MODULE@" == "ON":

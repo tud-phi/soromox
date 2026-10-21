@@ -2,8 +2,12 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from unittest.mock import Mock
 
 import jax
+
+from soromox.rendering import GroundPlaneConfig, SceneConfig
+from soromox.rendering.config import GeometryConfig, RendererConfig
 
 jax.config.update("jax_enable_x64", True)
 
@@ -13,7 +17,7 @@ import pytest
 from numpy.testing import assert_allclose
 
 from soromox.rendering import ISupportViserRenderer, ISupportVisualConfig
-from soromox.rendering.color_config import validate_rgb
+from soromox.rendering.config.colors import validate_rgb
 from soromox.rendering.isupport.viser_renderer import ISupportLiveModeController
 from soromox.rendering.viser_renderer import SceneHandles
 from soromox.systems import (
@@ -39,6 +43,12 @@ class _FakeScene:
         self.simple_meshes = []
         self.labels = []
         self.grids = []
+
+    def add_mesh_trimesh(self, **kwargs):
+        return _FakeHandle(**kwargs)
+
+    def add_line_segments(self, *args, **kwargs):
+        return _FakeHandle(**kwargs)
 
     def add_grid(self, **kwargs):
         handle = _FakeHandle(**kwargs)
@@ -149,7 +159,10 @@ def _renderer(robot: ISupport, **kwargs) -> ISupportViserRenderer:
         robot,
         auto_start=False,
         open_browser=False,
-        cross_section_resolution=12,
+        config=kwargs.pop(
+            "config",
+            RendererConfig(geometry=GeometryConfig(cross_section_resolution=12)),
+        ),
         **kwargs,
     )
 
@@ -357,7 +370,12 @@ def test_build_and_update_preserve_custom_handle_identity():
 
 
 def test_sequence_frame_uses_one_atomic_transaction_for_custom_geometry():
-    renderer = _renderer(_make_robot(connectors=True), show_ground_plane=False)
+    renderer = _renderer(
+        _make_robot(connectors=True),
+        config=RendererConfig(
+            scene=SceneConfig(ground=GroundPlaneConfig(visible=False))
+        ),
+    )
     renderer._server = _FakeServer()
     renderer._scene_handles = SceneHandles()
     q_ts = jnp.zeros((1, 2, renderer.robot.num_internal_dofs))
@@ -522,6 +540,7 @@ def test_live_controller_updates_custom_geometry_in_place():
     renderer = _renderer(_make_robot(connectors=True))
     renderer._server = _FakeServer()
     renderer._scene_handles = SceneHandles()
+    renderer._setup_camera = Mock()
     controller = ISupportLiveModeController(renderer)
     q = np.zeros((renderer.robot.num_internal_dofs,))
 
@@ -532,12 +551,14 @@ def test_live_controller_updates_custom_geometry_in_place():
     assert renderer._current_geometry_q.shape == (1, renderer.robot.num_internal_dofs)
     assert renderer._robot_visual_handles[0].chamber_handles[0] is first_handle
     assert renderer._server.atomic_calls == 1
+    renderer._setup_camera.assert_called_once()
 
 
 def test_live_controller_pushes_pressures_with_state():
     renderer = _renderer(_make_robot(connectors=True))
     renderer._server = _FakeServer()
     renderer._scene_handles = SceneHandles()
+    renderer._setup_camera = Mock()
     controller = ISupportLiveModeController(renderer)
     controller.start()
     q = np.zeros((renderer.robot.num_internal_dofs,))

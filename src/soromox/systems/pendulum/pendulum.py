@@ -157,7 +157,9 @@ class Pendulum(SoftRobot):
         """Per-link lengths."""
         return jnp.asarray(self.L)
 
-    def cross_section_geometry(self, q: Array, s: Array) -> tuple[Array, Array]:
+    def cross_section_geometry(
+        self, q: Array, s: Array
+    ) -> tuple[Array, Array, Array | None]:
         """Return circular visualization geometry using the per-link radius.
 
         The radius does not determine the link's mass or planar moment of inertia.
@@ -166,7 +168,7 @@ class Pendulum(SoftRobot):
         segment_idx = jnp.clip(jnp.sum(s > L_cum) - 1, 0, self.num_links - 1)
         radius = self.r[segment_idx]
         tag = jnp.asarray(CrossSectionGeometry.CIRCULAR, dtype=jnp.int32)
-        return tag, jnp.array([radius])
+        return (tag, jnp.array([radius]), None)
 
     def _current_body_params(self) -> PendulumParams:
         """Return the pendulum body parameters."""
@@ -984,6 +986,15 @@ class Pendulum(SoftRobot):
         Returns:
             G (Array): Generalized gravity vector, shape (N,) [N⋅m]
         """
+        if self.floating_base:
+            _, q_internal = self.split_configuration(q)
+            return self._gravitational_force_from_base_relative_points(
+                q,
+                self._com_positions(q_internal),
+                self.m,
+                self._linear_jacobian_coms(q_internal),
+            )
+
         Jv = self._linear_jacobian_coms(
             q
         )  # (N,2,N) -> indices (link, component, joint)
@@ -1118,32 +1129,21 @@ class Pendulum(SoftRobot):
         where p_com_i is the center of mass position of link i.
 
         Args:
-            q (Array): Joint angles, shape (N,) [rad]
+            q: Fixed-base joint angles or total floating-base configuration.
 
         Returns:
             U_g (Array): Gravitational potential energy [J] (scalar)
         """
+        if self.floating_base:
+            _, q_internal = self.split_configuration(q)
+            return self._gravitational_energy_from_base_relative_points(
+                q, self._com_positions(q_internal), self.m
+            )
+
         p_coms = self._com_positions(q)  # (n, 2)
         # U_G = -Σ_i m_i * g^T @ p_com_i
         U_g = -jnp.sum(self.m * jnp.dot(p_coms, self.g))
         return U_g
-
-    @eqx.filter_jit
-    def _floating_gravitational_energy(self, q: Array) -> Array:
-        """
-        Compute absolute floating-base gravitational potential energy.
-
-        Args:
-            q: Total floating-base configuration with shape
-                ``(num_coordinates,)``.
-
-        Returns:
-            Absolute gravitational potential energy as a scalar.
-        """
-        _, q_internal = self.split_configuration(q)
-        return self._floating_gravitational_energy_from_points(
-            q, self._com_positions(q_internal), self.m
-        )
 
     @eqx.filter_jit
     def _elastic_energy(self, q: Array) -> Array:
