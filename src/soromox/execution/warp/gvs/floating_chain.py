@@ -14,17 +14,13 @@ import warp as wp
 from soromox.execution.warp.common.floating_base import _spatial_root_jacobian_entry
 from soromox.execution.warp.common.rotations import _quaternion_rotation_matrix
 from soromox.execution.warp.common.se3 import Vec6d, _ad_action
-from soromox.execution.warp.common.spatial import _coadjoint_wrench
-from soromox.execution.warp.common.spatial_inertia import (
-    _mass_jacobian_action,
-    _mass_vector_action,
-)
 from soromox.execution.warp.common.storage import (
     _matrix_value,
     _vector_value,
     _write_matrix_value,
     _write_vector_value,
 )
+from soromox.execution.warp.gvs.inertia import _accumulate_mass_point
 
 wp.set_module_options({"enable_backward": False})
 
@@ -544,75 +540,29 @@ def floating_persistent_chain_at(
             current_is_first = destination_is_first
 
             if cell < num_mass_points:
-                quadrature_item = segment * num_mass_points + cell
-                num_inertia_pairs = segment_dofs * (segment_dofs + 1) // 2
-                entry = lane
-                while entry < num_inertia_pairs:
-                    output_row = inertia_upper_rows[entry]
-                    output_column = inertia_upper_columns[entry]
-                    value = wp.float64(0.0)
-                    row = int(0)
-                    while row < SPATIAL_DIM:
-                        value += _matrix_value(
-                            jacobian_first,
-                            jacobian_second,
-                            current_is_first,
-                            state_base_row,
-                            row,
-                            output_row,
-                        ) * _mass_jacobian_action(
-                            weighted_masses,
-                            quadrature_item,
-                            row,
-                            jacobian_first,
-                            jacobian_second,
-                            current_is_first,
-                            state_base_row,
-                            output_column,
-                        )
-                        row += 1
-                    inertia[environment, output_row, output_column] += value
-                    if output_row != output_column:
-                        inertia[environment, output_column, output_row] += value
-                    entry += lane_stride
-                column = lane
-                while column < segment_dofs:
-                    wrench = _coadjoint_wrench(
-                        velocity_first,
-                        velocity_second,
-                        jacobian_dot_qd_first,
-                        jacobian_dot_qd_second,
-                        current_is_first,
-                        state_base_row,
-                        weighted_masses,
-                        quadrature_item,
-                    )
-                    coriolis_value = wp.float64(0.0)
-                    gravity_value = wp.float64(0.0)
-                    row = int(0)
-                    while row < SPATIAL_DIM:
-                        jacobian_value = _matrix_value(
-                            jacobian_first,
-                            jacobian_second,
-                            current_is_first,
-                            state_base_row,
-                            row,
-                            column,
-                        )
-                        coriolis_value += jacobian_value * wrench[row]
-                        gravity_value -= jacobian_value * _mass_vector_action(
-                            weighted_masses,
-                            quadrature_item,
-                            row,
-                            gravity_first,
-                            gravity_second,
-                            current_is_first,
-                            state_base_row,
-                        )
-                        row += 1
-                    coriolis_qd[environment, column] += coriolis_value
-                    gravity_force[environment, column] += gravity_value
-                    column += lane_stride
+                _accumulate_mass_point(
+                    environment,
+                    lane,
+                    lane_stride,
+                    segment_dofs,
+                    segment * num_mass_points + cell,
+                    cell == num_quadrature_array[0],
+                    current_is_first,
+                    weighted_masses,
+                    inertia_upper_rows,
+                    inertia_upper_columns,
+                    jacobian_first,
+                    jacobian_second,
+                    jacobian_dot_qd_first,
+                    jacobian_dot_qd_second,
+                    velocity_first,
+                    velocity_second,
+                    gravity_first,
+                    gravity_second,
+                    inertia,
+                    coriolis_qd,
+                    gravity_force,
+                )
             wp.tile_scatter_masked(barrier, 0, int(0), lane == 0)
             cell += 1
         segment += 1

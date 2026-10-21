@@ -27,6 +27,7 @@ from soromox.execution.warp.gvs.operands import (
     GVSPipelineShapes,
 )
 from soromox.systems import GVS, GVSSegment, JointSpec, LinkSpec, StrainBasisSpec
+from soromox.systems.components.inertia import spatial_inertia
 
 
 def _array(value: Any, device: wp.Device) -> wp.array:
@@ -85,6 +86,7 @@ def _stage_worlds() -> list[dict]:
                     for i in range(segments)
                 ),
                 floating_base=floating,
+                gravity=jnp.array([0.0, 0.0, -9.81]),
                 actuators=ThreadlikeActuator.tendons(routing),
                 backend="jax",
             )
@@ -128,7 +130,9 @@ def _stage_worlds() -> list[dict]:
                 num_cells_array=np.array([cells], np.int32),
                 num_quadrature_array=np.array([op.num_quadrature], np.int32),
                 lanes_per_block=np.array([32 if device.is_cuda else 1], np.int32),
-                gravity_base=np.array([0.0, 0.0, 0.0, 0.0, 0.0, -9.81]),
+                gravity_base=np.asarray(
+                    op.gravity_world if floating else op.gravity_base
+                ),
                 gravity_world=np.array([0.0, 0.0, 0.0, 0.0, 0.0, -9.81]),
                 base_pose=np.array(
                     [[0.1, -0.2, 0.05, np.sqrt(0.9475), 0.02, -0.01, 0.03]]
@@ -208,6 +212,7 @@ def _stage_worlds() -> list[dict]:
             )
             data = {name: _array(value, device) for name, value in values.items()}
             data.update(
+                model=model,
                 segments=segments,
                 samples=samples,
                 dofs=count,
@@ -689,3 +694,100 @@ def test_packed_threadlike_stages(stage_worlds: list[dict]) -> None:
             ("output",),
             tiled=128,
         )
+
+
+def test_full_chain_inertia_and_tip_updates(stage_worlds: list[dict]) -> None:
+    """Check reused scratch and exact zero-tip skipping against JAX mechanics.
+
+    Full sectional tensors include COM coupling and products of inertia. The
+    same device allocations and captured graph must accept tips changing from
+    zero to nonzero and back, including a massless first tip before another link.
+    """
+    worlds = stage_worlds
+    device = worlds[0]["device"]
+    block = 32 if device.is_cuda else 1
+    descriptors, models = [], []
+    for world in worlds:
+        model = world["model"]
+        count = model.num_segments
+        section = spatial_inertia(
+            jnp.linspace(0.2, 0.3, count),
+            jnp.tile(jnp.array([0.001, 0.004, -0.002]), (count, 1)),
+            jnp.tile(
+                jnp.array(
+                    [[2e-4, 2e-5, 1e-5], [2e-5, 1e-4, -1e-5], [1e-5, -1e-5, 1.5e-4]]
+                )[None],
+                (count, 1, 1),
+            ),
+        )
+        model = model.update_link_params(
+            sectional_inertia=section, tip_inertia=jnp.zeros((count, 6, 6))
+        )
+        world["weighted_masses"] = _array(
+            model.weighted_inertias.reshape(-1, 36), device
+        )
+        descriptor = packed.GVSMixedChainData()
+        for name in packed.GVSMixedChainData.vars:
+            setattr(descriptor, name, world[name])
+        descriptors.append(descriptor)
+        models.append(model)
+    arguments = [
+        wp.array(descriptors, dtype=packed.GVSMixedChainData, device=device),
+        wp.array([(i, 0, 0) for i in (3, 1, 2, 0)], dtype=wp.vec3i, device=device),
+        wp.array([int(w["floating"]) for w in worlds], dtype=wp.int32, device=device),
+    ]
+
+    def launch() -> None:
+        """Launch the same mixed descriptors after each parameter update."""
+        wp.launch_tiled(
+            packed.packed_mixed_chain_kernel,
+            dim=len(worlds),
+            block_dim=block,
+            inputs=arguments,
+            device=device,
+        )
+
+    launch()
+    graph = None
+    if device.is_cuda:
+        with wp.ScopedCapture(device=device) as capture:
+            launch()
+        graph = capture.graph
+    for tip_mode in (0, 1, 2, 0):
+        references = []
+        for world, model in zip(worlds, models, strict=True):
+            count = model.num_segments
+            tip = spatial_inertia(
+                jnp.full(count, 0.04),
+                jnp.tile(jnp.array([0.01, -0.012, 0.003]), (count, 1)),
+                jnp.tile(jnp.diag(jnp.array([1e-5, 2e-5, 3e-5]))[None], (count, 1, 1)),
+            )
+            mask = jnp.arange(count) == (tip_mode - 1)
+            tip = jnp.where(mask[:, None, None], tip, 0.0)
+            updated = model.update_link_params(tip_inertia=tip)
+            world["weighted_masses"].assign(
+                np.asarray(updated.weighted_inertias).reshape(-1, 36)
+            )
+            q = world["q"].numpy()[0]
+            v = world["qd"].numpy()[0]
+            if world["floating"]:
+                q = np.concatenate((world["base_pose"].numpy()[0], q))
+                v = world["velocity"].numpy()[0]
+            references.append(
+                updated.dynamics_terms(jnp.asarray(q), jnp.asarray(v), backend="jax")
+            )
+        if graph is None:
+            launch()
+        else:
+            wp.capture_launch(graph)
+        for world, reference in zip(worlds, references, strict=True):
+            for name, expected in zip(
+                ("inertia", "coriolis_qd", "gravity_force"), reference, strict=True
+            ):
+                np.testing.assert_allclose(
+                    world[name].numpy()[0],
+                    np.asarray(expected),
+                    rtol=3e-9,
+                    atol=3e-11,
+                    err_msg=f"{name}, floating={world['floating']}, segments={world['segments']}, tip_mode={tip_mode}",
+                )
