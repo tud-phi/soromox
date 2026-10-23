@@ -4138,6 +4138,7 @@ dependencies = [
     { name = "numpy", version = "2.5.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "scipy", version = "1.18.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "slsqp-jax" },
     { name = "tqdm" },
 ]
 
@@ -4171,7 +4172,6 @@ all = [
     { name = "pytest-html" },
     { name = "ruff" },
     { name = "seaborn" },
-    { name = "slsqp-jax" },
     { name = "stable-baselines3" },
     { name = "tox" },
     { name = "trimesh" },
@@ -4220,10 +4220,6 @@ examples = [
     { name = "seaborn" },
     { name = "trimesh" },
     { name = "viser" },
-]
-implicit-routing = [
-    { name = "optimistix" },
-    { name = "slsqp-jax" },
 ]
 paper-results = [
     { name = "cbfpy" },
@@ -4274,7 +4270,6 @@ test = [
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "pytest-html" },
-    { name = "slsqp-jax" },
     { name = "tox" },
     { name = "trimesh" },
     { name = "viser" },
@@ -4349,7 +4344,6 @@ requires-dist = [
     { name = "optax", marker = "extra == 'test'" },
     { name = "optimistix", marker = "extra == 'all'" },
     { name = "optimistix", marker = "extra == 'examples'" },
-    { name = "optimistix", marker = "extra == 'implicit-routing'", specifier = ">=0.1.0" },
     { name = "optimistix", marker = "extra == 'paper-results'" },
     { name = "pandas", marker = "extra == 'all'" },
     { name = "pandas", marker = "extra == 'paper-results'" },
@@ -4378,9 +4372,7 @@ requires-dist = [
     { name = "seaborn", marker = "extra == 'dev'" },
     { name = "seaborn", marker = "extra == 'examples'" },
     { name = "seaborn", marker = "extra == 'paper-results'" },
-    { name = "slsqp-jax", marker = "extra == 'all'", specifier = "==0.21.1" },
-    { name = "slsqp-jax", marker = "extra == 'implicit-routing'", specifier = "==0.21.1" },
-    { name = "slsqp-jax", marker = "extra == 'test'", specifier = "==0.21.1" },
+    { name = "slsqp-jax", specifier = ">=0.21.1" },
     { name = "stable-baselines3", marker = "extra == 'all'" },
     { name = "stable-baselines3", marker = "extra == 'paper-results'" },
     { name = "stable-baselines3", marker = "extra == 'rl'" },
@@ -4408,7 +4400,7 @@ requires-dist = [
     { name = "zensical", marker = "extra == 'all'" },
     { name = "zensical", marker = "extra == 'docs'" },
 ]
-provides-extras = ["implicit-routing", "cuda13", "warp", "dev", "docs", "examples", "paper-results", "rendering", "rl", "test", "all"]
+provides-extras = ["cuda13", "warp", "dev", "docs", "examples", "paper-results", "rendering", "rl", "test", "all"]
 
 [[package]]
 name = "stable-baselines3"

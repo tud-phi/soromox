@@ -5973,6 +5973,100 @@ class GVS(SoftRobot):
         local = jnp.hstack([so3.skew(offset) @ unit_tangent, unit_tangent])
         return active * local
 
+    def routing_strain_and_basis(
+        self, configuration: Array, segment_indices: Array, points: Array
+    ) -> tuple[Array, Array]:
+        """Evaluate material strains and their analytical configuration basis.
+
+        Args:
+            configuration: Configuration with shape ``(num_coordinates,)``.
+            segment_indices: Sample segment indices with shape ``(num_points,)``.
+            points: Global reference backbone coordinates, shape ``(num_points,)``.
+
+        Returns:
+            Strains with shape ``(num_points, 6)`` and their analytical basis
+            with shape ``(num_points, 6, num_coordinates)``. Joint and floating
+            base columns vanish because these motions preserve link strain.
+        """
+        _, internal = self.split_configuration(configuration)
+        gathered = self._min_size_gathered(internal)
+
+        def evaluate(segment, position):
+            """Return strain and active basis at one segment abscissa.
+
+            Args:
+                segment: Scalar segment index.
+                position: Global backbone coordinate in metres.
+
+            Returns:
+                Strain with shape ``(6,)`` and basis with shape
+                ``(6, num_internal_dofs)``.
+            """
+            local = (
+                position - self.segment_end_positions[segment]
+            ) / self.segment_lengths[segment]
+            basis = self._eval_B_segment(segment, local[None])[0]
+            if self.scale_rotational_basis_by_length:
+                basis = basis.at[:3].divide(self.segment_lengths[segment])
+            strain = basis @ gathered[segment, 1] + self.xi_ref_Xs[segment, 0]
+            return strain, basis @ self.active_dof_map_blocks[segment, 1]
+
+        strains, basis = vmap(evaluate)(segment_indices, points)
+        return strains, jnp.pad(basis, ((0, 0), (0, 0), (self.num_base_coordinates, 0)))
+
+    def validate_routing_span(self, start: int, end: int) -> None:
+        """Require prescribed guides where a routed path crosses moving joints.
+
+        Args:
+            start: Inclusive first segment index.
+            end: Inclusive last segment index.
+
+        Returns:
+            ``None`` when all interior interfaces are continuous.
+
+        Raises:
+            ValueError: A moving joint lies inside a span. Split that span at
+                the joint and prescribe its upstream and downstream guides.
+        """
+        if any(
+            self.structure.segments[index].joint.type != "fixed"
+            for index in range(start + 1, end + 1)
+        ):
+            raise ValueError(
+                "A span crossing a moving joint requires prescribed guides; split it at the joint."
+            )
+
+    def routing_guide_kinematics(
+        self, configuration: Array, segment: int, upstream: Array, downstream: Array
+    ) -> tuple[Array, Array, Array]:
+        """Evaluate the cable connecting prescribed guides across a joint.
+
+        Args:
+            configuration: Configuration with shape ``(num_coordinates,)``.
+            segment: Segment entered after the joint.
+            upstream: Guide in the upstream tip frame, shape ``(3,)``.
+            downstream: Guide in the downstream entry frame, shape ``(3,)``.
+
+        Returns:
+            Displacement in the upstream frame, shape ``(3,)``; its analytical
+            configuration Jacobian, shape ``(3, num_coordinates)``; and a
+            boolean indicating guides that coincide for every joint state.
+            No joint thickness or obstacle geometry is assumed.
+        """
+        _, internal = self.split_configuration(configuration)
+        joint_coordinates = self._min_size_gathered(internal)[segment, 0]
+        basis = self.B_joint[segment]
+        transform, _, spatial_basis = self._joint_jacobian_step_terms(
+            basis, self.xi_ref_joint[segment], joint_coordinates
+        )
+        endpoint = transform[:3, :3] @ downstream + transform[:3, 3]
+        local_jacobian = jnp.cross(spatial_basis[:3].T, endpoint).T + spatial_basis[3:]
+        jacobian = local_jacobian @ self.active_dof_map_blocks[segment, 0]
+        jacobian = jnp.pad(jacobian, ((0, 0), (self.num_base_coordinates, 0)))
+        fixed_point = jnp.cross(basis[:3].T, downstream).T + basis[3:]
+        coincident = jnp.all(upstream == downstream) & jnp.all(fixed_point == 0)
+        return endpoint - upstream, jacobian, coincident
+
     def _threadlike_strain_and_derivative(
         self,
         q_link: Array,

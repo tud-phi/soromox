@@ -24,7 +24,8 @@ from .friction import (
 from .implicit_threadlike import (
     CircularLumenParams,
     ImplicitThreadlikeRouting,
-    RoutingDiscretization,
+    PiecewiseLinearRoutingDiscretization,
+    RoutingGuideSolution,
     RoutingSolution,
     RoutingSolverOptions,
     RoutingSpanParams,
@@ -66,7 +67,8 @@ from .threadlike import (
 __all__ = [
     "CircularLumenParams",
     "ImplicitThreadlikeRouting",
-    "RoutingDiscretization",
+    "PiecewiseLinearRoutingDiscretization",
+    "RoutingGuideSolution",
     "RoutingSolution",
     "RoutingSolverOptions",
     "RoutingSpanParams",

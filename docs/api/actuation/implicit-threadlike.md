@@ -5,20 +5,23 @@ backbone configuration. This is the routing layer of the implicit actuation
 model. The runnable example below supplies tendon forces to the robot dynamics
 and solves static equilibrium with Optimistix.
 
-Install the optional solver dependencies with:
+The routing solver is installed with the core package:
 
 ```bash
-pip install 'soromox[implicit-routing]'
+pip install soromox
 ```
 
-The current implementation supports fixed-base PCS, PlanarPCS, and GVS with
-fixed joints. Segment interfaces must have aligned material frames. It assumes
+PCS, PlanarPCS, and GVS implement the required host interface, including floating
+bases. Moving GVS joints connect prescribed guides on adjacent spans. It assumes
 a taut, frictionless filament with negligible bending stiffness and inertia.
 Compression-driven elastic rods need a separate routing strategy.
 
 ## Parameters and solving
 
-`RoutingSpanParams` holds shared endpoints and connectivity.
+`RoutingSpanParams` holds shared endpoints and connectivity. A **path** is one
+physical tendon or filament associated with an actuator channel. A **span** is
+its optimized portion between two prescribed guides. The **lumen** is the hollow
+interior of a section within which that portion can move.
 `ShortestPathRoutingParams` combines those spans with `CircularLumenParams`.
 All offsets and radii use metres. Indices are zero-based and inclusive.
 
@@ -31,7 +34,7 @@ import jax.numpy as jnp
 
 from soromox.actuation import (
     CircularLumenParams,
-    RoutingDiscretization,
+    PiecewiseLinearRoutingDiscretization,
     RoutingSolverOptions,
     RoutingSpanParams,
     ShortestPathRouting,
@@ -51,7 +54,7 @@ routing = ShortestPathRouting(
         ),
         domain=CircularLumenParams.constant(0.005, robot.num_segments),
     ),
-    discretization=RoutingDiscretization(elements_per_segment=6),
+    discretization=PiecewiseLinearRoutingDiscretization(elements_per_segment=6),
     solver_options=RoutingSolverOptions(max_steps=200, tolerance=1e-8),
 )
 solve = eqx.filter_jit(routing.solve_routing)
@@ -63,9 +66,11 @@ next_solution = solve(robot, next_configuration, initial_guess=solution)
 Each span runs one `slsqp-jax` optimization. Spans assigned to the same path share
 an actuator channel; their lengths are summed in `path_lengths`. A path crossing
 two segments without a guide has one span with indices `(0,)` and `(1,)`. An
-intermediate guide requires two spans assigned to the same path, with matching
-exit/entry offsets at the guide. The solver does not add a guide at an ordinary
-numerical segment boundary.
+intermediate guide requires two spans assigned to the same path. Matching
+exit/entry offsets at a continuous interface describe a shared guide. Distinct
+offsets describe two guides joined by a straight cable. The solver does not add
+a guide at an ordinary numerical segment boundary. Parameters remain alongside
+their strategy classes, matching the existing threadlike actuation API.
 
 `inner_radius` has shape `(robot.num_segments,)`; use `constant` to broadcast a
 single radius. Endpoint arrays have shape `(num_spans, 3)` in material-frame
@@ -128,9 +133,73 @@ adds `solver_options.regularization` to its primal Hessian diagonal (default
 the routing objective.
 
 The initial release exposes routing independently of `ThreadlikeActuator`.
-Floating bases, moving joints, friction, slack, and elastic push-rod mechanics
-are not yet supported. Explicit solver state keeps repeated evaluations and
-batched JAX calls independent.
+Friction, slack, joint obstacle geometry, and elastic push-rod mechanics require
+additional models. Explicit solver state keeps repeated evaluations and batched
+JAX calls independent.
+
+At tangents shorter than `1e-12`, the optimizer uses a finite quadratic
+continuation of the norm so reverse differentiation does not encounter a hidden
+division by zero. These degenerate routes are rejected by the convergence and
+implicit derivative checks. The physical objective is unchanged above that
+threshold.
+
+## Prescribed guides at moving joints
+
+A joint has no modeled thickness. For each physical tendon crossing a moving
+joint, end one span in the upstream section and start another in the downstream
+section, assigning both to the same path. Each offset is expressed in its own
+section's material frame. The joint transform places the two guides relative
+to one another. Their straight connecting cable contributes to both path length
+and the analytical length Jacobian; no joint housing collision check is implied.
+
+For a two-section host with an intervening joint, use a nonzero guide offset
+for guides away from the pivot, or set it to zero for guides at the joint origin:
+
+```python
+guide_offset = 0.004
+offsets = jnp.array([[0.0, guide_offset, 0.0], [0.0, guide_offset, 0.0]])
+spans = RoutingSpanParams(
+    start_offset=offsets,
+    end_offset=offsets,
+    span_path_index=(0, 0),
+    start_segment_index=(0, 1),
+    end_segment_index=(0, 1),
+)
+routing = ShortestPathRouting(
+    ShortestPathRoutingParams(spans, CircularLumenParams.constant(0.01, 2))
+)
+solution = routing.solve_routing(robot, configuration)
+connection = solution.guides[0]
+velocity_jacobian = routing.path_velocity_jacobian(robot, configuration, solution)
+force = -velocity_jacobian.T @ tension
+```
+
+Centered guides remain coincident across purely rotational joints: their
+connecting length and direct joint torque are zero. Offset guides can separate
+under rotation and generate joint torque. Translational joints can separate
+both centered and offset guides. The joint can also lie upstream of an entire
+span; its rigid motion does not change that span's internal routing.
+
+`solution.guides` reports each connection's length, displacement in the upstream
+frame, downstream span index, and `differentiable` flag. If moving guides collapse
+to zero separation, the forward length remains valid but the norm generally has
+no unique derivative. Connections of length at most `1e-12` are flagged and their
+path Jacobian rows return NaNs, unless the guides coincide for every joint state.
+For always coincident guides, configuration derivatives are zero. Differentiation
+with respect to guide geometry at coincidence is outside this smooth convention.
+
+Floating base poses do not affect internal path lengths. `path_length_jacobian`
+uses `robot.num_coordinates` columns, including zero base pose columns.
+`path_velocity_jacobian` uses `robot.num_velocities` columns, including zero base
+velocity columns; use it to compute generalized forces on a floating robot.
+This distinction matters for spatial bases, whose quaternion pose has seven
+coordinates and whose velocity has six components.
+
+Host implementations provide `routing_strain_and_basis`,
+`routing_guide_kinematics`, and `validate_routing_span`. The first two return
+analytical configuration derivatives. The routing strategy does not inspect
+private attributes to select a rod model. A span crossing a moving joint without
+prescribed guides is rejected because there is no joint passage geometry.
 
 ## Runnable hollow-section simulations
 
@@ -141,7 +210,7 @@ OPENBLAS_NUM_THREADS=1 JAX_PLATFORMS=cpu MPLCONFIGDIR=/tmp/soromox-mpl \
   python examples/simulation/pcs/simulate_hollow_tendon_routing.py --check-refinement
 ```
 
-Install `soromox[implicit-routing,examples]` and provide FFmpeg on `PATH`.
+Install `soromox[examples]` and provide FFmpeg on `PATH`.
 The example saves PNG cutaways, routing and offset plots, MP4 animations,
 NPZ trajectories, and `report.json` under
 `examples/simulation/pcs/figures/hollow_tendon_routing/`.
@@ -168,7 +237,9 @@ length_jacobian = routing.path_length_jacobian(robot, configuration, solution)
 generalized_force = -length_jacobian.T @ tension
 ```
 
-The envelope identity gives the first derivative of optimal path length because
+The analytical tangent derivative in the paper's Appendix B, (B2), integrated
+against the unit tangent gives the length Jacobian (equivalently (B5) transposed).
+The envelope identity (26) gives the first derivative of optimal path length because
 these constraints are independent of robot configuration. The supplied solution
 must correspond to the current geometry and configuration. For derivatives of
 this force, retain the solution's dependence on configuration through the

@@ -17,6 +17,7 @@ from soromox.systems.params import BaseSystemParams, _contains_tracer
 from ._routing_solver import (
     RoutingProblem,
     RoutingSolverOptions,
+    _norm_and_unit,
     equalities,
     inequalities,
     inequality_jacobian,
@@ -26,6 +27,15 @@ from ._routing_solver import (
 
 
 def _indices(values):
+    """Normalize routing topology to immutable integer indices.
+
+    Args:
+        values (Any): Input values to normalize into the required array or index
+            representation.
+
+    Returns:
+        result (tuple[int, ...]): Immutable tuple of integer topology indices.
+    """
     values = tuple(values)
     if any(
         not isinstance(value, Integral) or isinstance(value, bool) for value in values
@@ -35,6 +45,16 @@ def _indices(values):
 
 
 def _offsets(values):
+    """Normalize one guide offset or a batch of offsets.
+
+    Args:
+        values (Any): Input values to normalize into the required array or index
+            representation.
+
+    Returns:
+        result (Array): Floating array with shape ``(num_spans, 3)`` for valid inputs; a
+            single three-vector gains a leading axis.
+    """
     array = jnp.asarray(values, dtype=float)
     return array[None, :] if array.shape == (3,) else array
 
@@ -43,8 +63,25 @@ class RoutingSpanParams(BaseSystemParams):
     """Shared endpoints and topology, with one row per guided span.
 
     Offsets have shape ``(num_spans, 3)`` in metres and local ``[0, y, z]``
-    order. Segment indices are inclusive. Spans of each path must be ordered
-    and contiguous; a segment boundary inside a span does not add a guide.
+    order. A path is one physical filament, associated with one actuator
+    channel. A span is the portion between prescribed guides inside one or
+    more continuous sections. Segment indices are inclusive. Spans of each
+    path must be ordered and contiguous; a numerical segment boundary inside
+    a span does not add a guide. Adjacent spans are connected by a straight
+    cable between their prescribed exit and entry guides.
+
+    Parameters live alongside their routing strategy, following the existing
+    threadlike actuation API. This shared class also serves other strategies.
+
+    Attributes:
+        start_offset: Entry guide offsets, shape ``(num_spans, 3)``, in metres
+            in each entry segment's material frame. Longitudinal entries are zero.
+        end_offset: Exit guide offsets, shape ``(num_spans, 3)``, in metres
+            in each exit segment's material frame.
+        span_path_index: Physical path assigned to each span. Indices are
+            contiguous from zero; multiple spans can belong to the same path.
+        start_segment_index: Inclusive entry segment for each span.
+        end_segment_index: Inclusive exit segment for each span.
     """
 
     start_offset: Array = eqx.field(converter=_offsets)
@@ -54,18 +91,39 @@ class RoutingSpanParams(BaseSystemParams):
     end_segment_index: tuple[int, ...] = eqx.field(static=True, converter=_indices)
 
     def __check_init__(self):
+        """Validate parameters after construction.
+
+        Returns:
+            result (None): ``None``. Invalid parameter values raise ValueError or
+                TypeError.
+        """
         self.validate_for_update()
 
     @property
     def num_spans(self) -> int:
+        """Return the number of spans.
+
+        Returns:
+            result (int): Number of guided portions represented by the topology.
+        """
         return len(self.span_path_index)
 
     @property
     def num_paths(self) -> int:
+        """Return the number of physical paths.
+
+        Returns:
+            result (int): Number of physical filament paths represented by the topology.
+        """
         return max(self.span_path_index, default=-1) + 1
 
     def validate_structure(self):
-        """Validate shapes and immutable connectivity without reading tracers."""
+        """Validate shapes and immutable connectivity without reading tracers.
+
+        Returns:
+            result (None): ``None``. Invalid shapes or connectivity raise ValueError or
+                TypeError.
+        """
         expected = (self.num_spans, 3)
         if self.start_offset.shape != expected or self.end_offset.shape != expected:
             raise ValueError(f"Routing offsets must have shape {expected}.")
@@ -89,7 +147,11 @@ class RoutingSpanParams(BaseSystemParams):
             previous[path] = end
 
     def validate_values(self):
-        """Validate finite transverse offsets and shared guide continuity."""
+        """Validate finite transverse guide offsets.
+
+        Returns:
+            result (None): ``None``. Invalid concrete geometry raises ValueError.
+        """
         for offsets in (self.start_offset, self.end_offset):
             if not bool(jnp.all(jnp.isfinite(offsets))) or bool(
                 jnp.any(offsets[:, 0] != 0)
@@ -97,27 +159,33 @@ class RoutingSpanParams(BaseSystemParams):
                 raise ValueError(
                     "Offsets must be finite with zero longitudinal components."
                 )
-        previous = {}
-        for index, path in enumerate(self.span_path_index):
-            if path in previous and not bool(
-                jnp.allclose(
-                    self.start_offset[index],
-                    self.end_offset[previous[path]],
-                    rtol=0,
-                    atol=1e-12,
-                )
-            ):
-                raise ValueError("Adjacent spans must share the same guide offset.")
-            previous[path] = index
 
     def validate_structure_for_robot(self, robot):
-        """Check span bounds against the host segment count."""
+        """Check span bounds against the host segment count.
+
+        Args:
+            robot (SoftRobot): Continuum host providing material strains and guide
+                kinematics.
+
+        Returns:
+            result (None): ``None``. Invalid host topology or unsupported span crossings
+                raise an exception.
+        """
         self.validate_structure()
         if any(end >= robot.num_segments for end in self.end_segment_index):
             raise ValueError("Routing span exceeds the host segment count.")
 
     def validate_values_for_robot(self, robot):
-        """Check transverse geometry in aligned continuum segment frames."""
+        """Check transverse geometry in aligned continuum segment frames.
+
+        Args:
+            robot (SoftRobot): Continuum host providing material strains and guide
+                kinematics.
+
+        Returns:
+            result (None): ``None``. Invalid concrete host or guide geometry raises
+                ValueError.
+        """
         self.validate_values()
         if robot.is_planar and (
             bool(jnp.any(self.start_offset[:, 2] != 0))
@@ -126,7 +194,16 @@ class RoutingSpanParams(BaseSystemParams):
             raise ValueError("Planar routing requires zero z offsets.")
 
     def assert_same_topology(self, other):
-        """Reject changes in span connectivity or parameter type."""
+        """Reject changes in span connectivity or parameter type.
+
+        Args:
+            other (BaseSystemParams): Replacement parameters whose static topology must
+                match this object.
+
+        Returns:
+            result (None): ``None``. Changed parameter types, shapes, or connectivity
+                raise ValueError.
+        """
         if type(other) is not type(self) or any(
             getattr(self, name) != getattr(other, name)
             for name in ("span_path_index", "start_segment_index", "end_segment_index")
@@ -134,7 +211,17 @@ class RoutingSpanParams(BaseSystemParams):
             raise ValueError("Changing routing topology requires reconstruction.")
 
     def replace(self, **updates: Any):
-        """Replace numeric geometry while retaining span topology."""
+        """Replace numeric geometry while retaining span topology.
+
+        Args:
+            updates (Any): Named parameter replacements; numeric geometry can change
+                while
+                topology is retained.
+
+        Returns:
+            result (RoutingSpanParams): New parameter object with validated geometry and
+                unchanged static topology.
+        """
         for name in ("span_path_index", "start_segment_index", "end_segment_index"):
             if name in updates and _indices(updates.pop(name)) != getattr(self, name):
                 raise ValueError("Changing routing topology requires reconstruction.")
@@ -143,46 +230,117 @@ class RoutingSpanParams(BaseSystemParams):
         return result
 
     def _normalize_replacement(self, name, value):
+        """Normalize a replacement parameter value.
+
+        Args:
+            name (str): Name of the parameter being replaced.
+            value (Any): New value for that parameter.
+
+        Returns:
+            result (Any): Replacement value converted to the parameter array
+                representation.
+        """
         return _offsets(value) if name in ("start_offset", "end_offset") else value
 
 
 class CircularLumenParams(BaseSystemParams):
-    """Positive inner radii, in metres, with one value per host segment."""
+    """Circular hollow interiors available to the routed filament.
+
+    The lumen is the empty passage inside a hollow section, bounded by its
+    inner wall. It is centered on the backbone in every material cross section.
+
+    Attributes:
+        inner_radius: Positive inner radii in metres, shape ``(num_segments,)``.
+            Radii are constant within each segment and exclude the wall thickness.
+    """
 
     inner_radius: Array = eqx.field(
         converter=lambda value: jnp.atleast_1d(jnp.asarray(value, dtype=float))
     )
 
     def __check_init__(self):
+        """Validate parameters after construction.
+
+        Returns:
+            result (None): ``None``. Invalid parameter values raise ValueError or
+                TypeError.
+        """
         self.validate_for_update()
 
     @classmethod
     def constant(cls, radius, num_segments: int):
-        """Broadcast one radius to an explicitly sized segment array."""
+        """Broadcast one radius to an explicitly sized segment array.
+
+        Args:
+            radius (float | Array): Positive inner radius in metres.
+            num_segments (int): Number of host segments to receive the radius.
+
+        Returns:
+            result (CircularLumenParams): CircularLumenParams with radius array shaped
+                ``(num_segments,)``.
+        """
         return cls(jnp.full((num_segments,), radius, dtype=float))
 
     def validate_structure(self):
+        """Validate parameter shapes and connectivity.
+
+        Returns:
+            result (None): ``None``. Invalid shapes or connectivity raise ValueError or
+                TypeError.
+        """
         if self.inner_radius.ndim != 1:
             raise ValueError("inner_radius must be a one-dimensional array.")
 
     def validate_values(self):
+        """Validate concrete parameter values.
+
+        Returns:
+            result (None): ``None``. Invalid concrete geometry raises ValueError.
+        """
         if not bool(jnp.all(jnp.isfinite(self.inner_radius) & (self.inner_radius > 0))):
             raise ValueError("Lumen radii must be finite and positive.")
 
     def _normalize_replacement(self, name, value):
+        """Normalize a replacement parameter value.
+
+        Args:
+            name (str): Name of the parameter being replaced.
+            value (Any): New value for that parameter.
+
+        Returns:
+            result (Any): Replacement value converted to the parameter array
+                representation.
+        """
         return jnp.atleast_1d(jnp.asarray(value, dtype=float))
 
 
 class ShortestPathRoutingParams(BaseSystemParams):
-    """Compose shared span geometry with a circular containment domain."""
+    """Compose shared guide geometry with a circular containment domain.
+
+    Attributes:
+        spans: Guides and connectivity shared across routing strategies.
+        domain: Circular lumen radii, with one value per host segment.
+    """
 
     spans: RoutingSpanParams
     domain: CircularLumenParams
 
     def __check_init__(self):
+        """Validate parameters after construction.
+
+        Returns:
+            result (None): ``None``. Invalid parameter values raise ValueError or
+                TypeError.
+        """
         self.validate_for_update()
 
     def validate_structure(self):
+        """Validate parameter shapes and connectivity.
+
+        Returns:
+            result (None): ``None``. Invalid shapes or connectivity raise ValueError or
+                TypeError.
+        """
         if not isinstance(self.spans, RoutingSpanParams) or not isinstance(
             self.domain, CircularLumenParams
         ):
@@ -195,6 +353,11 @@ class ShortestPathRoutingParams(BaseSystemParams):
             raise ValueError("The domain must cover every routed segment.")
 
     def validate_values(self):
+        """Validate concrete parameter values.
+
+        Returns:
+            result (None): ``None``. Invalid concrete geometry raises ValueError.
+        """
         self.spans.validate_values()
         self.domain.validate_values()
         for offsets, indices in (
@@ -206,6 +369,16 @@ class ShortestPathRoutingParams(BaseSystemParams):
                 raise ValueError("Routing endpoints must lie inside the lumen.")
 
     def assert_same_topology(self, other):
+        """Check that a replacement preserves topology.
+
+        Args:
+            other (BaseSystemParams): Replacement parameters whose static topology must
+                match this object.
+
+        Returns:
+            result (None): ``None``. Changed parameter types, shapes, or connectivity
+                raise ValueError.
+        """
         if type(other) is not type(self) or type(other.domain) is not type(self.domain):
             raise ValueError(
                 "Changing routing parameter types requires reconstruction."
@@ -217,13 +390,35 @@ class ShortestPathRoutingParams(BaseSystemParams):
             )
 
     def replace(self, **updates):
+        """Replace numeric parameters while preserving topology.
+
+        Args:
+            updates (Any): Named parameter replacements; numeric geometry can change
+                while
+                topology is retained.
+
+        Returns:
+            result (ShortestPathRoutingParams): New parameter object with validated
+                geometry and unchanged static topology.
+        """
         result = super().replace(**updates)
         self.assert_same_topology(result)
         return result
 
 
-class RoutingDiscretization(eqx.Module):
-    """Piecewise linear offset-derivative basis, independent of strain bases."""
+class PiecewiseLinearRoutingDiscretization(eqx.Module):
+    """Piecewise linear slope basis, independent of the host strain basis.
+
+    Nodal values describe transverse offset derivatives along the backbone.
+    Integrating this basis gives piecewise quadratic offsets.
+
+    Attributes:
+        elements_per_segment: Number of uniform slope elements in each segment.
+        quadrature_order: Gauss points per element for length integration.
+        constraint_samples_per_element: Gauss points per element for wall constraints.
+        validation_samples_per_element: Uniform checking intervals per element;
+            both endpoints are included, giving one more point than intervals.
+    """
 
     elements_per_segment: int = eqx.field(static=True, default=6)
     quadrature_order: int = eqx.field(static=True, default=2)
@@ -231,6 +426,12 @@ class RoutingDiscretization(eqx.Module):
     validation_samples_per_element: int = eqx.field(static=True, default=9)
 
     def __check_init__(self):
+        """Validate parameters after construction.
+
+        Returns:
+            result (None): ``None``. Invalid parameter values raise ValueError or
+                TypeError.
+        """
         for name in (
             "elements_per_segment",
             "quadrature_order",
@@ -250,6 +451,21 @@ class RoutingSpanSolution(eqx.Module):
     normalized objectives/constraints and the nonpositive wall convention.
     ``dense_wall_violation`` is measured in metres; sampled convergence alone
     does not certify containment between samples.
+
+    Attributes:
+        coefficients: Physical transverse offset slopes, shape ``(nodes, 1 or 2)``.
+        knots: Global reference backbone coordinates in metres, shape ``(nodes,)``.
+        length: Integrated span length in metres.
+        equality_multipliers: Endpoint constraint multipliers, shape ``(1 or 2,)``.
+        inequality_multipliers: Wall multipliers, shape ``(wall_samples,)``.
+        active_mask: Active sampled wall constraints, shape ``(wall_samples,)``.
+        converged: Scalar boolean from independent optimality and feasibility checks.
+        iterations: Scalar SLSQP iteration count.
+        primal_residual: Maximum normalized endpoint or wall constraint violation.
+        stationarity_residual: Maximum absolute normalized Lagrangian gradient.
+        complementarity_residual: Maximum absolute wall residual times multiplier.
+        dense_wall_violation: Maximum sampled penetration in metres on the checking
+            grid.
     """
 
     coefficients: Array
@@ -267,36 +483,181 @@ class RoutingSpanSolution(eqx.Module):
 
 
 class RoutingSolution(eqx.Module):
-    """Per-span solutions and lengths reduced to actuator path order."""
+    """Solved spans and connecting guides, grouped into physical filament paths.
+
+    Attributes:
+        spans: Optimized portions between prescribed guides, in input span order.
+        path_lengths: Total lengths in metres, shape ``(num_paths,)``, including
+            straight connections between adjacent spans of the same path.
+        guides: Straight connections in downstream span order. An empty tuple
+            means every physical path consists of a single span.
+    """
 
     spans: tuple[RoutingSpanSolution, ...]
     path_lengths: Array
+    guides: tuple[RoutingGuideSolution, ...] = ()
 
     @property
     def converged(self):
-        return jnp.all(jnp.asarray([span.converged for span in self.spans], dtype=bool))
+        """Check the independent convergence diagnostics.
+
+        Returns:
+            result (Array): Scalar boolean indicating that every span satisfies the
+                sampled solve checks and guide lengths are finite.
+        """
+        return jnp.all(
+            jnp.asarray([span.converged for span in self.spans], dtype=bool)
+        ) & jnp.all(
+            jnp.asarray(
+                [jnp.isfinite(guide.length) for guide in self.guides], dtype=bool
+            )
+        )
+
+
+class RoutingGuideSolution(eqx.Module):
+    """Straight connection between prescribed guides on adjacent spans.
+
+    Attributes:
+        downstream_span: Index of the span entered after this connection.
+        length: Cable length in metres, including separation due to joint motion.
+        displacement: Downstream guide minus upstream guide in the upstream
+            material frame, shape ``(3,)``.
+        differentiable: Whether the connection has a configuration derivative.
+            Always coincident guides have zero length and derivative. A moving
+            connection collapsing to zero length has an undefined derivative.
+    """
+
+    downstream_span: int = eqx.field(static=True)
+    length: Array
+    displacement: Array
+    differentiable: Array
+
+
+@jax.custom_jvp
+def _guide_length(displacement, coincident):
+    """Evaluate exact guide distance with explicit treatment of coincidence.
+
+    Args:
+        displacement (Array): Guide displacement, shape ``(3,)``, in metres.
+        coincident (Array): Whether the prescribed guides coincide for every
+            configuration, independently of the current joint coordinates.
+
+    Returns:
+        result (Array): Scalar distance. Configuration derivatives are zero for always
+            coincident guides and NaN for a collapsed moving connection.
+    """
+    del coincident
+    squared = jnp.sum(displacement**2)
+    return jnp.where(squared > 0, jnp.sqrt(jnp.where(squared > 0, squared, 1)), 0)
+
+
+@_guide_length.defjvp
+def _guide_length_jvp(primals, tangents):
+    """Differentiate a guide distance away from a collapsing connection.
+
+    Args:
+        primals (tuple): Guide displacement and invariant coincidence flag.
+        tangents (tuple): Displacement perturbation and unused boolean tangent.
+
+    Returns:
+        result (tuple[Array, Array]): Scalar distance and its directional derivative.
+    """
+    displacement, coincident = primals
+    displacement_tangent, _ = tangents
+    length = _guide_length(displacement, coincident)
+    direction = displacement / jnp.where(length > 1e-12, length, 1)
+    direction = jnp.where(coincident, 0, direction)
+    direction = direction * jnp.where(coincident | (length > 1e-12), 1, jnp.nan)
+    return length, jnp.dot(direction, displacement_tangent)
 
 
 class ImplicitThreadlikeRouting(eqx.Module):
-    """Interface for configuration-dependent routing with explicit solve state."""
+    """Interface for configuration-dependent filament routing.
+
+    A path represents one physical filament; a span is a portion between
+    prescribed guides. Solvers return their state explicitly for warm starts.
+
+    Attributes:
+        spans: Shared guide geometry and mapping of spans to physical paths.
+    """
 
     @property
     @abstractmethod
-    def spans(self) -> RoutingSpanParams: ...
+    def spans(self) -> RoutingSpanParams:
+        """Return shared endpoints and connectivity.
+
+        Returns:
+            result (RoutingSpanParams): RoutingSpanParams containing guide offsets and
+                span-to-path connectivity.
+        """
+        ...
 
     @abstractmethod
-    def validate_structure_for_robot(self, robot) -> None: ...
+    def validate_structure_for_robot(self, robot) -> None:
+        """Validate static host compatibility and span connectivity.
+
+        Args:
+            robot (SoftRobot): Continuum host providing material strains and guide
+                kinematics.
+
+        Returns:
+            result (None): ``None``. Invalid host topology or unsupported span crossings
+                raise an exception.
+        """
+        ...
 
     @abstractmethod
-    def validate_values_for_robot(self, robot) -> None: ...
+    def validate_values_for_robot(self, robot) -> None:
+        """Validate concrete geometry for the host.
+
+        Args:
+            robot (SoftRobot): Continuum host providing material strains and guide
+                kinematics.
+
+        Returns:
+            result (None): ``None``. Invalid concrete host or guide geometry raises
+                ValueError.
+        """
+        ...
 
     @abstractmethod
     def solve_routing(
         self, robot, configuration, *, initial_guess=None
-    ) -> RoutingSolution: ...
+    ) -> RoutingSolution:
+        """Resolve all physical paths for a robot configuration.
+
+        Args:
+            robot (SoftRobot): Continuum host providing material strains and guide
+                kinematics.
+            configuration (Array): Generalized configuration, shape
+                ``(robot.num_coordinates,)``.
+            initial_guess (RoutingSolution | None): Previous RoutingSolution with
+                matching span topology, or
+                ``None``.
+
+        Returns:
+            result (RoutingSolution): RoutingSolution with optimized spans, guide
+                connections, and total path lengths.
+        """
+        ...
 
 
 def _basis(knots, points, dimension):
+    """Build the integrated piecewise linear slope basis.
+
+    Args:
+        knots (Array): Strictly increasing global reference backbone coordinates, shape
+            ``(nodes,)``.
+        points (Array): Global reference backbone sample coordinates in metres, shape
+            ``(points,)``.
+        dimension (int): Number of transverse components: one for planar routing or two
+            for
+            spatial routing.
+
+    Returns:
+        result (tuple[Array, Array]): Integrated offset and slope basis arrays, each
+            shaped ``(points, 3, nodes * dimension)``.
+    """
     widths = jnp.diff(knots)
     fraction = jnp.clip((points[:, None] - knots[:-1]) / widths, 0, 1)
     integrated = jnp.pad(
@@ -311,6 +672,15 @@ def _basis(knots, points, dimension):
     ] * jax.nn.one_hot(index + 1, knots.size)
 
     def expand(scalar):
+        """Embed scalar basis values in transverse spatial components.
+
+        Args:
+            scalar (Array): Scalar basis values, shape ``(points, nodes)``.
+
+        Returns:
+            result (Array): Spatial basis with shape ``(points, 3, nodes * dimension)``
+                and zero longitudinal row.
+        """
         transverse = jnp.einsum("pn,ij->pinj", scalar, jnp.eye(dimension)).reshape(
             points.size, dimension, -1
         )
@@ -320,6 +690,17 @@ def _basis(knots, points, dimension):
 
 
 def _samples(knots, order):
+    """Construct Gauss quadrature on each knot interval.
+
+    Args:
+        knots (Array): Strictly increasing global reference backbone coordinates, shape
+            ``(nodes,)``.
+        order (int): Positive Gauss quadrature order per knot interval.
+
+    Returns:
+        result (tuple[Array, Array]): Flattened Gauss sample coordinates and integration
+            weights in metres, each shaped ``((nodes - 1) * order,)``.
+    """
     nodes, weights = np.polynomial.legendre.leggauss(order)
     widths = jnp.diff(knots)
     points = knots[:-1, None] + widths[:, None] * jnp.asarray((nodes + 1) / 2)
@@ -327,34 +708,39 @@ def _samples(knots, order):
 
 
 def _host_strains(robot, configuration, segment_indices, points):
-    if hasattr(robot, "_eval_B_segment"):
-        gathered = robot._min_size_gathered(configuration)
+    """Evaluate material strains through the host's routing interface.
 
-        def evaluate(segment, position):
-            local = (
-                position - robot.segment_end_positions[segment]
-            ) / robot.segment_lengths[segment]
-            basis = robot._eval_B_segment(segment, local[None])[0]
-            if robot.scale_rotational_basis_by_length:
-                basis = basis.at[:3].divide(robot.segment_lengths[segment])
-            return basis @ gathered[segment, 1] + robot.xi_ref_Xs[segment, 0]
+    Args:
+        robot (SoftRobot): Continuum host implementing ``routing_strain_and_basis``.
+        configuration (Array): Generalized configuration, shape ``(num_coordinates,)``.
+        segment_indices (Array): Segment indices with shape ``(num_points,)``.
+        points (Array): Global backbone coordinates with shape ``(num_points,)``.
 
-        return jax.vmap(evaluate)(segment_indices, points)
-    strains = robot.strain(configuration).reshape(robot.num_segments, -1)[
-        segment_indices
-    ]
-    if robot.is_planar:
-        spatial = jnp.zeros((points.size, 6), dtype=strains.dtype)
-        return spatial.at[:, 2:5].set(strains)
-    return strains
+    Returns:
+        result (Array): Strains in angular/linear spatial order, shape ``(num_points,
+            6)``.
+    """
+    return robot.routing_strain_and_basis(configuration, segment_indices, points)[0]
 
 
 class ShortestPathRouting(ImplicitThreadlikeRouting):
-    """Shortest feasible routing on fixed-base PCS, PlanarPCS, or fixed-joint GVS.
+    """Shortest feasible paths through hollow sections and prescribed guides.
 
-    The forward solve uses the optional ``implicit-routing`` dependencies.
+    A path represents one physical tendon or filament. A span is the portion
+    between two prescribed guides, optimized inside one or more continuous
+    hollow sections. Adjacent spans of a path are connected by a straight cable.
+    A lumen is the hollow interior available to the filament.
+
+    The host supplies material strains, their basis, and joint guide kinematics.
+    Floating bases and moving joints are supported. Spans must end at moving
+    joints so the upstream and downstream guide offsets can be prescribed.
     Derivatives solve the converged KKT equations for a fixed active set.
-    Slack, friction, movable joints, and rod bending stiffness are excluded.
+    Slack, friction, joint obstacle geometry, and rod bending stiffness are excluded.
+
+    Attributes:
+        params: Guide offsets, span topology, and circular lumen dimensions.
+        discretization: Piecewise linear slope mesh and sampling counts.
+        solver_options: Dimensionless solver and sensitivity tolerances.
 
     References:
         Mathew, A. T., Alkayas, A. Y., Alshehhi, A. A. S., Adamu, Y. A.,
@@ -365,8 +751,8 @@ class ShortestPathRouting(ImplicitThreadlikeRouting):
     """
 
     params: ShortestPathRoutingParams
-    discretization: RoutingDiscretization = eqx.field(
-        default_factory=RoutingDiscretization
+    discretization: PiecewiseLinearRoutingDiscretization = eqx.field(
+        default_factory=PiecewiseLinearRoutingDiscretization
     )
     solver_options: RoutingSolverOptions = eqx.field(
         default_factory=RoutingSolverOptions
@@ -374,30 +760,60 @@ class ShortestPathRouting(ImplicitThreadlikeRouting):
 
     @property
     def spans(self):
+        """Return the shared span parameters.
+
+        Returns:
+            result (RoutingSpanParams): RoutingSpanParams containing guide offsets and
+                span-to-path connectivity.
+        """
         return self.params.spans
 
     def with_params(self, params: ShortestPathRoutingParams):
+        """Create a routing instance with replacement parameters.
+
+        Args:
+            params (ShortestPathRoutingParams): Replacement ShortestPathRoutingParams
+                with the same topology.
+
+        Returns:
+            result (ShortestPathRouting): New routing instance with updated geometry and
+                the same solver and mesh settings.
+        """
         self.params.assert_same_topology(params)
         params.validate_for_update()
         return eqx.tree_at(lambda routing: routing.params, self, params)
 
     def validate_structure_for_robot(self, robot):
-        from soromox.systems import GVS, PCS, PlanarPCS
+        """Check host topology and span compatibility.
 
-        if not isinstance(robot, (GVS, PCS, PlanarPCS)):
-            raise TypeError("ShortestPathRouting requires GVS, PCS, or PlanarPCS.")
-        if robot.floating_base:
-            raise ValueError("Implicit routing currently requires a fixed-base host.")
-        if isinstance(robot, GVS) and any(
-            segment.joint.type != "fixed" for segment in robot.structure.segments
-        ):
-            raise ValueError("Implicit GVS routing currently requires fixed joints.")
+        Args:
+            robot (SoftRobot): Continuum host providing material strains and guide
+                kinematics.
+
+        Returns:
+            result (None): ``None``. Invalid host topology or unsupported span crossings
+                raise an exception.
+        """
         self.params.validate_structure()
         self.spans.validate_structure_for_robot(robot)
+        for start, end in zip(
+            self.spans.start_segment_index, self.spans.end_segment_index
+        ):
+            robot.validate_routing_span(start, end)
         if self.params.domain.inner_radius.shape != (robot.num_segments,):
             raise ValueError("Lumen radii must contain one value per host segment.")
 
     def validate_values_for_robot(self, robot):
+        """Validate concrete host and guide geometry.
+
+        Args:
+            robot (SoftRobot): Continuum host providing material strains and guide
+                kinematics.
+
+        Returns:
+            result (None): ``None``. Invalid concrete host or guide geometry raises
+                ValueError.
+        """
         self.params.validate_values()
         self.spans.validate_values_for_robot(robot)
         if not bool(
@@ -409,13 +825,16 @@ class ShortestPathRouting(ImplicitThreadlikeRouting):
         """Solve all spans and return lengths, coefficients, and diagnostics.
 
         Args:
-            robot: Fixed-base continuum host with aligned segment interfaces.
-            configuration: Host generalized coordinates.
-            initial_guess: Previous ``RoutingSolution`` with identical topology.
+            robot (SoftRobot): Continuum host implementing the material routing
+                interface.
+            configuration (Array): Host generalized coordinates.
+            initial_guess (RoutingSolution | None): Previous ``RoutingSolution`` with
+                identical topology.
 
         Returns:
-            A ``RoutingSolution``. Inspect ``converged`` and dense wall violations
-            before using a route. Invalid input geometry raises eagerly.
+            result (RoutingSolution): A ``RoutingSolution``. Inspect ``converged`` and
+                dense wall violations before using a route. Invalid input geometry
+                raises eagerly.
         """
         configuration = jnp.asarray(configuration, dtype=float)
         self.validate_structure_for_robot(robot)
@@ -432,6 +851,8 @@ class ShortestPathRouting(ImplicitThreadlikeRouting):
                 "initial_guess must be a RoutingSolution with matching spans."
             )
         solutions = []
+        guides = []
+        previous = {}
         lengths = jnp.zeros(self.spans.num_paths, dtype=configuration.dtype)
         for span_index, path_index in enumerate(self.spans.span_path_index):
             guess = (
@@ -442,9 +863,43 @@ class ShortestPathRouting(ImplicitThreadlikeRouting):
             solution = self._solve_span(robot, configuration, span_index, guess)
             solutions.append(solution)
             lengths = lengths.at[path_index].add(solution.length)
-        return RoutingSolution(tuple(solutions), lengths)
+            if path_index in previous:
+                displacement, _, coincident = robot.routing_guide_kinematics(
+                    configuration,
+                    self.spans.start_segment_index[span_index],
+                    self.spans.end_offset[previous[path_index]],
+                    self.spans.start_offset[span_index],
+                )
+                distance = _guide_length(displacement, coincident)
+                guides.append(
+                    RoutingGuideSolution(
+                        span_index,
+                        distance,
+                        displacement,
+                        coincident | (distance > 1e-12),
+                    )
+                )
+                lengths = lengths.at[path_index].add(distance)
+            previous[path_index] = span_index
+        return RoutingSolution(tuple(solutions), lengths, tuple(guides))
 
     def _solve_span(self, robot, configuration, span_index, initial_guess):
+        """Assemble, optimize, and validate one guided span.
+
+        Args:
+            robot (SoftRobot): Continuum host providing material strains and guide
+                kinematics.
+            configuration (Array): Generalized configuration, shape
+                ``(robot.num_coordinates,)``.
+            span_index (int): Zero-based index of the requested span.
+            initial_guess (Array | None): Previous physical slope coefficients, shape
+                ``(nodes, 1 or
+                2)``, or ``None``.
+
+        Returns:
+            result (RoutingSpanSolution): RoutingSpanSolution containing physical
+                coefficients, length, multipliers, and independent residual checks.
+        """
         start = self.spans.start_segment_index[span_index]
         end = self.spans.end_segment_index[span_index]
         lengths = robot.segment_length
@@ -568,7 +1023,19 @@ class ShortestPathRouting(ImplicitThreadlikeRouting):
         )
 
     def span_offsets(self, solution: RoutingSolution, span_index: int, points: Array):
-        """Sample material-frame offsets at global backbone coordinates."""
+        """Sample material-frame offsets at global backbone coordinates.
+
+        Args:
+            solution (RoutingSolution): RoutingSolution containing resolved spans and
+                solver diagnostics.
+            span_index (int): Zero-based index of the requested span.
+            points (Array): Global reference backbone sample coordinates in metres,
+                shape
+                ``(points,)``.
+
+        Returns:
+            result (Array): Material-frame offsets in metres with shape ``(points, 3)``.
+        """
         span = solution.spans[span_index]
         basis, _ = _basis(
             span.knots, jnp.atleast_1d(points), span.coefficients.shape[1]
@@ -583,51 +1050,108 @@ class ShortestPathRouting(ImplicitThreadlikeRouting):
         The envelope identity applies because the material-frame endpoint and
         wall constraints are independent of configuration. The caller must
         supply a converged solution for this robot, configuration, and routing.
-        Positive tendon tensions produce ``-jacobian.T @ tension``.
+        On a fixed base host, positive tensions produce ``-jacobian.T @ tension``.
+        Use the velocity Jacobian to compute forces on floating base hosts.
 
         This computes a partial derivative holding routing coefficients fixed.
         Differentiating this method again requires the supplied solution to
         retain its dependence on configuration through ``solve_routing``.
-        Returns an array shaped ``(num_paths, robot.num_coordinates)`` and NaNs
-        when the supplied solution has not converged.
+        This implements the paper's tangent derivative (B2) integrated against
+        the unit tangent, equivalently the transpose of (B5), with the envelope
+        identity (26). It does not invoke autodiff to evaluate this Jacobian.
+
+        Args:
+            robot (SoftRobot): Continuum host implementing the material routing
+                interface.
+            configuration (Array): Generalized coordinates, shape
+                ``(num_coordinates,)``.
+            solution (RoutingSolution): Converged routing for this geometry and
+                configuration.
+
+        Returns:
+            result (Array): Length Jacobian, shape ``(num_paths, num_coordinates)``.
+                Floating base columns vanish. Failed span solves and collapsed moving
+                guide connections produce NaNs in the affected path row. Spatial
+                floating systems use quaternion configuration coordinates; to obtain
+                forces in velocity coordinates, use :meth:`path_velocity_jacobian`.
         """
         self.validate_structure_for_robot(robot)
         if len(solution.spans) != self.spans.num_spans:
             raise ValueError("solution must have matching routing spans.")
 
-        def lengths(current_configuration):
-            values = jnp.zeros(self.spans.num_paths, dtype=current_configuration.dtype)
-            for index, path in enumerate(self.spans.span_path_index):
-                span = solution.spans[index]
-                points, weights = _samples(
-                    span.knots, self.discretization.quadrature_order
-                )
-                basis, derivative = _basis(
-                    span.knots, points, span.coefficients.shape[1]
-                )
-                coefficients = span.coefficients.ravel()
-                offset = self.spans.start_offset[index] + jnp.einsum(
-                    "pin,n->pi", basis, coefficients
-                )
-                offset_derivative = jnp.einsum("pin,n->pi", derivative, coefficients)
-                segments = jnp.repeat(
-                    jnp.arange(
+        configuration = jnp.asarray(configuration, dtype=float)
+        if configuration.shape != (robot.num_coordinates,):
+            raise ValueError("configuration must match the host coordinate count.")
+        jacobian = jnp.zeros(
+            (self.spans.num_paths, robot.num_coordinates), dtype=configuration.dtype
+        )
+        previous = {}
+        for index, path in enumerate(self.spans.span_path_index):
+            span = solution.spans[index]
+            points, weights = _samples(span.knots, self.discretization.quadrature_order)
+            basis, derivative = _basis(span.knots, points, span.coefficients.shape[1])
+            coefficients = span.coefficients.ravel()
+            offset = self.spans.start_offset[index] + jnp.einsum(
+                "pin,n->pi", basis, coefficients
+            )
+            offset_derivative = jnp.einsum("pin,n->pi", derivative, coefficients)
+            segments = jnp.repeat(
+                jnp.arange(
+                    self.spans.start_segment_index[index],
+                    self.spans.end_segment_index[index] + 1,
+                ),
+                self.discretization.elements_per_segment
+                * self.discretization.quadrature_order,
+            )
+            strains, strain_basis = robot.routing_strain_and_basis(
+                configuration, segments, points
+            )
+            tangent = (
+                offset_derivative + jnp.cross(strains[:, :3], offset) + strains[:, 3:]
+            )
+            norms, unit = _norm_and_unit(tangent)
+            density = jnp.concatenate((jnp.cross(offset, unit), unit), axis=-1)
+            gradient = jnp.einsum("p,pi,pij->j", weights, density, strain_basis)
+            gradient = jnp.where(
+                span.converged & jnp.all(norms > 1e-12), gradient, jnp.nan
+            )
+            jacobian = jacobian.at[path].add(gradient)
+            if path in previous:
+                displacement, guide_jacobian, coincident = (
+                    robot.routing_guide_kinematics(
+                        configuration,
                         self.spans.start_segment_index[index],
-                        self.spans.end_segment_index[index] + 1,
-                    ),
-                    self.discretization.elements_per_segment
-                    * self.discretization.quadrature_order,
+                        self.spans.end_offset[previous[path]],
+                        self.spans.start_offset[index],
+                    )
                 )
-                strains = _host_strains(robot, current_configuration, segments, points)
-                tangent = (
-                    offset_derivative
-                    + jnp.cross(strains[:, :3], offset)
-                    + strains[:, 3:]
-                )
-                values = values.at[path].add(
-                    jnp.dot(weights, jnp.linalg.norm(tangent, axis=-1))
-                )
-            return values
+                distance = _guide_length(displacement, coincident)
+                unit = displacement / jnp.where(distance > 1e-12, distance, 1)
+                gradient = jnp.where(coincident, 0, unit @ guide_jacobian)
+                gradient = jnp.where(coincident | (distance > 1e-12), gradient, jnp.nan)
+                jacobian = jacobian.at[path].add(gradient)
+            previous[path] = index
+        return jacobian
 
-        jacobian = jax.jacfwd(lengths)(jnp.asarray(configuration, dtype=float))
-        return jnp.where(solution.converged, jacobian, jnp.nan)
+    def path_velocity_jacobian(self, robot, configuration, solution: RoutingSolution):
+        """Map generalized velocities to routed path length rates.
+
+        Args:
+            robot (SoftRobot): Continuum host with configuration and velocity
+                dimensions.
+            configuration (Array): Generalized coordinates, shape
+                ``(num_coordinates,)``.
+            solution (RoutingSolution): Converged routing for this geometry and
+                configuration.
+
+        Returns:
+            result (Array): Matrix with shape ``(num_paths, num_velocities)``. Internal
+                columns match the length Jacobian and floating base velocity columns are
+                zero. Tendon forces are ``-matrix.T @ tension``. This handles the
+                different quaternion configuration and spatial velocity dimensions.
+        """
+        jacobian = self.path_length_jacobian(robot, configuration, solution)
+        return jnp.pad(
+            jacobian[:, robot.num_base_coordinates :],
+            ((0, 0), (robot.num_base_velocities, 0)),
+        )

@@ -33,7 +33,7 @@ from matplotlib.lines import Line2D
 
 from soromox.actuation import (
     CircularLumenParams,
-    RoutingDiscretization,
+    PiecewiseLinearRoutingDiscretization,
     RoutingSolverOptions,
     RoutingSpanParams,
     ShortestPathRouting,
@@ -60,7 +60,16 @@ CLEARANCE_TOLERANCE = 1e-4
 
 
 def build_model(case="same-side", elements=6):
-    """Build a bending-only PCS tube with exact annular stiffness and inertia."""
+    """Build a bending-only PCS tube with exact annular stiffness and inertia.
+
+    Args:
+        case (str): Anchor layout: ``"same-side"`` or ``"opposed"``.
+        elements (int): Routing elements per hollow section.
+
+    Returns:
+        result (tuple[PlanarPCS, ShortestPathRouting]): PlanarPCS robot with annular
+            mechanics and its ShortestPathRouting instance.
+    """
     area = np.pi * (OUTER_RADIUS**2 - INNER_RADIUS**2)
     moment = np.pi / 4 * (OUTER_RADIUS**4 - INNER_RADIUS**4)
     stiffness = LENGTH * jnp.diag(
@@ -98,7 +107,7 @@ def build_model(case="same-side", elements=6):
             RoutingSpanParams(offsets, offsets, (0, 1), (0, 1), (0, 1)),
             CircularLumenParams.constant(INNER_RADIUS, 2),
         ),
-        RoutingDiscretization(
+        PiecewiseLinearRoutingDiscretization(
             elements_per_segment=elements,
             quadrature_order=3,
             constraint_samples_per_element=4,
@@ -110,7 +119,15 @@ def build_model(case="same-side", elements=6):
 
 
 def tensions_at(time_value, case):
-    """Positive preload, smooth pulls, and a return to preload for recoil."""
+    """Positive preload, smooth pulls, and a return to preload for recoil.
+
+    Args:
+        time_value (Array): Physical time in seconds.
+        case (str): Anchor layout: ``"same-side"`` or ``"opposed"``.
+
+    Returns:
+        result (Array): Strictly positive tension vector in newtons, shape ``(2,)``.
+    """
     times = jnp.array([0.0, 0.25, 0.7, 1.5, 1.9, 2.35, 3.0, 3.4, 4.0, 6.0])
     if case == "same-side":
         values = jnp.array(
@@ -153,7 +170,16 @@ def tensions_at(time_value, case):
 
 
 def route_diagnostics(solution):
-    """Collect independent optimization and dense containment checks."""
+    """Collect independent optimization and dense containment checks.
+
+    Args:
+        solution (RoutingSolution): RoutingSolution containing resolved spans and solver
+            diagnostics.
+
+    Returns:
+        result (Array): Four-entry array: convergence, maximum dense wall penetration in
+            metres, maximum stationarity residual, and maximum iteration count.
+    """
     return jnp.array(
         [
             solution.converged,
@@ -165,12 +191,39 @@ def route_diagnostics(solution):
 
 
 def solve_equilibrium(robot, routing, tensions):
-    """Solve independent static bending balances with Optimistix bisection."""
+    """Solve independent static bending balances with Optimistix bisection.
+
+    Args:
+        robot (SoftRobot): Continuum host providing material strains and guide
+            kinematics.
+        routing (ShortestPathRouting): ShortestPathRouting instance for the two hollow
+            sections.
+        tensions (Array): Positive tendon tensions in newtons, shape ``(2,)``.
+
+    Returns:
+        result (tuple[Array, RoutingSolution, Array]): Equilibrium angles,
+            RoutingSolution, and force-balance residual, with angle and residual arrays
+            shaped ``(2,)``.
+    """
     stiffness = robot.stiffness_matrix()
     configurations = []
     for section in range(2):
 
         def residual(angle, args, section=section):
+            """Evaluate one section's static force balance.
+
+            Args:
+                angle (Array): Bending coordinate of the section being balanced, in
+                    radians.
+                args (Any): Unused solver arguments required by the Optimistix callback
+                    interface.
+                section (int): Zero-based section index whose equilibrium is being
+                    solved.
+
+            Returns:
+                result (Array): Scalar generalized force imbalance for the selected
+                    section.
+            """
             del args
             configuration = jnp.zeros(2).at[section].set(angle)
             solution = routing.solve_routing(robot, configuration)
@@ -196,7 +249,20 @@ def solve_equilibrium(robot, routing, tensions):
 
 
 def make_step(robot, routing, case, timestep):
-    """Compile RK4 with a fresh routing solve at every force evaluation."""
+    """Compile RK4 with a fresh routing solve at every force evaluation.
+
+    Args:
+        robot (SoftRobot): Continuum host providing material strains and guide
+            kinematics.
+        routing (ShortestPathRouting): ShortestPathRouting instance for the two hollow
+            sections.
+        case (str): Anchor layout: ``"same-side"`` or ``"opposed"``.
+        timestep (float): Positive integration time step in seconds.
+
+    Returns:
+        result (Callable): JIT-compiled callable advancing time, state, and routing
+            guess by one RK4 step.
+    """
     stiffness = robot.stiffness_matrix()
     damping = robot.damping_matrix(jnp.zeros(2))
     stage_times = jnp.array([0.0, 0.5, 0.5, 1.0])
@@ -206,7 +272,34 @@ def make_step(robot, routing, case, timestep):
 
     @jax.jit
     def step(time_value, state, guess):
+        """Advance the dynamic state by one RK4 time step.
+
+        Args:
+            time_value (Array): Physical time in seconds.
+            state (Array): Two angles, two velocities, accumulated work, and
+                dissipation, shape
+                ``(6,)``.
+            guess (RoutingSolution): Routing solution from the preceding force
+                evaluation.
+
+        Returns:
+            result (tuple[Array, RoutingSolution, Array]): Updated six-entry state, last
+                routing solution, and per-stage diagnostics with shape ``(4, 4)``.
+        """
+
         def stage(carry, index):
+            """Evaluate one RK4 stage with a fresh routing optimization.
+
+            Args:
+                carry (tuple): Accumulated RK stage derivatives and the latest routing
+                    solution.
+                index (Array): Zero-based RK stage index.
+
+            Returns:
+                result (tuple[tuple[Array, RoutingSolution], Array]): Updated stage
+                    derivatives and routing solution, together with this stage's four
+                    diagnostics.
+            """
             derivatives, previous = carry
             current = state + timestep * (stage_weights[index] @ derivatives)
             configuration, velocity = current[:2], current[2:4]
@@ -248,7 +341,24 @@ def make_step(robot, routing, case, timestep):
 
 
 def simulate(robot, routing, case, duration, timestep, save_dt=0.04):
-    """Integrate physical inertia, Coriolis, elasticity, damping, and tendon work."""
+    """Integrate physical inertia, Coriolis, elasticity, damping, and tendon work.
+
+    Args:
+        robot (SoftRobot): Continuum host providing material strains and guide
+            kinematics.
+        routing (ShortestPathRouting): ShortestPathRouting instance for the two hollow
+            sections.
+        case (str): Anchor layout: ``"same-side"`` or ``"opposed"``.
+        duration (float): Total simulated duration in seconds.
+        timestep (float): Positive integration time step in seconds.
+        save_dt (float): Interval between saved samples in seconds; must be divisible by
+            timestep.
+
+    Returns:
+        result (tuple[np.ndarray, np.ndarray, dict]): Sample times, states shaped
+            ``(samples, 6)``, and a dictionary of runtime, convergence, clearance, and
+            energy checks.
+    """
     initial_configuration, guess, _ = solve_equilibrium(
         robot, routing, tensions_at(0.0, case)
     )
@@ -289,6 +399,15 @@ def simulate(robot, routing, case, duration, timestep, save_dt=0.04):
 
     @jax.jit
     def mechanical_energy(state_value):
+        """Evaluate the mechanical energy of a saved state.
+
+        Args:
+            state_value (Array): State containing two angles, two velocities, work, and
+                dissipation, shape ``(6,)``.
+
+        Returns:
+            result (Array): Scalar kinetic plus elastic energy in joules.
+        """
         configuration, velocity = state_value[:2], state_value[2:4]
         inertia = robot.dynamics_terms(configuration, velocity, backend="jax")[0]
         return (
@@ -313,7 +432,19 @@ def simulate(robot, routing, case, duration, timestep, save_dt=0.04):
 
 
 def sample_frames(robot, routing, configurations):
-    """Resolve each saved configuration and transform offsets into world space."""
+    """Resolve each saved configuration and transform offsets into world space.
+
+    Args:
+        robot (SoftRobot): Continuum host providing material strains and guide
+            kinematics.
+        routing (ShortestPathRouting): ShortestPathRouting instance for the two hollow
+            sections.
+        configurations (Array): Saved bending configurations, shape ``(frames, 2)``.
+
+    Returns:
+        result (tuple[list[tuple], np.ndarray]): List of resolved drawing frames and
+            per-frame diagnostics shaped ``(frames, 4)``.
+    """
     points = jnp.stack(
         [
             jnp.linspace(section * LENGTH, (section + 1) * LENGTH, 121)
@@ -323,6 +454,16 @@ def sample_frames(robot, routing, configurations):
 
     @jax.jit
     def sample(configuration):
+        """Resolve and transform one configuration for drawing.
+
+        Args:
+            configuration (Array): Generalized configuration, shape
+                ``(robot.num_coordinates,)``.
+
+        Returns:
+            result (tuple[tuple, Array]): Section centerlines, normals, tendon points,
+                reference routes, and offsets, plus four routing diagnostics.
+        """
         solution = routing.solve_routing(robot, configuration)
         centerlines, normals, tendons, references, offsets = [], [], [], [], []
         for section in range(2):
@@ -359,7 +500,19 @@ def sample_frames(robot, routing, configurations):
 
 
 def draw_robot(axis, frame, title, limits=None):
-    """Draw the actual lumen, optimized paths, anchors, and contact samples."""
+    """Draw the actual lumen, optimized paths, anchors, and contact samples.
+
+    Args:
+        axis (Axes): Matplotlib axes receiving the drawing.
+        frame (tuple): Centerlines, normals, tendon points, reference routes, and
+            transverse
+            offsets for both sections.
+        title (str): Title displayed above the drawing.
+        limits (tuple | None): Optional x and y plotting bounds in millimetres.
+
+    Returns:
+        result (None): ``None``. Artists are added to the supplied axes.
+    """
     centers, normals, tendons, references, offsets = frame
     for section in range(2):
         center, normal = centers[section] * 1000, normals[section]
@@ -418,7 +571,21 @@ def draw_robot(axis, frame, title, limits=None):
 
 
 def render(case, times, states, frames, output, static_frame):
-    """Save a cutaway montage, diagnostics, and a video at physical playback speed."""
+    """Save a cutaway montage, diagnostics, and a video at physical playback speed.
+
+    Args:
+        case (str): Anchor layout: ``"same-side"`` or ``"opposed"``.
+        times (Array): Saved physical times in seconds, shape ``(frames,)``.
+        states (Array): Saved angles, velocities, work, and dissipation, shape
+            ``(frames, 6)``.
+        frames (list[tuple]): Resolved drawing data returned by sample_frames.
+        output (Path): Output directory for figures and animation.
+        static_frame (tuple): Resolved drawing data for the loaded static equilibrium.
+
+    Returns:
+        result (None): ``None``. PNG figures and an MP4 animation are written to the
+            output directory.
+    """
     plt.rcParams.update(
         {
             "font.family": "DejaVu Sans",
@@ -640,6 +807,12 @@ def render(case, times, states, frames, output, static_frame):
 
 
 def main():
+    """Run the hollow-section simulation and rendering example.
+
+    Returns:
+        result (None): ``None``. Command-line arguments control simulation, refinement,
+            and generated artifacts.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--output",

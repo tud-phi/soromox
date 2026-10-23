@@ -18,7 +18,7 @@ from system_param_builders import (
 
 from soromox.actuation import (
     CircularLumenParams,
-    RoutingDiscretization,
+    PiecewiseLinearRoutingDiscretization,
     RoutingSolverOptions,
     RoutingSpanParams,
     ShortestPathRouting,
@@ -30,6 +30,7 @@ from soromox.actuation._routing_solver import (
     equalities,
     inequalities,
     objective,
+    objective_hvp,
     solve_problem,
 )
 from soromox.systems import (
@@ -80,7 +81,9 @@ def _routing(spans=None, radii=(0.02,), elements=3, max_steps=200):
         ShortestPathRoutingParams(
             _spans() if spans is None else spans, CircularLumenParams(radii)
         ),
-        RoutingDiscretization(elements_per_segment=elements, quadrature_order=3),
+        PiecewiseLinearRoutingDiscretization(
+            elements_per_segment=elements, quadrature_order=3
+        ),
         RoutingSolverOptions(max_steps=max_steps, tolerance=1e-8),
     )
 
@@ -126,8 +129,8 @@ def test_guides_are_explicit_and_contiguous():
     )
     assert spans.num_paths == 1
     assert spans.num_spans == 2
-    with pytest.raises(ValueError, match="guide"):
-        spans.replace(start_offset=[[0, 0, 0], [0, 0.002, 0]])
+    updated = spans.replace(start_offset=[[0, 0, 0], [0, 0.002, 0]])
+    assert_allclose(updated.start_offset[1], [0, 0.002, 0])
     with pytest.raises(ValueError, match="contiguous"):
         _spans(
             start_offset=jnp.zeros((2, 3)),
@@ -429,3 +432,69 @@ def test_empty_routing_has_no_paths_or_spans():
     assert solution.path_lengths.shape == (0,)
     assert solution.spans == ()
     assert bool(solution.converged)
+
+
+@pytest.mark.parametrize("scale", [0.0, 1e-15, 1e-8, 1.0])
+def test_objective_and_hessian_are_safe_for_reverse_autodiff(scale):
+    """Zero and tiny tangents keep derivative intermediates finite."""
+    problem = eqx.tree_at(
+        lambda value: value.tangent_offset,
+        _wall_problem(0.0),
+        jnp.array([[scale, 0.0, 0.0]]),
+    )
+    coefficients = jnp.zeros(1)
+    value, gradient = objective(coefficients, problem)
+    reverse = jax.grad(lambda values: objective(values, problem)[0])(coefficients)
+    analytical = objective_hvp(coefficients, jnp.ones(1), problem)
+    forward_hessian = jax.jacfwd(lambda values: objective(values, problem)[1])(
+        coefficients
+    )
+    reverse_hessian = jax.jacrev(lambda values: objective(values, problem)[1])(
+        coefficients
+    )
+    third = jax.jacrev(lambda values: objective_hvp(values, jnp.ones(1), problem))(
+        coefficients
+    )
+    for result in (
+        value,
+        gradient,
+        reverse,
+        analytical,
+        forward_hessian,
+        reverse_hessian,
+        third,
+    ):
+        assert bool(jnp.all(jnp.isfinite(result)))
+    assert_allclose(gradient, reverse, atol=1e-12)
+    assert_allclose(analytical, forward_hessian[:, 0], rtol=1e-12)
+    assert_allclose(analytical, reverse_hessian[:, 0], rtol=1e-12)
+
+
+@pytest.mark.parametrize("degenerate", [True, False])
+def test_degenerate_tangent_and_singular_kkt_reject_forward_and_reverse_derivatives(
+    monkeypatch, degenerate
+):
+    """Invalid smooth sensitivities remain explicit in both autodiff modes."""
+    from soromox.actuation import _routing_solver
+
+    def fake_solve(problem, initial, options):
+        """Return an otherwise feasible state to isolate the derivative guard."""
+        return jnp.zeros(2), jnp.array([1.0, 1.0])
+
+    monkeypatch.setattr(_routing_solver, "_forward_solve", fake_solve)
+
+    def state(parameter):
+        """Construct a zero tangent or a coefficient with no objective curvature."""
+        problem = _wall_problem(0.0)
+        problem = eqx.tree_at(
+            lambda value: (value.tangent_matrix, value.tangent_offset),
+            problem,
+            (
+                jnp.zeros_like(problem.tangent_matrix),
+                jnp.array([[0.0 if degenerate else 1.0, parameter, 0.0]]),
+            ),
+        )
+        return solve_problem(problem, jnp.zeros(1), RoutingSolverOptions())[0][0]
+
+    assert jnp.isnan(jax.jacfwd(state)(0.0))
+    assert jnp.isnan(jax.grad(state)(0.0))

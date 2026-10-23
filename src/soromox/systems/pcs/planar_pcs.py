@@ -959,6 +959,34 @@ class PlanarPCS(SoftRobot):
 
         return xi
 
+    def routing_strain_and_basis(
+        self, configuration: Array, segment_indices: Array, points: Array
+    ) -> tuple[Array, Array]:
+        """Embed planar strains and their analytical basis in spatial order.
+
+        Args:
+            configuration: Configuration with shape ``(num_coordinates,)``.
+            segment_indices: Sample segment indices with shape ``(num_points,)``.
+            points: Global reference backbone abscissae, shape ``(num_points,)``.
+
+        Returns:
+            Strains with shape ``(num_points, 6)`` and their configuration
+            basis with shape ``(num_points, 6, num_coordinates)``. Active
+            spatial rows are angular z, longitudinal x, and transverse y.
+        """
+        _, internal = self.split_configuration(configuration)
+        planar = self.strain(internal).reshape(self.num_segments, 3)[segment_indices]
+        strains = (
+            jnp.zeros((points.size, 6), dtype=configuration.dtype)
+            .at[:, 2:5]
+            .set(planar)
+        )
+        basis = self.B_xi.reshape(self.num_segments, 3, self.num_internal_dofs)
+        basis = jnp.pad(
+            basis[segment_indices], ((0, 0), (2, 1), (self.num_base_coordinates, 0))
+        )
+        return strains, basis
+
     @eqx.filter_jit
     def forward_kinematics(
         self,

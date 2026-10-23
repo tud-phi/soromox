@@ -978,6 +978,29 @@ class PCS(SoftRobot):
 
         return xi
 
+    def routing_strain_and_basis(
+        self, configuration: Array, segment_indices: Array, points: Array
+    ) -> tuple[Array, Array]:
+        """Evaluate spatial strains and their configuration basis for routing.
+
+        Args:
+            configuration: Configuration with shape ``(num_coordinates,)``.
+            segment_indices: Sample segment indices with shape ``(num_points,)``.
+            points: Global reference backbone abscissae, shape ``(num_points,)``.
+
+        Returns:
+            Strains with shape ``(num_points, 6)`` and their analytical basis
+            with shape ``(num_points, 6, num_coordinates)``.
+        """
+        del points
+        _, internal = self.split_configuration(configuration)
+        strains = self.strain(internal).reshape(self.num_segments, 6)[segment_indices]
+        basis = self.B_xi.reshape(self.num_segments, 6, self.num_internal_dofs)
+        basis = jnp.pad(
+            basis[segment_indices], ((0, 0), (0, 0), (self.num_base_coordinates, 0))
+        )
+        return strains, basis
+
     @eqx.filter_jit
     def forward_kinematics(
         self,

@@ -86,6 +86,64 @@ class SoftRobot(DynamicalSystem):
     actuators: tuple[Actuator, ...]
     passive_elements: tuple[PassiveElement, ...]
 
+    def routing_strain_and_basis(
+        self, configuration: Array, segment_indices: Array, points: Array
+    ) -> tuple[Array, Array]:
+        """Evaluate material strains and their analytical configuration basis.
+
+        Args:
+            configuration: Generalized configuration, shape ``(num_coordinates,)``.
+            segment_indices: Segment for each sample, shape ``(num_points,)``.
+            points: Global reference backbone coordinates in metres, shape
+                ``(num_points,)``. Indices select the side at segment boundaries.
+
+        Returns:
+            Spatial strains in angular/linear order, shape ``(num_points, 6)``,
+            and their configuration derivatives, shape
+            ``(num_points, 6, num_coordinates)``. Floating base columns are zero
+            because a rigid motion does not change material strain.
+
+        Raises:
+            NotImplementedError: The host does not implement material routing.
+        """
+        raise NotImplementedError("The host must implement routing_strain_and_basis.")
+
+    def validate_routing_span(self, start: int, end: int) -> None:
+        """Validate an interval with continuous material frames.
+
+        Args:
+            start: Inclusive first segment index.
+            end: Inclusive last segment index.
+
+        Returns:
+            ``None``. Hosts with joints override this check for spans crossing
+            a discontinuity; guides can terminate spans at such interfaces.
+        """
+
+    def routing_guide_kinematics(
+        self, configuration: Array, segment: int, upstream: Array, downstream: Array
+    ) -> tuple[Array, Array, Array]:
+        """Evaluate a straight guide connection at a continuous interface.
+
+        Args:
+            configuration: Configuration, shape ``(num_coordinates,)``.
+            segment: Segment whose entry follows the interface.
+            upstream: Guide in the preceding segment's tip frame, shape ``(3,)``.
+            downstream: Guide in this segment's entry frame, shape ``(3,)``.
+
+        Returns:
+            Guide displacement in the upstream frame, shape ``(3,)``; its
+            analytical configuration Jacobian, shape ``(3, num_coordinates)``;
+            and a scalar boolean identifying guides that coincide for every
+            configuration. Hosts with joints override this identity transform.
+        """
+        del segment
+        return (
+            downstream - upstream,
+            jnp.zeros((3, self.num_coordinates), dtype=configuration.dtype),
+            jnp.all(upstream == downstream),
+        )
+
     @property
     def tangent_eps(self) -> Array:
         """Epsilon value for Lie algebra tangent computations.
