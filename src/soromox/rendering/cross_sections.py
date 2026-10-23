@@ -14,7 +14,7 @@ import numpy as np
 from jax import Array
 from numpy.typing import NDArray
 
-from soromox.systems.components import CrossSectionGeometry, StrandSection
+from soromox.systems.components import CrossSectionGeometry, StrandCrossSection
 from soromox.systems.soft_robot import SoftRobot
 
 __all__ = [
@@ -83,7 +83,7 @@ class CrossSection:
             object.__setattr__(self, "inner_dimensions", inner)
 
     @classmethod
-    def from_strand_section(cls, section: StrandSection) -> CrossSection:
+    def from_strand_cross_section(cls, section: StrandCrossSection) -> CrossSection:
         """Extract a rendering descriptor from shared strand geometry eagerly."""
         section.validate_for_update()
         return cls(section.geometry, section.outer_dimensions, section.inner_dimensions)

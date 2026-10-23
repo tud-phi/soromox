@@ -180,11 +180,11 @@ PyTree structure and requires recompilation.
 
 ### Rod constitutive laws
 
-The default GVS law uses uniform transverse shear and polar-moment torsion
+The default `RodConstitutiveLaw` uses uniform transverse shear and polar-moment torsion
 for solid sections. Shear and torsion can be selected independently. Hollow
 links require effective shear and Saint-Venant torsion.
 
-A GVS link's `RodConstitutiveLaw` selects how the isotropic material and
+`RodConstitutiveLaw` selects how the isotropic material and
 cross-section produce rod stiffness. For strain order
 `[twist, bend_y, bend_z, extension, shear_y, shear_z]`, the local matrix is
 

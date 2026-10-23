@@ -25,8 +25,11 @@ Describe the delta from the last release, not intermediate development changes.
 - GVS-based `Helicoidal` models for trimmed-helicoid robots, with analytic
   sectional mechanics, per-strain damping, helix-domain material inputs,
   strand-derived inertia, a simulation example, and a dedicated Viser renderer.
-  Shared `StrandSection` geometry supports solid and hollow circular and
-  rectangular strands for mechanics and viewer configuration; see
+  Shared `StrandCrossSection` geometry supports solid and hollow circular and
+  rectangular strands for mechanics and viewer configuration. Strand mechanics
+  use the shared `RodConstitutiveLaw`, defaulting to effective shear areas and
+  Saint-Venant torsion. Properties follow geometry/material updates, while
+  explicit calibration overrides persist until cleared; see
   [Helicoidal](../api/systems/gvs/helicoidal.md) and
   [PR #229](https://github.com/tud-phi/soromox/pull/229).
 - Hollow circular and rectangular GVS links through `LinkSpec`'s optional

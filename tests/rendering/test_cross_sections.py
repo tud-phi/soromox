@@ -19,15 +19,15 @@ from soromox.systems import (
     LinearProfile,
     LinkSpec,
     StrainBasisSpec,
-    StrandSection,
+    StrandCrossSection,
 )
 from soromox.systems.components import CrossSectionGeometry
 
 
 @pytest.mark.parametrize("resolution", [4, 10, 12])
 def test_hollow_sweep_has_outward_walls_and_open_cavity(resolution):
-    section = CrossSection.from_strand_section(
-        StrandSection.rectangular_hollow(
+    section = CrossSection.from_strand_cross_section(
+        StrandCrossSection.rectangular_hollow(
             width=0.010,
             height=0.002,
             wall_thickness=0.0001,

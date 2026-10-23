@@ -19,8 +19,6 @@ __all__ = [
     "evaluate_profile",
     "section_properties",
     "section_inner_dimensions",
-    "section_torsion_constant",
-    "section_shear_factors",
 ]
 
 
@@ -235,83 +233,6 @@ def section_inner_dimensions(
     return (
         jnp.asarray(outer_dimensions) - factor * jnp.asarray(wall_thickness)[..., None]
     )
-
-
-def section_torsion_constant(
-    geometry: CrossSectionGeometry | int,
-    outer_dimensions: Array,
-    inner_dimensions: Array | None = None,
-) -> Array:
-    """Return the Saint-Venant torsion constant, independently of polar inertia.
-
-    Args:
-        geometry: Boundary family; hollow ellipses are unsupported.
-        outer_dimensions: Dimensions in the last axis [m].
-        inner_dimensions: Optional centred, uniform-wall cavity dimensions [m].
-
-    Returns:
-        Torsion constant [m^4]. Circles and solid ellipses use exact formulas;
-        solid rectangles use 64 odd series terms; rectangular tubes use Bredt's
-        thin-wall approximation. The latter is an estimate for thick walls.
-    """
-    dimensions = jnp.asarray(outer_dimensions)
-    if geometry == CrossSectionGeometry.CIRCULAR:
-        return section_properties(geometry, dimensions, inner_dimensions)[0]
-    a, b = dimensions[..., 0], dimensions[..., 1]
-    if geometry == CrossSectionGeometry.ELLIPTICAL:
-        if inner_dimensions is not None:
-            raise ValueError("Hollow elliptical torsion is not supported.")
-        return jnp.pi * a**3 * b**3 / (a**2 + b**2)
-    if geometry != CrossSectionGeometry.RECTANGULAR:
-        raise ValueError("Unsupported cross-section geometry.")
-    if inner_dimensions is not None:
-        inner = jnp.asarray(inner_dimensions)
-        thickness = (a - inner[..., 0]) / 2
-        mid_a, mid_b = (a + inner[..., 0]) / 2, (b + inner[..., 1]) / 2
-        return 2 * thickness * mid_a**2 * mid_b**2 / (mid_a + mid_b)
-    long, short = jnp.maximum(a, b), jnp.minimum(a, b)
-    odd = jnp.arange(1, 128, 2, dtype=dimensions.dtype)
-    correction = jnp.sum(
-        jnp.tanh(odd * jnp.pi * long[..., None] / (2 * short[..., None])) / odd**5,
-        axis=-1,
-    )
-    return long * short**3 / 3 * (1 - 192 * short / (jnp.pi**5 * long) * correction)
-
-
-def section_shear_factors(
-    geometry: CrossSectionGeometry | int,
-    outer_dimensions: Array,
-    inner_dimensions: Array | None = None,
-) -> Array:
-    """Return approximate effective shear-area fractions along material y/z.
-
-    Args:
-        geometry: Circular or rectangular boundary family.
-        outer_dimensions: Dimensions in the last axis [m].
-        inner_dimensions: Optional centred, uniform-wall cavity dimensions [m].
-
-    Returns:
-        Two dimensionless factors per section. Solid circles use 0.9 and solid
-        rectangles 5/6. Circular tubes use Cowper's annular expression at zero
-        Poisson ratio; rectangular tubes use the areas of the two webs aligned
-        with each shear direction. Tube estimates should be calibrated when
-        their assumptions do not suit the material or wall thickness.
-    """
-    dimensions = jnp.asarray(outer_dimensions)
-    if geometry == CrossSectionGeometry.CIRCULAR:
-        if inner_dimensions is None:
-            factor = jnp.full(dimensions.shape[:-1], 0.9)
-        else:
-            ratio2 = (jnp.asarray(inner_dimensions)[..., 0] / dimensions[..., 0]) ** 2
-            factor = 6 * (1 + ratio2) ** 2 / (7 * (1 + ratio2) ** 2 + 20 * ratio2)
-        return jnp.stack((factor, factor), axis=-1)
-    if geometry != CrossSectionGeometry.RECTANGULAR:
-        raise ValueError("Shear factors require circular or rectangular geometry.")
-    if inner_dimensions is None:
-        return jnp.full((*dimensions.shape[:-1], 2), 5 / 6)
-    thickness = (dimensions[..., 0] - jnp.asarray(inner_dimensions)[..., 0]) / 2
-    area = section_properties(geometry, dimensions, inner_dimensions)[3]
-    return 2 * thickness[..., None] * dimensions / area[..., None]
 
 
 def validate_section_profiles(
