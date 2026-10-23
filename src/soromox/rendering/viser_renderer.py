@@ -296,8 +296,9 @@ class ViserRenderer(BaseSoftRobotRenderer):
         """
         if not VISER_AVAILABLE:
             raise ImportError(
-                "viser is required for ViserRenderer. "
-                "Install it with: pip install viser"
+                "viser, plotly and trimesh are required for ViserRenderer. "
+                "Install them with: pip install viser plotly trimesh"
+                "(or: pip install soromox[rendering])"
             )
 
         super().__init__(robot, config=config)
