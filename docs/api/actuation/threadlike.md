@@ -24,6 +24,9 @@ effort per path, and an optional static effort loss along active paths. It does
 not model configuration-dependent rerouting, slack, actuator dynamics, or
 changes in pressure-chamber cross-section.
 
+For paths that change relative to the backbone as it deforms, see
+[Implicit threadlike routing](implicit-threadlike.md).
+
 ## Routing
 
 ### Linear routing

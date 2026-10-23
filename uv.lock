@@ -114,6 +114,15 @@ wheels = [
 ]
 
 [[package]]
+name = "beartype"
+version = "0.23.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/79/34/c0cfdaee9c796c8381439fed0fcab62810753b8b0adb1ec88fa7f41eaa5d/beartype-0.23.1.tar.gz", hash = "sha256:8b805f246b32931c74f2b321ea0939fe5bb2ff43c12a3eff19cc4c854b832e1d", size = 1993714, upload-time = "2026-10-11T05:36:55.251Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1c/cb/2f6aa982e2860c1156830db3da7f823b71784ed7d533ca289ea9b6c6347a/beartype-0.23.1-py3-none-any.whl", hash = "sha256:4461b4dc57e3fdd6c8a8464b22cf118002eea107c33e9fef651c69068ab3cce3", size = 1582101, upload-time = "2026-10-11T05:36:52.431Z" },
+]
+
+[[package]]
 name = "blinker"
 version = "1.9.0"
 source = { registry = "https://pypi.org/simple" }
@@ -4094,6 +4103,29 @@ wheels = [
 ]
 
 [[package]]
+name = "slsqp-jax"
+version = "0.21.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "beartype" },
+    { name = "equinox" },
+    { name = "jax", version = "0.10.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "jax", version = "0.11.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "jaxlib", version = "0.10.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "jaxlib", version = "0.11.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "jaxtyping" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "numpy", version = "2.5.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "optimistix" },
+    { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "scipy", version = "1.18.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ea/2f/acee7646293a11b330f9147ee3eb77402a3c80d61c33b0ad5933a09f20c1/slsqp_jax-0.21.1.tar.gz", hash = "sha256:8e527c13c9cc1bbb23121a8218f84ff6b6116cb277087b1704cea3f2daf42be1", size = 1384468, upload-time = "2026-06-17T08:47:04.871Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/96/30/8378cdb9380c1960cf03041aed2756ec9e8387b354354f9f56987a985a62/slsqp_jax-0.21.1-py3-none-any.whl", hash = "sha256:7a6837312991b59692c652dbf22338cb12a30a0c3bdd64dc12ba7e20059d8c63", size = 243952, upload-time = "2026-06-17T08:47:03.034Z" },
+]
+
+[[package]]
 name = "soromox"
 version = "0.5.0"
 source = { editable = "." }
@@ -4139,6 +4171,7 @@ all = [
     { name = "pytest-html" },
     { name = "ruff" },
     { name = "seaborn" },
+    { name = "slsqp-jax" },
     { name = "stable-baselines3" },
     { name = "tox" },
     { name = "trimesh" },
@@ -4187,6 +4220,10 @@ examples = [
     { name = "seaborn" },
     { name = "trimesh" },
     { name = "viser" },
+]
+implicit-routing = [
+    { name = "optimistix" },
+    { name = "slsqp-jax" },
 ]
 paper-results = [
     { name = "cbfpy" },
@@ -4237,6 +4274,7 @@ test = [
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "pytest-html" },
+    { name = "slsqp-jax" },
     { name = "tox" },
     { name = "trimesh" },
     { name = "viser" },
@@ -4311,6 +4349,7 @@ requires-dist = [
     { name = "optax", marker = "extra == 'test'" },
     { name = "optimistix", marker = "extra == 'all'" },
     { name = "optimistix", marker = "extra == 'examples'" },
+    { name = "optimistix", marker = "extra == 'implicit-routing'", specifier = ">=0.1.0" },
     { name = "optimistix", marker = "extra == 'paper-results'" },
     { name = "pandas", marker = "extra == 'all'" },
     { name = "pandas", marker = "extra == 'paper-results'" },
@@ -4339,6 +4378,9 @@ requires-dist = [
     { name = "seaborn", marker = "extra == 'dev'" },
     { name = "seaborn", marker = "extra == 'examples'" },
     { name = "seaborn", marker = "extra == 'paper-results'" },
+    { name = "slsqp-jax", marker = "extra == 'all'", specifier = "==0.21.1" },
+    { name = "slsqp-jax", marker = "extra == 'implicit-routing'", specifier = "==0.21.1" },
+    { name = "slsqp-jax", marker = "extra == 'test'", specifier = "==0.21.1" },
     { name = "stable-baselines3", marker = "extra == 'all'" },
     { name = "stable-baselines3", marker = "extra == 'paper-results'" },
     { name = "stable-baselines3", marker = "extra == 'rl'" },
@@ -4366,7 +4408,7 @@ requires-dist = [
     { name = "zensical", marker = "extra == 'all'" },
     { name = "zensical", marker = "extra == 'docs'" },
 ]
-provides-extras = ["cuda13", "warp", "dev", "docs", "examples", "paper-results", "rendering", "rl", "test", "all"]
+provides-extras = ["implicit-routing", "cuda13", "warp", "dev", "docs", "examples", "paper-results", "rendering", "rl", "test", "all"]
 
 [[package]]
 name = "stable-baselines3"

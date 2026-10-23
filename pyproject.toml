@@ -126,6 +126,10 @@ dependencies = [
 # Similar to `dependencies` above, these must be valid existing
 # projects.
 [project.optional-dependencies] # Optional
+implicit-routing = [
+    "optimistix>=0.1.0",
+    "slsqp-jax==0.21.1",
+]
 cuda13 = [
     "jax[cuda13]>=0.10.0; sys_platform == 'linux'",
     "torch>=2.13.0; sys_platform == 'linux'",
@@ -208,6 +212,7 @@ rl = [
     "stable-baselines3",
 ]
 test = [
+    "slsqp-jax==0.21.1",
     "cbfpy",
     "codecov",
     "coverage[toml]",
@@ -224,6 +229,7 @@ test = [
     "warp-lang>=1.16.0",
 ]
 all = [
+    "slsqp-jax==0.21.1",
     "coomm @ git+https://github.com/mstoelzle/COOMM.git@0df454a44e70be941941be3c6b521b1cd891aef3",
     "bump2version",
     "cbfpy",

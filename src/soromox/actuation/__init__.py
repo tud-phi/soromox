@@ -21,6 +21,17 @@ from .friction import (
     threadlike_tangent,
     threadlike_turn_rate,
 )
+from .implicit_threadlike import (
+    CircularLumenParams,
+    ImplicitThreadlikeRouting,
+    RoutingDiscretization,
+    RoutingSolution,
+    RoutingSolverOptions,
+    RoutingSpanParams,
+    RoutingSpanSolution,
+    ShortestPathRouting,
+    ShortestPathRoutingParams,
+)
 from .joint import (
     AffineGeneralizedCoordinateActuator,
     AffineGeneralizedCoordinateActuatorParams,
@@ -53,6 +64,15 @@ from .threadlike import (
 )
 
 __all__ = [
+    "CircularLumenParams",
+    "ImplicitThreadlikeRouting",
+    "RoutingDiscretization",
+    "RoutingSolution",
+    "RoutingSolverOptions",
+    "RoutingSpanParams",
+    "RoutingSpanSolution",
+    "ShortestPathRouting",
+    "ShortestPathRoutingParams",
     "Actuator",
     "ActuatorKind",
     "ActuatorMetadata",
