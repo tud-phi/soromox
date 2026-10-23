@@ -29,7 +29,10 @@ from soromox.systems import (
     PendulumParams,
     PlanarPCS,
     PlanarPCSStructure,
+    RodConstitutiveLaw,
     StrainBasisSpec,
+    TorsionRodModel,
+    TransverseShearRodModel,
 )
 
 Array = jax.Array
@@ -223,6 +226,10 @@ def _planar_pcs_factory(
     return PlanarPCS.from_links(
         [
             LinkSpec.circular(
+                constitutive_law=RodConstitutiveLaw(
+                    transverse_shear=TransverseShearRodModel.UNIFORM,
+                    torsion=TorsionRodModel.POLAR_MOMENT,
+                ),
                 length=0.12,
                 radius=0.015,
                 density=1070.0,
@@ -272,6 +279,10 @@ def _pcs_factory(
     return PCS.from_links(
         [
             LinkSpec.circular(
+                constitutive_law=RodConstitutiveLaw(
+                    transverse_shear=TransverseShearRodModel.UNIFORM,
+                    torsion=TorsionRodModel.POLAR_MOMENT,
+                ),
                 length=0.1,
                 radius=0.02,
                 density=1050.0,
@@ -319,6 +330,10 @@ def _gvs_segment(strain_basis_order: int, gauss_points: int) -> GVSSegment:
 
     return GVSSegment(
         link=LinkSpec.circular(
+            constitutive_law=RodConstitutiveLaw(
+                transverse_shear=TransverseShearRodModel.UNIFORM,
+                torsion=TorsionRodModel.POLAR_MOMENT,
+            ),
             young_modulus=1.0e6,
             shear_modulus=1.0e6 / 2.9,
             density=980.0,

@@ -19,7 +19,10 @@ from soromox.systems import (
     JointSpec,
     LinearProfile,
     LinkSpec,
+    RodConstitutiveLaw,
     StrainBasisSpec,
+    TorsionRodModel,
+    TransverseShearRodModel,
 )
 
 CASE_DIR = Path(__file__).resolve().parent.parent
@@ -794,6 +797,10 @@ if __name__ == "__main__":
     ### BODY DEFINITION OF THE SOFT ROBOT ###
     # Link 1
     link1 = LinkSpec.circular(
+        constitutive_law=RodConstitutiveLaw(
+            transverse_shear=TransverseShearRodModel.UNIFORM,
+            torsion=TorsionRodModel.POLAR_MOMENT,
+        ),
         length=0.0250 + 0.2550 + 0.0250,
         radius=LinearProfile(base=0.01541, tip=0.00642),
         density=1320.0,
@@ -805,6 +812,10 @@ if __name__ == "__main__":
 
     # Link 2
     link2 = LinkSpec.circular(
+        constitutive_law=RodConstitutiveLaw(
+            transverse_shear=TransverseShearRodModel.UNIFORM,
+            torsion=TorsionRodModel.POLAR_MOMENT,
+        ),
         length=0.0550,
         radius=LinearProfile(base=0.00642, tip=0.00480),
         density=1320.0,

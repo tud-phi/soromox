@@ -20,7 +20,13 @@ from gymnasium import spaces
 from stable_baselines3.common.vec_env import VecEnv
 
 from soromox.actuation import ThreadlikeActuator, ThreadlikeRouting
-from soromox.systems import PCS, LinkSpec
+from soromox.systems import (
+    PCS,
+    LinkSpec,
+    RodConstitutiveLaw,
+    TorsionRodModel,
+    TransverseShearRodModel,
+)
 from soromox.systems.system_state import SystemState
 
 jax.config.update("jax_enable_x64", True)
@@ -113,6 +119,10 @@ def build_arm(
     body_params = PCS.params_from_links(
         [
             LinkSpec.circular(
+                constitutive_law=RodConstitutiveLaw(
+                    transverse_shear=TransverseShearRodModel.UNIFORM,
+                    torsion=TorsionRodModel.POLAR_MOMENT,
+                ),
                 length=float(segment_lengths[index]),
                 radius=radius,
                 density=density,

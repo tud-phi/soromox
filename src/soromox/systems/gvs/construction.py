@@ -11,8 +11,10 @@ from soromox.systems.components import (
     ContinuumLinkParams,
     CrossSectionParams,
     JointParams,
-    evaluate_profile,
     section_properties,
+)
+from soromox.systems.components.cross_sections import (
+    evaluate_section_dimensions,
 )
 from soromox.systems.gvs.params import GVSParams
 from soromox.systems.gvs.primitives import Basis, Joint
@@ -91,22 +93,26 @@ def _basis_at_points(
     return vmap(lambda point: function(point, selector, order, max_dof))(points)
 
 
-def _dimensions_at_points(
+def section_dimensions_at_points(
     coefficients: Array, structure: GVSLinkStructure, points: Array
-) -> Array:
-    dimensions = []
-    start = 0
-    for profile_type, count in zip(
+) -> tuple[Array, Array | None]:
+    """Evaluate outer and optional cavity dimensions from a GVS link layout."""
+    return evaluate_section_dimensions(
+        structure.cross_section_geometry,
+        coefficients,
         structure.cross_section_profile_types,
         structure.cross_section_profile_parameter_counts,
-        strict=True,
-    ):
-        stop = start + count
-        dimensions.append(
-            evaluate_profile(coefficients[start:stop], profile_type, points)
-        )
-        start = stop
-    return jnp.stack(dimensions, axis=1)
+        points,
+        hollow=structure.hollow,
+    )
+
+
+def section_properties_at_points(
+    coefficients: Array, structure: GVSLinkStructure, points: Array
+) -> tuple[Array, Array, Array, Array]:
+    """Evaluate area moments and area for GVS mass assembly at all nodes."""
+    outer, inner = section_dimensions_at_points(coefficients, structure, points)
+    return section_properties(structure.cross_section_geometry, outer, inner)
 
 
 def project_sectional_matrices(
@@ -146,20 +152,24 @@ def project_sectional_matrices(
 
 
 def material_operators_from_params(
-    params: GVSParams, structure: GVSStructure
+    params: GVSParams, structure: GVSStructure, *, poisson_ratios: Array | None = None
 ) -> tuple[Array, Array, Array]:
     """Build unit-response material operators for all GVS links.
 
     The returned arrays project cross-section mechanics through each link's
     configured strain basis and Gauss quadrature rule. They satisfy
     ``K = E * K_E + G * K_G`` and ``D = eta * D_eta`` when the per-link
-    material scalars are broadcast over the final two axes.
+    material scalars are broadcast over the final two axes, at the supplied
+    Poisson ratios. Cowper shear therefore requires rebuilding these operators
+    when the elastic material changes.
 
     Args:
         params: Canonical GVS parameters providing link lengths and packed
             cross-section coefficients.
         structure: Static GVS layout providing cross-section geometries,
             profile metadata, bases, quadrature rules, and the padded DOF size.
+        poisson_ratios: Optional per-link elastic Poisson ratios for Cowper
+            shear. Omission builds reference operators at zero Poisson ratio.
 
     Returns:
         A tuple ``(young_operators, shear_operators, damping_operators)``. Each
@@ -187,30 +197,44 @@ def material_operators_from_params(
         length = params.link.length[index]
         if structure.scale_rotational_basis_by_length:
             basis = basis.at[:, :3, :].divide(length)
-        dimensions = _dimensions_at_points(
+        outer, inner = section_dimensions_at_points(
             params.link.cross_section.coefficients[index], segment.link, points
         )
         geometry = segment.link.cross_section_geometry
-        ix, iy, iz, area = vmap(
-            lambda value, geometry=geometry: section_properties(geometry, value)
-        )(dimensions)
+        ix, iy, iz, area = section_properties(geometry, outer, inner)
+        law = segment.link.constitutive_law
+        torsion = law.torsion_constant(geometry, outer, inner)
+        shear_areas = law.shear_areas(
+            geometry,
+            outer,
+            inner,
+            poisson_ratio=0.0 if poisson_ratios is None else poisson_ratios[index],
+        )
         young_diagonal = jnp.stack(
             [jnp.zeros_like(ix), iy, iz, area, jnp.zeros_like(ix), jnp.zeros_like(ix)],
             axis=1,
         )
         shear_diagonal = jnp.stack(
             [
-                ix,
+                torsion,
                 jnp.zeros_like(ix),
                 jnp.zeros_like(ix),
                 jnp.zeros_like(ix),
-                area,
-                area,
+                shear_areas[:, 0],
+                shear_areas[:, 1],
             ],
             axis=1,
         )
         damping_diagonal = jnp.stack(
-            [ix, 3.0 * iy, 3.0 * iz, 3.0 * area, area, area], axis=1
+            [
+                torsion,
+                3.0 * iy,
+                3.0 * iz,
+                3.0 * area,
+                shear_areas[:, 0],
+                shear_areas[:, 1],
+            ],
+            axis=1,
         )
 
         def project(
@@ -292,6 +316,8 @@ def params_and_structure_from_segments(
         GVSSegmentStructure(
             link=GVSLinkStructure(
                 cross_section_geometry=segment.link.cross_section_geometry,
+                hollow=segment.link.hollow,
+                constitutive_law=segment.link.constitutive_law,
                 cross_section_profile_types=segment.link.cross_section_profile_types,
                 cross_section_profile_parameter_counts=(
                     segment.link.cross_section_profile_parameter_counts
@@ -396,8 +422,25 @@ def params_and_structure_from_segments(
             damping=jnp.stack(joint_damping),
         ),
     )
+    poisson_ratios = []
+    for segment in input_segments:
+        link = segment.link
+        if link.young_modulus is not None:
+            nu = link.young_modulus / (2 * link._resolved_shear_modulus()) - 1
+        else:
+            if (
+                link.constitutive_law.requires_poisson_ratio(
+                    link.cross_section_geometry
+                )
+                and link.material_damping_coefficient is not None
+            ):
+                raise ValueError(
+                    "Cowper material damping requires elastic moduli; provide an explicit damping matrix when stiffness is explicit."
+                )
+            nu = 0.0  # Unused when both matrices are explicit or damping is disabled.
+        poisson_ratios.append(nu)
     young_operator, shear_operator, damping_operator = material_operators_from_params(
-        params, structure
+        params, structure, poisson_ratios=jnp.asarray(poisson_ratios)
     )
     link_stiffness = []
     link_damping = []
