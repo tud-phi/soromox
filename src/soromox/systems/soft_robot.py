@@ -108,6 +108,89 @@ class SoftRobot(DynamicalSystem):
         """
         raise NotImplementedError("The host must implement routing_strain_and_basis.")
 
+    def routing_segment_kinematics(self, configuration):
+        """Evaluate local segment transforms for all prescribed routing guides.
+
+        Args:
+            configuration (Array): Configuration, shape ``(num_coordinates,)``.
+
+        Returns:
+            result (tuple[Array, Array, Array]): Link entry-to-exit transforms,
+                link body Jacobians, and preceding joint transforms, with shapes
+                ``(num_segments, 4, 4)``,
+                ``(num_segments, 6, num_coordinates)``, and
+                ``(num_segments, 4, 4)``. Base and joint columns in link Jacobians
+                are zero. Each link is evaluated independently of upstream motion.
+
+        Raises:
+            NotImplementedError: The host has no local routing implementation.
+        """
+        raise NotImplementedError("The host must implement routing_segment_kinematics.")
+
+    def _constant_strain_routing_segment_kinematics(self, configuration):
+        """Evaluate PCS link transforms and analytical body Jacobians once.
+
+        Args:
+            configuration (Array): Configuration, shape ``(num_coordinates,)``.
+
+        Returns:
+            result (tuple[Array, Array, Array]): Arrays following the
+                ``routing_segment_kinematics`` contract, with identity joints.
+        """
+        strains, bases = self.routing_strain_and_basis(
+            configuration,
+            jnp.arange(self.num_segments),
+            jnp.cumsum(self.segment_length),
+        )
+
+        def evaluate(strain, basis, length):
+            """Return a constant-strain transform and its body Jacobian."""
+            if self.is_planar:
+                increment = length * strain[2:5]
+                planar = se2.exp(increment, self.global_eps)
+                transform = jnp.eye(4).at[:2, :2].set(planar[:2, :2])
+                transform = transform.at[:2, 3].set(planar[:2, 2])
+                derivative = se2.left_jacobian(-increment, self.tangent_eps) @ (
+                    length * basis[2:5]
+                )
+                derivative = jnp.pad(derivative, ((2, 1), (0, 0)))
+            else:
+                increment = length * strain
+                transform = se3.exp(increment, self.global_eps)
+                derivative = se3.left_jacobian(-increment, self.tangent_eps) @ (
+                    length * basis
+                )
+            return transform, derivative
+
+        transforms, jacobians = vmap(evaluate)(strains, bases, self.segment_length)
+        return transforms, jacobians, jnp.broadcast_to(jnp.eye(4), transforms.shape)
+
+    def routing_boundary_poses(self, configuration, links, joints):
+        """Compose all segment entry and exit poses in one backbone traversal.
+
+        Args:
+            configuration (Array): Configuration, shape ``(num_coordinates,)``.
+            links (Array): Local link transforms, shape ``(num_segments, 4, 4)``.
+            joints (Array): Preceding joint transforms with the same shape.
+
+        Returns:
+            result (tuple[Array, Array]): World entry and exit transforms, each
+                shaped ``(num_segments, 4, 4)``. Entry poses include their joint.
+        """
+        base = self.base_transform_from_configuration(configuration)
+        if self.is_planar:
+            base = jnp.eye(4).at[:2, :2].set(base[:2, :2]).at[:2, 3].set(base[:2, 2])
+
+        def advance(previous, transforms):
+            """Return the next boundary and both sides of its link."""
+            link, joint = transforms
+            entry = previous @ joint
+            exit_pose = entry @ link
+            return exit_pose, (entry, exit_pose)
+
+        _, boundaries = lax.scan(advance, base, (links, joints))
+        return boundaries
+
     def _routing_point_kinematics(self, configuration, position, offset):
         """Evaluate an offset point for internal routing derivatives.
 

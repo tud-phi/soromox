@@ -103,7 +103,6 @@ nav:
           - Actuation Model: api/actuation/index.md
           - Generalized-Coordinate Actuation: api/actuation/generalized-coordinate.md
           - Threadlike Actuation: api/actuation/threadlike.md
-          - Configuration-dependent Routing: api/actuation/implicit-threadlike.md
           - API Reference: api/actuation/reference.md
       - Control:
           - Overview: api/control/index.md

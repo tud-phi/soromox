@@ -4,6 +4,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 
+from soromox.utils.lie_algebra import se3
+
 from .implicit_threadlike import (
     ConfigurationDependentThreadlikeRouting,
     RoutingGuideSolution,
@@ -21,9 +23,9 @@ class StraightSpanRouting(ConfigurationDependentThreadlikeRouting):
     A path is one physical filament. A span is the straight portion between
     two prescribed guides. Adjacent spans include their joint guide connection.
     The user must ensure that wall contact is irrelevant throughout operation.
-    No lumen geometry, optimization, or wall collision checks are evaluated.
-    Taut frictionless tendons and ideal straight axial members are supported;
-    slack, rod bending, buckling, and finite pulley geometry require other models.
+    Guide kinematics determine the path directly. The model describes taut
+    frictionless tendons and ideal straight axial members with negligible
+    bending stiffness, operating below their buckling load.
 
     Attributes:
         params: Shared guide offsets and span connectivity.
@@ -87,7 +89,7 @@ class StraightSpanRouting(ConfigurationDependentThreadlikeRouting):
         """Resolve straight spans and their analytical length derivatives.
 
         Args:
-            robot (SoftRobot): Host supplying endpoint and joint guide kinematics.
+            robot (SoftRobot): Host supplying local segment and joint guide kinematics.
             configuration (Array): Configuration, shape ``(num_coordinates,)``.
             initial_guess (RoutingSolution | None): Unused; accepted for the
                 common routing interface.
@@ -104,43 +106,62 @@ class StraightSpanRouting(ConfigurationDependentThreadlikeRouting):
                 self.validate_values_for_robot(robot)
         if configuration.shape != (robot.num_coordinates,):
             raise ValueError("configuration must match the host coordinate count.")
-        endpoints = {}
-        for at_end, segments, offsets in (
-            (False, self.spans.start_segment_index, self.spans.start_offset),
-            (True, self.spans.end_segment_index, self.spans.end_offset),
+        if self.spans.num_spans == 0:
+            return RoutingSolution((), jnp.zeros(0, dtype=configuration.dtype), ())
+        links, body_jacobians, joints = robot.routing_segment_kinematics(configuration)
+        entries, exits = robot.routing_boundary_poses(configuration, links, joints)
+        relative = {}
+        for first, last in zip(
+            self.spans.start_segment_index, self.spans.end_segment_index
         ):
-            for segment in dict.fromkeys(segments):
-                indices = tuple(
-                    index for index, value in enumerate(segments) if value == segment
+            if (first, last) in relative:
+                continue
+            transform, derivative = links[first], body_jacobians[first]
+            for segment in range(first + 1, last + 1):
+                step = joints[segment] @ links[segment]
+                transform = transform @ step
+                derivative = (
+                    se3.adjoint_inverse(step) @ derivative + body_jacobians[segment]
                 )
-                positions, jacobians = jax.vmap(
-                    lambda offset, segment=segment, at_end=at_end: (
-                        robot.routing_endpoint_kinematics(
-                            configuration, segment, at_end, offset
-                        )
-                    )
-                )(offsets[jnp.asarray(indices)])
-                for local, index in enumerate(indices):
-                    endpoints[index, at_end] = positions[local], jacobians[local]
+            relative[first, last] = transform, derivative
+
+        def evaluate(
+            transform, body_jacobian, start_offset, end_offset, entry, exit_pose
+        ):
+            """Return guide positions, length, derivative, and validity for one span."""
+            displacement = (
+                transform[:3, 3] + transform[:3, :3] @ end_offset - start_offset
+            )
+            local_jacobian = transform[:3, :3] @ (
+                body_jacobian[3:] + jnp.cross(body_jacobian[:3].T, end_offset).T
+            )
+            start = entry[:3, 3] + entry[:3, :3] @ start_offset
+            end = exit_pose[:3, 3] + exit_pose[:3, :3] @ end_offset
+            length = _guide_length(displacement, jnp.array(False))
+            valid = jnp.all(jnp.isfinite(displacement)) & (length > 1e-12)
+            derivative = displacement @ local_jacobian / jnp.where(valid, length, 1.0)
+            return StraightSpanSolution(
+                start, end, length, jnp.where(valid, derivative, jnp.nan), valid
+            )
+
+        intervals = tuple(
+            zip(self.spans.start_segment_index, self.spans.end_segment_index)
+        )
+        evaluated = jax.vmap(evaluate)(
+            jnp.stack([relative[interval][0] for interval in intervals]),
+            jnp.stack([relative[interval][1] for interval in intervals]),
+            self.spans.start_offset,
+            self.spans.end_offset,
+            entries[jnp.asarray(self.spans.start_segment_index)],
+            exits[jnp.asarray(self.spans.end_segment_index)],
+        )
         spans, guides, previous = [], [], {}
         lengths = jnp.zeros(self.spans.num_paths, dtype=configuration.dtype)
         for index, path in enumerate(self.spans.span_path_index):
-            start, start_jacobian = endpoints[index, False]
-            end, end_jacobian = endpoints[index, True]
-            displacement = end - start
-            length = _guide_length(displacement, jnp.array(False))
-            valid = jnp.all(jnp.isfinite(displacement)) & (length > 1e-12)
-            derivative = (
-                displacement
-                @ (end_jacobian - start_jacobian)
-                / jnp.where(valid, length, 1.0)
-            )
             spans.append(
-                StraightSpanSolution(
-                    start, end, length, jnp.where(valid, derivative, jnp.nan), valid
-                )
+                jax.tree.map(lambda values, index=index: values[index], evaluated)
             )
-            lengths = lengths.at[path].add(length)
+            lengths = lengths.at[path].add(evaluated.length[index])
             if path in previous:
                 displacement, _, coincident = robot.routing_guide_kinematics(
                     configuration,

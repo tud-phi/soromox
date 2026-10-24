@@ -146,9 +146,14 @@ def test_collapsed_straight_span_rejects_derivatives():
     assert bool(
         jnp.all(jnp.isnan(routing.path_length_jacobian(robot, configuration, solution)))
     )
+    length = eqx.filter_jit(
+        lambda values: routing.solve_routing(robot, values).path_lengths.sum()
+    )
+    assert bool(jnp.all(jnp.isnan(jax.grad(length)(configuration))))
+    assert bool(jnp.all(jnp.isnan(jax.jacfwd(length)(configuration))))
 
 
-def test_guides_share_endpoint_frame_evaluations(monkeypatch):
+def test_guides_share_segment_and_boundary_evaluations(monkeypatch):
     """Reuse each endpoint frame across paths with different offsets.
 
     Args:
@@ -160,18 +165,25 @@ def test_guides_share_endpoint_frame_evaluations(monkeypatch):
     routing = StraightSpanRouting(
         RoutingSpanParams(offsets, offsets, (0, 1, 2), (0, 0, 0), (0, 0, 0))
     )
-    endpoint = PlanarPCS.routing_endpoint_kinematics
+    segments = PlanarPCS.routing_segment_kinematics
+    boundaries = PlanarPCS.routing_boundary_poses
     calls = []
 
-    def evaluate(host, configuration, segment, at_end, offset):
-        """Record a frame evaluation and return its guide kinematics."""
-        calls.append((segment, at_end))
-        return endpoint(host, configuration, segment, at_end, offset)
+    def evaluate(host, configuration):
+        """Record shared segment kinematics."""
+        calls.append("segments")
+        return segments(host, configuration)
 
-    monkeypatch.setattr(PlanarPCS, "routing_endpoint_kinematics", evaluate)
+    def compose(host, configuration, links, joints):
+        """Record shared world boundary composition."""
+        calls.append("boundaries")
+        return boundaries(host, configuration, links, joints)
+
+    monkeypatch.setattr(PlanarPCS, "routing_segment_kinematics", evaluate)
+    monkeypatch.setattr(PlanarPCS, "routing_boundary_poses", compose)
     configuration = jnp.array([2.0, 0.0, 0.0])
     solution = routing.solve_routing(robot, configuration)
-    assert calls == [(0, False), (0, True)]
+    assert calls == ["segments", "boundaries"]
     assert_allclose(solution.path_lengths, 2 * (0.5 - transverse) * np.sin(0.1))
     numerical = jax.jacfwd(
         lambda values: routing.solve_routing(robot, values).path_lengths

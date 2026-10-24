@@ -6032,6 +6032,66 @@ class GVS(SoftRobot):
                 "A span crossing a moving joint requires prescribed guides; split it at the joint."
             )
 
+    def routing_segment_kinematics(self, configuration):
+        """Integrate each GVS link once with a local body Jacobian.
+
+        Uses the host's Magnus cells and scaled strain bases. Only the current
+        link's coordinate block is propagated inside the integration scan.
+
+        Args:
+            configuration (Array): Configuration, shape ``(num_coordinates,)``.
+
+        Returns:
+            result (tuple[Array, Array, Array]): Local link transforms, body
+                Jacobians, and preceding joint transforms with shapes
+                ``(num_segments, 4, 4)``,
+                ``(num_segments, 6, num_coordinates)``, and
+                ``(num_segments, 4, 4)``. Base and joint Jacobian columns are zero.
+        """
+        _, internal = self.split_configuration(configuration)
+        gathered = self._min_size_gathered(internal)
+
+        def integrate(segment, coordinates):
+            """Return one full link transform and its local body Jacobian."""
+
+            def advance(carry, cell):
+                """Advance a local transform and Jacobian through one Magnus cell."""
+                transform, derivative = carry
+                step, tangent, adjoint, basis = self._magnus_jacobian_step_terms(
+                    self.segment_lengths[segment],
+                    self.integration_points[segment, cell + 1]
+                    - self.integration_points[segment, cell],
+                    coordinates,
+                    self.B_Z1[segment, cell],
+                    self.B_Z2[segment, cell],
+                    self.xi_ref_Z1[segment, cell],
+                    self.xi_ref_Z2[segment, cell],
+                )
+                return (
+                    transform @ step,
+                    adjoint @ (derivative + tangent @ basis),
+                ), None
+
+            initial = (jnp.eye(4), jnp.zeros((6, self.max_dof)))
+            (transform, derivative), _ = lax.scan(
+                advance, initial, jnp.arange(self.integration_points.shape[1] - 1)
+            )
+            return transform, derivative @ self.active_dof_map_blocks[segment, 1]
+
+        links, jacobians = vmap(integrate)(
+            jnp.arange(self.num_segments), gathered[:, 1]
+        )
+        joints = vmap(
+            lambda basis, reference, coordinates: self._joint_jacobian_step_terms(
+                basis, reference, coordinates
+            )[0]
+        )(self.B_joint, self.xi_ref_joint, gathered[:, 0])
+        return (
+            links,
+            jnp.pad(jacobians, ((0, 0), (0, 0), (self.num_base_coordinates, 0))),
+            joints,
+        )
+
     def routing_endpoint_kinematics(self, configuration, segment, at_end, offset):
         """Evaluate a guide on the correct side of a segment's entry joint.
 
