@@ -6002,14 +6002,10 @@ class GVS(SoftRobot):
                 Strain with shape ``(6,)`` and basis with shape
                 ``(6, num_internal_dofs)``.
             """
-            local = (
-                position - self.segment_end_positions[segment]
-            ) / self.segment_lengths[segment]
-            basis = self._eval_B_segment(segment, local[None])[0]
-            if self.scale_rotational_basis_by_length:
-                basis = basis.at[:3].divide(self.segment_lengths[segment])
-            strain = basis @ gathered[segment, 1] + self.xi_ref_Xs[segment, 0]
-            return strain, basis @ self.active_dof_map_blocks[segment, 1]
+            strains, bases = self._routing_strain_and_basis(
+                gathered[segment, 1], segment, position[None]
+            )
+            return strains[0], bases[0] @ self.active_dof_map_blocks[segment, 1]
 
         strains, basis = vmap(evaluate)(segment_indices, points)
         return strains, jnp.pad(basis, ((0, 0), (0, 0), (self.num_base_coordinates, 0)))
@@ -6035,6 +6031,33 @@ class GVS(SoftRobot):
             raise ValueError(
                 "A span crossing a moving joint requires prescribed guides; split it at the joint."
             )
+
+    def routing_endpoint_kinematics(self, configuration, segment, at_end, offset):
+        """Evaluate a guide on the correct side of a segment's entry joint.
+
+        Args:
+            configuration (Array): Host configuration, shape ``(num_coordinates,)``.
+            segment (int): Static segment index.
+            at_end (bool): Static flag selecting the link exit.
+            offset (Array): Material guide offset in metres, shape ``(3,)``.
+
+        Returns:
+            result (tuple[Array, Array]): World position and internal configuration
+                Jacobian, shaped ``(3,)`` and ``(3, num_coordinates)``. Rigid base
+                columns are zero.
+        """
+        if at_end or segment == 0:
+            return super().routing_endpoint_kinematics(
+                configuration, segment, at_end, offset
+            )
+        displacement, local_jacobian, _ = self.routing_guide_kinematics(
+            configuration, segment, jnp.zeros(3), offset
+        )
+        position = jnp.sum(self.segment_length[:segment])
+        point, rotation, jacobian = self._routing_point_kinematics(
+            configuration, position, displacement
+        )
+        return point, jacobian + rotation @ local_jacobian
 
     def routing_guide_kinematics(
         self, configuration: Array, segment: int, upstream: Array, downstream: Array
@@ -6067,6 +6090,27 @@ class GVS(SoftRobot):
         coincident = jnp.all(upstream == downstream) & jnp.all(fixed_point == 0)
         return endpoint - upstream, jacobian, coincident
 
+    def _routing_strain_and_basis(self, q_link, segment_index, points):
+        """Share material strain evaluation between both routing families.
+
+        Args:
+            q_link: Padded link coordinates, shape ``(max_dof,)``.
+            segment_index: Scalar link index.
+            points: Global backbone abscissae, shape ``(num_points,)``.
+
+        Returns:
+            Strains and local bases with shapes ``(num_points, 6)`` and
+            ``(num_points, 6, max_dof)``. No global basis or spatial derivative
+            is assembled unless the caller needs it.
+        """
+        length = self.segment_lengths[segment_index]
+        normalized = (points - self.segment_end_positions[segment_index]) / length
+        basis = self._eval_B_segment(segment_index, normalized)
+        if self.scale_rotational_basis_by_length:
+            basis = basis.at[:, :3, :].divide(length)
+        reference = self.xi_ref_Xs[segment_index, 0]
+        return jnp.einsum("pij,j->pi", basis, q_link) + reference, basis
+
     def _threadlike_strain_and_derivative(
         self,
         q_link: Array,
@@ -6088,13 +6132,10 @@ class GVS(SoftRobot):
         """
         length = self.segment_lengths[segment_index]
         normalized = (s_ps - self.segment_end_positions[segment_index]) / length
-        basis = self._eval_B_segment(segment_index, normalized)
+        xi_ps, _ = self._routing_strain_and_basis(q_link, segment_index, s_ps)
         basis_derivative = self._eval_dB_segment(segment_index, normalized)
         if self.scale_rotational_basis_by_length:
-            basis = basis.at[:, :3, :].divide(length)
             basis_derivative = basis_derivative.at[:, :3, :].divide(length)
-        reference = self.xi_ref_Xs[segment_index, 0]
-        xi_ps = jnp.einsum("pij,j->pi", basis, q_link) + reference
         dxi_ds_ps = jnp.einsum("pij,j->pi", basis_derivative, q_link) / length
         return xi_ps, dxi_ds_ps
 

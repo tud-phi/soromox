@@ -108,6 +108,66 @@ class SoftRobot(DynamicalSystem):
         """
         raise NotImplementedError("The host must implement routing_strain_and_basis.")
 
+    def _routing_point_kinematics(self, configuration, position, offset):
+        """Evaluate an offset point for internal routing derivatives.
+
+        Args:
+            configuration: Host configuration, shape ``(num_coordinates,)``.
+            position: Scalar backbone abscissa in metres.
+            offset: Material point offset, shape ``(3,)``.
+
+        Returns:
+            World position, rotation, and position Jacobian with shapes ``(3,)``,
+            ``(3, 3)``, and ``(3, num_coordinates)``. Base columns are zero:
+            only internal motion contributes to internal cable lengths.
+        """
+        pose, jacobian = self.forward_kinematics_and_jacobian_inertialframe(
+            configuration, position
+        )
+        internal = jacobian[..., jacobian.shape[-1] - self.num_internal_dofs :]
+        if self.is_planar:
+            cosine, sine = jnp.cos(pose[0]), jnp.sin(pose[0])
+            rotation = jnp.array([[cosine, -sine, 0], [sine, cosine, 0], [0, 0, 1]])
+            rotated = rotation @ offset
+            point = jnp.array([pose[1], pose[2], 0]) + rotated
+            derivative = jnp.pad(internal[1:], ((0, 1), (0, 0)))
+            derivative = (
+                derivative
+                + jnp.array([-rotated[1], rotated[0], 0])[:, None] * internal[0]
+            )
+        else:
+            rotation = pose[:3, :3]
+            rotated = rotation @ offset
+            point = pose[:3, 3] + rotated
+            derivative = internal[3:] + jnp.cross(internal[:3].T, rotated).T
+        return (
+            point,
+            rotation,
+            jnp.pad(derivative, ((0, 0), (self.num_base_coordinates, 0))),
+        )
+
+    def routing_endpoint_kinematics(self, configuration, segment, at_end, offset):
+        """Evaluate a prescribed guide at a segment entry or exit.
+
+        Args:
+            configuration (Array): Host configuration, shape ``(num_coordinates,)``.
+            segment (int): Static segment index.
+            at_end (bool): Static flag selecting the exit rather than entry frame.
+            offset (Array): Material guide offset in metres, shape ``(3,)``.
+
+        Returns:
+            result (tuple[Array, Array]): World guide position and its internal
+                configuration Jacobian, shaped ``(3,)`` and ``(3, num_coordinates)``.
+                Base columns are zero because rigid base motion preserves internal
+                lengths. Joint hosts distinguish upstream exit frames from
+                downstream entry frames.
+        """
+        position = jnp.sum(self.segment_length[: segment + int(at_end)])
+        point, _, jacobian = self._routing_point_kinematics(
+            configuration, position, offset
+        )
+        return point, jacobian
+
     def validate_routing_span(self, start: int, end: int) -> None:
         """Validate an interval with continuous material frames.
 

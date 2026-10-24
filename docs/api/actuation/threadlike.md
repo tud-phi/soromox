@@ -25,7 +25,7 @@ not model configuration-dependent rerouting, slack, actuator dynamics, or
 changes in pressure-chamber cross-section.
 
 For paths that change relative to the backbone as it deforms, see
-[Implicit threadlike routing](implicit-threadlike.md).
+[Configuration-dependent threadlike routing](implicit-threadlike.md).
 
 ## Routing
 

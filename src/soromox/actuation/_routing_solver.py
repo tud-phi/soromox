@@ -14,12 +14,21 @@ from slsqp_jax import SLSQP, QPConfig, SLSQPConfig, ToleranceConfig
 
 
 class RoutingSolverOptions(eqx.Module):
-    """Dimensionless solver tolerances and bounded iteration count.
+    """Separate numerical termination, physical feasibility, and sensitivity checks.
 
     Attributes:
         max_steps: Positive upper bound on SLSQP iterations.
-        tolerance: Positive solver tolerance. Independent residual verification
-            allows ten times this value, except for the multiplier sign check.
+        tolerance: Dimensionless SLSQP termination tolerance.
+        endpoint_tolerance: Maximum endpoint position residual in metres.
+        wall_tolerance: Maximum radial wall penetration in metres, also applied
+            to the continuous-span clearance bound by the routing strategy.
+        optimality_tolerance: Maximum normalized stationarity residual for
+            forward routing and its analytical envelope force evaluation.
+        complementarity_tolerance: Maximum normalized multiplier/residual product.
+        dual_tolerance: Maximum allowed negative wall multiplier magnitude.
+        sensitivity_tolerance: Stricter normalized KKT residual limit for
+            derivatives through the optimized coefficients. Forward acceptance
+            alone does not certify these derivatives.
         active_tolerance: Wall residual threshold used to identify active
             constraints; also the strict complementarity margin for derivatives.
         regularization: Positive diagonal addition to the primal KKT Hessian
@@ -28,6 +37,12 @@ class RoutingSolverOptions(eqx.Module):
 
     max_steps: int = eqx.field(static=True, default=200)
     tolerance: float = eqx.field(static=True, default=1e-8)
+    endpoint_tolerance: float = eqx.field(static=True, default=1e-8)
+    wall_tolerance: float = eqx.field(static=True, default=1e-6)
+    optimality_tolerance: float = eqx.field(static=True, default=1e-5)
+    complementarity_tolerance: float = eqx.field(static=True, default=1e-7)
+    dual_tolerance: float = eqx.field(static=True, default=1e-8)
+    sensitivity_tolerance: float = eqx.field(static=True, default=1e-7)
     active_tolerance: float = eqx.field(static=True, default=1e-6)
     regularization: float = eqx.field(static=True, default=1e-12)
 
@@ -44,12 +59,22 @@ class RoutingSolverOptions(eqx.Module):
             or self.max_steps < 1
         ):
             raise ValueError("max_steps must be a positive integer.")
-        for name in ("tolerance", "active_tolerance", "regularization"):
+        for name in (
+            "tolerance",
+            "active_tolerance",
+            "regularization",
+            "endpoint_tolerance",
+            "wall_tolerance",
+            "optimality_tolerance",
+            "complementarity_tolerance",
+            "dual_tolerance",
+            "sensitivity_tolerance",
+        ):
             value = getattr(self, name)
             if not math.isfinite(value) or value <= 0:
                 raise ValueError(f"{name} must be finite and positive.")
-        if self.active_tolerance < self.tolerance:
-            raise ValueError("active_tolerance must be at least tolerance.")
+        if self.active_tolerance < self.sensitivity_tolerance:
+            raise ValueError("active_tolerance must be at least sensitivity_tolerance.")
 
 
 class RoutingProblem(eqx.Module):
@@ -70,6 +95,8 @@ class RoutingProblem(eqx.Module):
         wall_matrix: Offset matrix, shape ``(constraints, dimensions, variables)``.
         wall_offset: Constant offsets, shape ``(constraints, dimensions)``.
         radius_squared: Squared normalized radii, shape ``(constraints,)``.
+        length_scale: Metres per normalized offset, used to interpret endpoint
+            and radial feasibility. Defaults to one for direct solver users.
     """
 
     tangent_matrix: Array
@@ -80,6 +107,7 @@ class RoutingProblem(eqx.Module):
     wall_matrix: Array
     wall_offset: Array
     radius_squared: Array
+    length_scale: Array | float = 1.0
 
 
 def _norm_and_unit(tangent):
@@ -237,6 +265,55 @@ def kkt_residual(state, problem, active):
     )
 
 
+def verify_solution(state, problem, options):
+    """Verify a solver state using independent physical and optimality limits.
+
+    Args:
+        state: Coefficients followed by equality and wall multipliers.
+        problem: Normalized affine routing data and physical offset scale.
+        options: Independent acceptance thresholds.
+
+    Returns:
+        Scalar boolean for the sampled problem. Continuous wall containment
+        is checked by the routing strategy after reconstructing its geometry.
+    """
+    count = problem.tangent_matrix.shape[-1]
+    coefficients = state[:count]
+    equality_multipliers = state[count : count + problem.target.size]
+    wall_multipliers = state[count + problem.target.size :]
+    wall_values = inequalities(coefficients, problem)
+    stationarity = (
+        objective(coefficients, problem)[1]
+        + problem.equality_matrix.T @ equality_multipliers
+        + inequality_jacobian(coefficients, problem).T @ wall_multipliers
+    )
+    offsets = problem.wall_offset + jnp.einsum(
+        "pin,n->pi", problem.wall_matrix, coefficients
+    )
+    radial_violation = (
+        jnp.linalg.norm(offsets, axis=-1) - jnp.sqrt(problem.radius_squared)
+    ) * problem.length_scale
+    endpoint_error = (
+        jnp.linalg.norm(equalities(coefficients, problem)) * problem.length_scale
+    )
+    tangent = problem.tangent_offset + jnp.einsum(
+        "pin,n->pi", problem.tangent_matrix, coefficients
+    )
+    return (
+        jnp.all(jnp.isfinite(state))
+        & jnp.all(jnp.sum(tangent**2, axis=-1) > 1e-24)
+        & jnp.all(jnp.isfinite(problem.length_scale) & (problem.length_scale > 0))
+        & (endpoint_error <= options.endpoint_tolerance)
+        & (jnp.max(radial_violation, initial=0.0) <= options.wall_tolerance)
+        & (jnp.max(jnp.abs(stationarity), initial=0.0) <= options.optimality_tolerance)
+        & (
+            jnp.max(jnp.abs(wall_multipliers * wall_values), initial=0.0)
+            <= options.complementarity_tolerance
+        )
+        & jnp.all(wall_multipliers >= -options.dual_tolerance)
+    )
+
+
 def _forward_solve(problem, initial, options):
     """Run SLSQP and independently verify its optimality conditions.
 
@@ -291,37 +368,7 @@ def _forward_solve(problem, initial, options):
             result.stats["multipliers_ineq"],
         )
     )
-    equality_multipliers = state[initial.size : initial.size + problem.target.size]
-    wall_multipliers = state[initial.size + problem.target.size :]
-    wall_values = inequalities(result.value, problem)
-    stationarity = (
-        objective(result.value, problem)[1]
-        + problem.equality_matrix.T @ equality_multipliers
-        + inequality_jacobian(result.value, problem).T @ wall_multipliers
-    )
-    tolerance = 10 * options.tolerance
-    verified = (
-        jnp.all(jnp.isfinite(state))
-        & jnp.all(
-            jnp.sum(
-                (
-                    problem.tangent_offset
-                    + jnp.einsum("pin,n->pi", problem.tangent_matrix, result.value)
-                )
-                ** 2,
-                axis=-1,
-            )
-            > 1e-24
-        )
-        & (
-            jnp.max(jnp.abs(equalities(result.value, problem)), initial=0.0)
-            <= tolerance
-        )
-        & (jnp.max(wall_values, initial=0.0) <= tolerance)
-        & (jnp.max(jnp.abs(stationarity), initial=0.0) <= tolerance)
-        & (jnp.max(jnp.abs(wall_multipliers * wall_values), initial=0.0) <= tolerance)
-        & jnp.all(wall_multipliers >= -options.tolerance)
-    )
+    verified = verify_solution(state, problem, options)
     diagnostics = jnp.array(
         [
             verified,
@@ -395,15 +442,15 @@ def _solve_problem_jvp(options, primals, tangents):
             wall_values < -options.active_tolerance,
         )
     )
-    primal_feasible = jnp.all(wall_values <= options.tolerance * 10)
-    dual_feasible = jnp.all(wall_multipliers >= -options.tolerance)
+    primal_feasible = jnp.all(wall_values <= options.sensitivity_tolerance)
+    dual_feasible = jnp.all(wall_multipliers >= -options.dual_tolerance)
     tangent = problem.tangent_offset + jnp.einsum(
         "pin,n->pi", problem.tangent_matrix, state[:num_coefficients]
     )
     nondegenerate = jnp.all(jnp.linalg.norm(tangent, axis=-1) > 1e-12)
     valid = (
         (diagnostics[0] > 0)
-        & (jnp.max(jnp.abs(residual)) <= 10 * options.tolerance)
+        & (jnp.max(jnp.abs(residual)) <= options.sensitivity_tolerance)
         & regular
         & strict_complementarity
         & primal_feasible

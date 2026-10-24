@@ -14,6 +14,7 @@ from soromox.actuation import (
     RoutingSpanParams,
     ShortestPathRouting,
     ShortestPathRoutingParams,
+    StraightSpanRouting,
 )
 from soromox.systems import (
     GVS,
@@ -73,16 +74,19 @@ def _joint_robot(kind="revolute", floating=False):
     )
 
 
-def _guided_routing(offset=0.0):
+def _guided_routing(offset=0.0, strategy=ShortestPathRouting):
     """Build one tendon with guides at each end of two sections.
 
     Args:
         offset: Local y offset of all guides in metres.
+        strategy: Routing strategy class to construct.
 
     Returns:
         Shortest path routing with two spans and one joint connection.
     """
     offsets = jnp.array([[0, offset, 0], [0, offset, 0]], dtype=float)
+    if strategy is StraightSpanRouting:
+        return strategy(RoutingSpanParams(offsets, offsets, (0, 0), (0, 1), (0, 1)))
     return ShortestPathRouting(
         ShortestPathRoutingParams(
             RoutingSpanParams(offsets, offsets, (0, 0), (0, 1), (0, 1)),
@@ -94,10 +98,11 @@ def _guided_routing(offset=0.0):
 
 @pytest.mark.parametrize("offset", [0.0, 0.004])
 @pytest.mark.parametrize("angle", [-0.4, 0.4])
-def test_revolute_guide_lengths_and_analytical_jacobians(offset, angle):
+@pytest.mark.parametrize("strategy", [ShortestPathRouting, StraightSpanRouting])
+def test_revolute_guide_lengths_and_analytical_jacobians(offset, angle, strategy):
     """Check centered and offset guides against the rotational chord formula."""
     robot = _joint_robot()
-    routing = _guided_routing(offset)
+    routing = _guided_routing(offset, strategy)
     configuration = jnp.array([0, angle, 0], dtype=float)
     solve = eqx.filter_jit(lambda values: routing.solve_routing(robot, values))
     solution = solve(configuration)
@@ -119,14 +124,30 @@ def test_revolute_guide_lengths_and_analytical_jacobians(offset, angle):
     forward = jax.jacfwd(lambda values: solve(values).path_lengths)(configuration)
     assert_allclose(jacobian[0], reverse, atol=1e-8)
     assert_allclose(jacobian, forward, atol=1e-8)
+    fractions = jnp.array([0.0, 0.5, 1.0])
+    points = routing.span_positions(robot, configuration, solution, 1, fractions)
+    expected_points = jnp.stack(
+        (
+            0.1 + 0.1 * fractions * np.cos(angle) - offset * np.sin(angle),
+            0.1 * fractions * np.sin(angle) + offset * np.cos(angle),
+            jnp.zeros_like(fractions),
+        ),
+        axis=-1,
+    )
+    base = robot.forward_kinematics(configuration, 0.0)
+    expected_points = expected_points @ base[:3, :3].T + base[:3, 3]
+    assert_allclose(points, expected_points, atol=1e-9)
 
 
-def test_collapsed_offset_connection_is_reported_without_poisoning_centered_guides():
+@pytest.mark.parametrize("strategy", [ShortestPathRouting, StraightSpanRouting])
+def test_collapsed_offset_connection_is_reported_without_poisoning_centered_guides(
+    strategy,
+):
     """A closing chord is nonsmooth; a guide fixed at the pivot is smooth."""
     robot = _joint_robot()
     configuration = jnp.zeros(robot.num_coordinates)
     for offset in (0.0, 0.004):
-        routing = _guided_routing(offset)
+        routing = _guided_routing(offset, strategy)
         solve = eqx.filter_jit(
             lambda values, routing=routing: routing.solve_routing(robot, values)
         )
@@ -155,10 +176,13 @@ def test_collapsed_offset_connection_is_reported_without_poisoning_centered_guid
 
 @pytest.mark.parametrize("offset", [0.0, 0.004])
 @pytest.mark.parametrize("displacement", [-0.012, 0.012])
-def test_prismatic_guides_include_translation_and_joint_force(offset, displacement):
+@pytest.mark.parametrize("strategy", [ShortestPathRouting, StraightSpanRouting])
+def test_prismatic_guides_include_translation_and_joint_force(
+    offset, displacement, strategy
+):
     """Axial joint displacement contributes its absolute value to cable length."""
     robot = _joint_robot("prismatic")
-    routing = _guided_routing(offset)
+    routing = _guided_routing(offset, strategy)
     configuration = jnp.array([0, displacement, 0], dtype=float)
     solution = eqx.filter_jit(routing.solve_routing)(robot, configuration)
     assert bool(solution.converged)
@@ -204,7 +228,8 @@ def test_unsplit_moving_joint_requires_guides():
 
 
 @pytest.mark.parametrize("kind", ["planar", "spatial", "gvs"])
-def test_floating_base_routing_invariance_and_velocity_force_dimensions(kind):
+@pytest.mark.parametrize("strategy", [ShortestPathRouting, StraightSpanRouting])
+def test_floating_base_routing_invariance_and_velocity_force_dimensions(kind, strategy):
     """Internal routing is invariant to base pose and yields zero base wrench."""
     if kind == "gvs":
         robot = _joint_robot(floating=True)
@@ -241,6 +266,8 @@ def test_floating_base_routing_invariance_and_velocity_force_dimensions(kind):
         internal = (
             jnp.zeros(robot.num_internal_dofs).at[0 if kind == "planar" else 2].set(0.2)
         )
+    if strategy is StraightSpanRouting:
+        routing = strategy(routing.spans)
     base = (
         jnp.array([0.3, 0.1, -0.2])
         if robot.is_planar

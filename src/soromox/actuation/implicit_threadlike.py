@@ -449,8 +449,8 @@ class RoutingSpanSolution(eqx.Module):
     Coefficients are nodal transverse slopes ``d(offset)/ds``, shaped
     ``(nodes, 2)`` in space or ``(nodes, 1)`` in the plane. Multipliers use
     normalized objectives/constraints and the nonpositive wall convention.
-    ``dense_wall_violation`` is measured in metres; sampled convergence alone
-    does not certify containment between samples.
+    ``dense_wall_violation`` is measured in metres. Convergence also requires
+    the continuous interpolation bound to meet the physical wall tolerance.
 
     Attributes:
         coefficients: Physical transverse offset slopes, shape ``(nodes, 1 or 2)``.
@@ -466,6 +466,9 @@ class RoutingSpanSolution(eqx.Module):
         complementarity_residual: Maximum absolute wall residual times multiplier.
         dense_wall_violation: Maximum sampled penetration in metres on the checking
             grid.
+        wall_violation_bound: Conservative upper bound on penetration between
+            checking points, in metres, using the quadratic offset interpolation
+            error on each element. Included in convergence acceptance.
     """
 
     coefficients: Array
@@ -480,20 +483,40 @@ class RoutingSpanSolution(eqx.Module):
     stationarity_residual: Array
     complementarity_residual: Array
     dense_wall_violation: Array
+    wall_violation_bound: Array
+
+
+class StraightSpanSolution(eqx.Module):
+    """A straight span between prescribed guides, with no optimization state.
+
+    Attributes:
+        start_position: World entry guide, shape ``(3,)``, in metres.
+        end_position: World exit guide, shape ``(3,)``, in metres.
+        length: Distance between guides in metres.
+        length_jacobian: Analytical configuration derivative, shape
+            ``(num_coordinates,)``, with zero base columns.
+        converged: Whether endpoints are finite and the span has positive length.
+    """
+
+    start_position: Array
+    end_position: Array
+    length: Array
+    length_jacobian: Array
+    converged: Array
 
 
 class RoutingSolution(eqx.Module):
     """Solved spans and connecting guides, grouped into physical filament paths.
 
     Attributes:
-        spans: Optimized portions between prescribed guides, in input span order.
+        spans: Resolved portions between prescribed guides, in input span order.
         path_lengths: Total lengths in metres, shape ``(num_paths,)``, including
             straight connections between adjacent spans of the same path.
         guides: Straight connections in downstream span order. An empty tuple
             means every physical path consists of a single span.
     """
 
-    spans: tuple[RoutingSpanSolution, ...]
+    spans: tuple[RoutingSpanSolution | StraightSpanSolution, ...]
     path_lengths: Array
     guides: tuple[RoutingGuideSolution, ...] = ()
 
@@ -503,7 +526,7 @@ class RoutingSolution(eqx.Module):
 
         Returns:
             result (Array): Scalar boolean indicating that every span satisfies the
-                sampled solve checks and guide lengths are finite.
+                solve and physical clearance checks and guide lengths are finite.
         """
         return jnp.all(
             jnp.asarray([span.converged for span in self.spans], dtype=bool)
@@ -571,11 +594,41 @@ def _guide_length_jvp(primals, tangents):
     return length, jnp.dot(direction, displacement_tangent)
 
 
-class ImplicitThreadlikeRouting(eqx.Module):
+@jax.custom_jvp
+def _validated_length(length, valid):
+    """Retain a length value while invalidating derivatives of rejected geometry.
+
+    Args:
+        length: Computed scalar length in metres.
+        valid: Scalar boolean indicating physical and numerical acceptance.
+
+    Returns:
+        The unchanged length. Its derivative is NaN when validation fails.
+    """
+    return length
+
+
+@_validated_length.defjvp
+def _validated_length_jvp(primals, tangents):
+    """Propagate length derivatives only for accepted physical routes.
+
+    Args:
+        primals: Length and validation flag.
+        tangents: Their directional perturbations.
+
+    Returns:
+        Length and its validated directional derivative.
+    """
+    length, valid = primals
+    return length, tangents[0] * jnp.where(valid, 1.0, jnp.nan)
+
+
+class ConfigurationDependentThreadlikeRouting(eqx.Module):
     """Interface for configuration-dependent filament routing.
 
     A path represents one physical filament; a span is a portion between
-    prescribed guides. Solvers return their state explicitly for warm starts.
+    prescribed guides. Strategies return resolved geometry; optimizers also
+    return their state explicitly for warm starts.
 
     Attributes:
         spans: Shared guide geometry and mapping of spans to physical paths.
@@ -589,6 +642,56 @@ class ImplicitThreadlikeRouting(eqx.Module):
         Returns:
             result (RoutingSpanParams): RoutingSpanParams containing guide offsets and
                 span-to-path connectivity.
+        """
+        ...
+
+    @abstractmethod
+    def path_length_jacobian(self, robot, configuration, solution):
+        """Evaluate the analytical length derivative at a resolved route.
+
+        Args:
+            robot (SoftRobot): Host supplying guide and material kinematics.
+            configuration (Array): Host configuration, shape ``(num_coordinates,)``.
+            solution (RoutingSolution): Solution for this routing and configuration.
+
+        Returns:
+            result (Array): Length Jacobian, shape ``(num_paths, num_coordinates)``.
+        """
+        ...
+
+    def path_velocity_jacobian(self, robot, configuration, solution):
+        """Map host velocities to path length rates.
+
+        Args:
+            robot (SoftRobot): Host supplying base coordinate and velocity dimensions.
+            configuration (Array): Configuration, shape ``(num_coordinates,)``.
+            solution (RoutingSolution): Solution at this configuration.
+
+        Returns:
+            result (Array): Jacobian, shape ``(num_paths, num_velocities)``. Positive
+                filament tensions produce generalized forces ``-jacobian.T @ tension``.
+        """
+        jacobian = self.path_length_jacobian(robot, configuration, solution)
+        return jnp.pad(
+            jacobian[:, robot.num_base_coordinates :],
+            ((0, 0), (robot.num_base_velocities, 0)),
+        )
+
+    @abstractmethod
+    def span_positions(self, robot, configuration, solution, span_index, fractions):
+        """Sample a resolved span in world coordinates.
+
+        Args:
+            robot (SoftRobot): Host supplying forward kinematics.
+            configuration (Array): Host configuration, shape ``(num_coordinates,)``.
+            solution (RoutingSolution): Solution at this configuration.
+            span_index (int): Static span index.
+            fractions (Array): One-dimensional sample fractions in ``[0, 1]``.
+
+        Returns:
+            result (Array): World positions, shape ``(num_samples, 3)``, in metres.
+                Fractions parameterize the backbone interval for optimized routes
+                and the straight line for straight spans.
         """
         ...
 
@@ -636,7 +739,7 @@ class ImplicitThreadlikeRouting(eqx.Module):
                 ``None``.
 
         Returns:
-            result (RoutingSolution): RoutingSolution with optimized spans, guide
+            result (RoutingSolution): RoutingSolution with resolved spans, guide
                 connections, and total path lengths.
         """
         ...
@@ -723,7 +826,7 @@ def _host_strains(robot, configuration, segment_indices, points):
     return robot.routing_strain_and_basis(configuration, segment_indices, points)[0]
 
 
-class ShortestPathRouting(ImplicitThreadlikeRouting):
+class ShortestPathRouting(ConfigurationDependentThreadlikeRouting):
     """Shortest feasible paths through hollow sections and prescribed guides.
 
     A path represents one physical tendon or filament. A span is the portion
@@ -740,7 +843,7 @@ class ShortestPathRouting(ImplicitThreadlikeRouting):
     Attributes:
         params: Guide offsets, span topology, and circular lumen dimensions.
         discretization: Piecewise linear slope mesh and sampling counts.
-        solver_options: Dimensionless solver and sensitivity tolerances.
+        solver_options: Physical feasibility, solver, and sensitivity tolerances.
 
     References:
         Mathew, A. T., Alkayas, A. Y., Alshehhi, A. A. S., Adamu, Y. A.,
@@ -949,6 +1052,7 @@ class ShortestPathRouting(ImplicitThreadlikeRouting):
                 (wall_points.size, dimension),
             ),
             (self.params.domain.inner_radius[wall_segments] / radius_scale) ** 2,
+            radius_scale,
         )
         expected = (knots.size, dimension)
         if initial_guess is None:
@@ -975,18 +1079,7 @@ class ShortestPathRouting(ImplicitThreadlikeRouting):
             )
         )
         complementarity = jnp.max(jnp.abs(wall_multipliers * wall_values))
-        tangent = problem.tangent_offset + jnp.einsum(
-            "pin,n->pi", problem.tangent_matrix, coefficients
-        )
-        tolerance = self.solver_options.tolerance * 10
-        converged = (
-            (diagnostics[0] > 0)
-            & (primal <= tolerance)
-            & (stationarity <= tolerance)
-            & (complementarity <= tolerance)
-            & jnp.all(wall_multipliers >= -tolerance)
-            & jnp.all(jnp.linalg.norm(tangent, axis=-1) > 1e-12)
-        )
+        converged = diagnostics[0] > 0
         physical_coefficients = coefficients * variable_scale
         dense_count = self.discretization.validation_samples_per_element
         dense_points = (
@@ -1007,10 +1100,25 @@ class ShortestPathRouting(ImplicitThreadlikeRouting):
                 - self.params.domain.inner_radius[dense_segments]
             ),
         )
+        element_offsets = dense_offsets.reshape(-1, dense_count + 1, 3)
+        element_radii = self.params.domain.inner_radius[dense_segments].reshape(
+            -1, dense_count + 1
+        )[:, 0]
+        slopes = physical_coefficients.reshape(knots.size, dimension)
+        curvature = jnp.linalg.norm(jnp.diff(slopes, axis=0), axis=-1) / jnp.diff(knots)
+        interpolation_error = curvature * (jnp.diff(knots) / dense_count) ** 2 / 8
+        radial_bound = (
+            jnp.max(jnp.linalg.norm(element_offsets, axis=-1), axis=1)
+            + interpolation_error
+        )
+        violation_bound = jnp.maximum(0.0, jnp.max(radial_bound - element_radii))
+        converged = converged & (violation_bound <= self.solver_options.wall_tolerance)
         return RoutingSpanSolution(
             physical_coefficients.reshape(expected),
             knots,
-            objective(coefficients, problem)[0] * objective_scale,
+            _validated_length(
+                objective(coefficients, problem)[0] * objective_scale, converged
+            ),
             equality_multipliers,
             wall_multipliers,
             wall_values >= -self.solver_options.active_tolerance,
@@ -1020,6 +1128,7 @@ class ShortestPathRouting(ImplicitThreadlikeRouting):
             stationarity,
             complementarity,
             violation,
+            violation_bound,
         )
 
     def span_offsets(self, solution: RoutingSolution, span_index: int, points: Array):
@@ -1043,6 +1152,55 @@ class ShortestPathRouting(ImplicitThreadlikeRouting):
         return self.spans.start_offset[span_index] + jnp.einsum(
             "pin,n->pi", basis, span.coefficients.ravel()
         )
+
+    def span_positions(self, robot, configuration, solution, span_index, fractions):
+        """Sample an optimized span in world coordinates.
+
+        Args:
+            robot (SoftRobot): Host supplying forward kinematics.
+            configuration (Array): Configuration, shape ``(num_coordinates,)``.
+            solution (RoutingSolution): Resolved routing at this configuration.
+            span_index (int): Static span index.
+            fractions (Array): One-dimensional fractions of the backbone interval.
+
+        Returns:
+            result (Array): World positions in metres, shape ``(num_samples, 3)``.
+        """
+        span = solution.spans[span_index]
+        fractions = jnp.atleast_1d(fractions)
+        points = span.knots[0] + fractions * (span.knots[-1] - span.knots[0])
+        offsets = self.span_offsets(solution, span_index, points)
+
+        def sample(position, offset):
+            """Transform one material offset at a backbone abscissa.
+
+            Args:
+                position: Scalar backbone abscissa in metres.
+                offset: Material offset, shape ``(3,)``.
+
+            Returns:
+                World position, shape ``(3,)``.
+            """
+            pose = robot.forward_kinematics(configuration, position)
+            if robot.is_planar:
+                cosine, sine = jnp.cos(pose[0]), jnp.sin(pose[0])
+                return jnp.array(
+                    [
+                        pose[1] + cosine * offset[0] - sine * offset[1],
+                        pose[2] + sine * offset[0] + cosine * offset[1],
+                        0.0,
+                    ]
+                )
+            return pose[:3, :3] @ offset + pose[:3, 3]
+
+        positions = jax.vmap(sample)(points, offsets)
+        entry, _ = robot.routing_endpoint_kinematics(
+            configuration,
+            self.spans.start_segment_index[span_index],
+            False,
+            self.spans.start_offset[span_index],
+        )
+        return jnp.where((fractions == 0)[:, None], entry, positions)
 
     def path_length_jacobian(self, robot, configuration, solution: RoutingSolution):
         """Evaluate the optimal length gradient at an already solved route.
@@ -1132,26 +1290,3 @@ class ShortestPathRouting(ImplicitThreadlikeRouting):
                 jacobian = jacobian.at[path].add(gradient)
             previous[path] = index
         return jacobian
-
-    def path_velocity_jacobian(self, robot, configuration, solution: RoutingSolution):
-        """Map generalized velocities to routed path length rates.
-
-        Args:
-            robot (SoftRobot): Continuum host with configuration and velocity
-                dimensions.
-            configuration (Array): Generalized coordinates, shape
-                ``(num_coordinates,)``.
-            solution (RoutingSolution): Converged routing for this geometry and
-                configuration.
-
-        Returns:
-            result (Array): Matrix with shape ``(num_paths, num_velocities)``. Internal
-                columns match the length Jacobian and floating base velocity columns are
-                zero. Tendon forces are ``-matrix.T @ tension``. This handles the
-                different quaternion configuration and spatial velocity dimensions.
-        """
-        jacobian = self.path_length_jacobian(robot, configuration, solution)
-        return jnp.pad(
-            jacobian[:, robot.num_base_coordinates :],
-            ((0, 0), (robot.num_base_velocities, 0)),
-        )

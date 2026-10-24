@@ -1,9 +1,48 @@
-# Implicit threadlike routing
+# Configuration-dependent threadlike routing
 
-`ShortestPathRouting` computes a path inside a circular lumen for a supplied
-backbone configuration. This is the routing layer of the implicit actuation
-model. The runnable example below supplies tendon forces to the robot dynamics
-and solves static equilibrium with Optimistix.
+`ConfigurationDependentThreadlikeRouting` describes paths whose material offsets
+change with robot configuration. `StraightSpanRouting` resolves straight cables
+between prescribed guides in closed form. `ShortestPathRouting` optimizes paths
+inside a circular lumen. Both expose lengths, analytical configuration and
+velocity Jacobians, and world-coordinate sampling through `span_positions`.
+The runnable example below supplies tendon forces to the robot dynamics and
+solves static equilibrium with Optimistix.
+
+## Straight spans without wall contact
+
+Use this strategy when the operating envelope excludes relevant wall contact:
+
+```python
+from soromox.actuation import RoutingSpanParams, StraightSpanRouting
+
+spans = RoutingSpanParams(
+    start_offset=[[0.0, 0.002, 0.0]],
+    end_offset=[[0.0, 0.002, 0.0]],
+    span_path_index=(0,),
+    start_segment_index=(0,),
+    end_segment_index=(0,),
+)
+routing = StraightSpanRouting(spans)
+solution = routing.solve_routing(robot, configuration)
+lengths = solution.path_lengths
+jacobian = routing.path_velocity_jacobian(robot, configuration, solution)
+force = -jacobian.T @ tension
+positions = routing.span_positions(robot, configuration, solution, 0, fractions)
+```
+
+Each span has length `norm(exit_position - entry_position)`. Its analytical
+derivative uses the endpoint position Jacobians. `StraightSpanSolution` stores
+world endpoints, length, length Jacobian, and validity. No optimization state or
+lumen geometry is required. The caller guarantees clearance; convergence only
+checks finite geometry and nonzero span length. Sampling interpolates the world
+line directly, including for folded backbones where an offset graph can fail.
+This ideal model excludes slack, bending stiffness, and compression buckling.
+
+Both strategies retain prescribed upstream and downstream guides at moving
+joints and include their connecting cable lengths. Shared `RoutingSpanParams`
+can be reused when switching strategies. `with_params` replaces numerical guide
+geometry while preserving topology. No runtime autodiff is used to evaluate the
+first length Jacobian.
 
 The routing solver is installed with the core package:
 
@@ -20,7 +59,7 @@ Compression-driven elastic rods need a separate routing strategy.
 
 `RoutingSpanParams` holds shared endpoints and connectivity. A **path** is one
 physical tendon or filament associated with an actuator channel. A **span** is
-its optimized portion between two prescribed guides. The **lumen** is the hollow
+its portion between two prescribed guides. The **lumen** is the hollow
 interior of a section within which that portion can move.
 `ShortestPathRoutingParams` combines those spans with `CircularLumenParams`.
 All offsets and radii use metres. Indices are zero-based and inclusive.
@@ -100,14 +139,38 @@ before these checks pass.
 The solver normalizes slopes by the entry radius divided by span length,
 objective length by entry-radius squared divided by span length, endpoint
 residuals by entry radius, and wall constraints by entry-radius squared.
-This makes geometric scaling explicit and keeps solver tolerances dimensionless.
+This makes geometric scaling explicit. Optimization residuals are dimensionless;
+physical acceptance budgets use metres.
 The returned coefficients are converted back to physical offset slopes.
 
-`dense_wall_violation` is the maximum penetration in metres on a denser checking
-grid, including element endpoints. A converged sampled optimization can still
-have positive penetration between constraint points. Refine the routing mesh
-and constraint sampling to meet the application's clearance tolerance. The dense
-check is also sampled and is not a proof of continuous containment.
+Acceptance thresholds in `RoutingSolverOptions` are independent:
+
+| Attribute | Default | Meaning |
+| --- | ---: | --- |
+| `tolerance` | `1e-8` | SLSQP termination tolerance |
+| `endpoint_tolerance` | `1e-8` m | Maximum endpoint position error |
+| `wall_tolerance` | `1e-6` m | Maximum continuous-span radial penetration bound |
+| `optimality_tolerance` | `1e-5` | Maximum normalized stationarity residual |
+| `complementarity_tolerance` | `1e-7` | Maximum normalized multiplier/residual product |
+| `dual_tolerance` | `1e-8` | Allowed negative multiplier magnitude |
+| `sensitivity_tolerance` | `1e-7` | KKT residual limit for coefficient derivatives |
+
+These defaults are numerical acceptance budgets, not universal bounds on force
+or solution error. Conditioning and discretization still matter. The first
+length Jacobian uses the envelope expression at an accepted forward solution.
+Differentiating the coefficients or forces additionally requires the stricter
+sensitivity checks, an adequately conditioned KKT matrix, and an unambiguous
+active set. Such derivatives can be NaN even when the forward solution converges.
+
+`dense_wall_violation` reports observed penetration on the checking grid.
+`wall_violation_bound` adds a conservative interpolation error bound: on each
+checking interval of width `h`, a quadratic offset differs from its linear
+interpolant by at most `norm(offset_second_derivative) * h**2 / 8`.
+The maximum endpoint norm plus this error bounds the entire interval's norm.
+`solution.converged` requires this continuous bound to meet `wall_tolerance`.
+Increase validation sampling if the bound is too conservative; refine the
+optimization mesh and wall constraints if actual penetration is excessive.
+Rejected geometry also yields invalid length derivatives.
 
 `routing.span_offsets(solution, span_index, points)` samples the material-frame
 offset at global backbone coordinates. Supply points within that span. The
@@ -196,8 +259,11 @@ This distinction matters for spatial bases, whose quaternion pose has seven
 coordinates and whose velocity has six components.
 
 Host implementations provide `routing_strain_and_basis`,
-`routing_guide_kinematics`, and `validate_routing_span`. The first two return
-analytical configuration derivatives. The routing strategy does not inspect
+`routing_endpoint_kinematics`, `routing_guide_kinematics`, and
+`validate_routing_span`. Endpoint kinematics distinguish entry and exit frames
+at a joint and return internal configuration derivatives with zero base columns.
+GVS shares its local material-strain evaluator with standard threadlike routing;
+global basis assembly is only performed when needed. The routing strategy does not inspect
 private attributes to select a rod model. A span crossing a moving joint without
 prescribed guides is rejected because there is no joint passage geometry.
 
@@ -262,3 +328,25 @@ Broader wall-contact regions exposed SLSQP convergence failures during example
 development. Such results are rejected by the residual checks. Robust simulation
 through these contact regimes remains further work; the included animations do
 not validate it.
+
+## Optimization structure
+
+Choose straight spans explicitly when contact is irrelevant. Wall-aware routing
+uses one SLSQP solve per span. At a fixed backbone configuration the sampled
+problem has an affine tangent norm objective, linear endpoint equalities, and
+convex circular wall constraints. The solver receives analytical gradients,
+constraint Jacobians, and Hessian products.
+
+The outer static equilibrium solve belongs to the example. Optimistix updates
+the robot configuration, and each residual evaluation resolves the routes at
+that configuration before computing tendon forces.
+
+## Routing interfaces
+
+::: soromox.actuation.ConfigurationDependentThreadlikeRouting
+
+::: soromox.actuation.StraightSpanRouting
+
+::: soromox.actuation.ShortestPathRouting
+
+::: soromox.actuation.RoutingSolverOptions

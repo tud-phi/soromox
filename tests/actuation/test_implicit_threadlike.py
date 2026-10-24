@@ -76,7 +76,7 @@ def _robot(lengths=(0.1,)):
     )
 
 
-def _routing(spans=None, radii=(0.02,), elements=3, max_steps=200):
+def _routing(spans=None, radii=(0.02,), elements=3, max_steps=200, wall_tolerance=1e-6):
     return ShortestPathRouting(
         ShortestPathRoutingParams(
             _spans() if spans is None else spans, CircularLumenParams(radii)
@@ -84,7 +84,9 @@ def _routing(spans=None, radii=(0.02,), elements=3, max_steps=200):
         PiecewiseLinearRoutingDiscretization(
             elements_per_segment=elements, quadrature_order=3
         ),
-        RoutingSolverOptions(max_steps=max_steps, tolerance=1e-8),
+        RoutingSolverOptions(
+            max_steps=max_steps, tolerance=1e-8, wall_tolerance=wall_tolerance
+        ),
     )
 
 
@@ -280,7 +282,7 @@ def test_shortest_path_length_derivative_matches_resolved_differences():
 
 def test_envelope_gradient_at_wall_contact_matches_finite_differences():
     robot = _robot()
-    routing = _routing(radii=(0.001,))
+    routing = _routing(radii=(0.001,), wall_tolerance=3e-5)
     configuration = jnp.array([3.0, 0.0, 0.0])
     solution = routing.solve_routing(robot, configuration)
     gradient = routing.path_length_jacobian(robot, configuration, solution)
@@ -363,12 +365,32 @@ def test_wall_contact_limits_routing_and_reports_sampling_error():
     routing = _routing(radii=(0.001,), elements=3)
     solution = routing.solve_routing(robot, jnp.array([3.0, 0.0, 0.0]))
     span = solution.spans[0]
-    assert bool(solution.converged)
+    assert not bool(solution.converged)
     assert bool(jnp.any(span.active_mask))
     assert bool(jnp.any(span.inequality_multipliers > 0))
     assert 2 * np.sin(0.15) / 3 < float(span.length) < 0.1
     assert float(span.primal_residual) < 1e-7
-    assert float(span.dense_wall_violation) >= 0
+    assert float(span.dense_wall_violation) > routing.solver_options.wall_tolerance
+    assert float(span.wall_violation_bound) >= float(span.dense_wall_violation)
+    assert bool(
+        jnp.all(
+            jnp.isnan(
+                routing.path_length_jacobian(
+                    robot, jnp.array([3.0, 0.0, 0.0]), solution
+                )
+            )
+        )
+    )
+    gradient = jax.grad(
+        lambda curvature: routing.solve_routing(
+            robot, jnp.array([curvature, 0.0, 0.0])
+        ).path_lengths.sum()
+    )(3.0)
+    assert jnp.isnan(gradient)
+    accepted = _routing(radii=(0.001,), wall_tolerance=3e-5).solve_routing(
+        robot, jnp.array([3.0, 0.0, 0.0])
+    )
+    assert bool(accepted.converged)
 
 
 def test_iteration_limit_and_contact_transition_do_not_return_valid_gradients():
@@ -391,6 +413,35 @@ def test_iteration_limit_and_contact_transition_do_not_return_valid_gradients():
 
     assert jnp.isnan(jax.jacfwd(position)(0.5))
     assert jnp.isnan(jax.grad(position)(0.5))
+
+
+def test_continuous_wall_bound_catches_a_peak_between_validation_points(monkeypatch):
+    """Certify the quadratic interior even when checking endpoints miss it.
+
+    Args:
+        monkeypatch: Fixture supplying a prescribed polynomial solver state.
+    """
+    from soromox.actuation import implicit_threadlike
+
+    routing = ShortestPathRouting(
+        _routing(elements=1).params,
+        PiecewiseLinearRoutingDiscretization(
+            elements_per_segment=1, validation_samples_per_element=1
+        ),
+    )
+    monkeypatch.setattr(
+        implicit_threadlike,
+        "solve_problem",
+        lambda problem, initial, options: (
+            jnp.array([5.0, -5.0, 0.0, 0.0, 0.0]),
+            jnp.array([1.0, 1.0]),
+        ),
+    )
+    solution = routing.solve_routing(_robot(), jnp.zeros(3))
+    span = solution.spans[0]
+    assert_allclose(span.dense_wall_violation, 0.0, atol=1e-14)
+    assert_allclose(span.wall_violation_bound, 0.005, atol=1e-14)
+    assert not bool(solution.converged)
 
 
 def test_spatial_pcs_multiple_paths():
