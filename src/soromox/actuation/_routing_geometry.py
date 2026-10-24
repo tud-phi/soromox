@@ -2,24 +2,7 @@
 
 import jax.numpy as jnp
 
-from soromox.utils.geometry.kinematics import transform_point
-
-
-def validate_span(robot, start, end):
-    """Require guides wherever a span crosses a moving joint.
-
-    Args:
-        robot (SoftRobot): Robot providing static joint topology.
-        start (int): Inclusive first segment index.
-        end (int): Inclusive last segment index.
-
-    Raises:
-        ValueError: A moving joint lies inside the span.
-    """
-    if any(start < index <= end for index in robot.moving_joint_indices):
-        raise ValueError(
-            "A span crossing a moving joint requires prescribed guides; split it at the joint."
-        )
+from soromox.utils.geometry.poses import transform_point
 
 
 def guide_kinematics(robot, configuration, segment, upstream, downstream):

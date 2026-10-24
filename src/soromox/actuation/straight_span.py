@@ -1,20 +1,17 @@
 """Closed-form routing between prescribed guides without wall contact."""
 
-import equinox as eqx
 import jax
 import jax.numpy as jnp
 
-from soromox.utils.geometry.kinematics import segment_boundary_poses
+from soromox.systems.params import _contains_tracer
+from soromox.utils.geometry.poses import segment_boundary_poses
 from soromox.utils.lie_algebra import se3
 
-from ._routing_geometry import guide_kinematics, validate_span
 from .implicit_threadlike import (
     ConfigurationDependentThreadlikeRouting,
-    RoutingGuideSolution,
     RoutingSolution,
     RoutingSpanParams,
     StraightSpanSolution,
-    _contains_tracer,
     _guide_length,
 )
 
@@ -43,49 +40,6 @@ class StraightSpanRouting(ConfigurationDependentThreadlikeRouting):
             result (RoutingSpanParams): This strategy's guide geometry.
         """
         return self.params
-
-    def with_params(self, params):
-        """Replace numerical guide geometry while retaining topology.
-
-        Args:
-            params (RoutingSpanParams): Replacement with identical topology.
-
-        Returns:
-            result (StraightSpanRouting): Validated replacement parameters.
-        """
-        self.params.assert_same_topology(params)
-        params.validate_for_update()
-        return eqx.tree_at(lambda routing: routing.params, self, params)
-
-    def validate_structure_for_robot(self, robot):
-        """Validate span connectivity and prescribed guides at moving joints.
-
-        Args:
-            robot (SoftRobot): Continuum host with segment topology.
-
-        Returns:
-            result (None): Invalid connectivity raises ValueError.
-        """
-        self.spans.validate_structure_for_robot(robot)
-        for start, end in zip(
-            self.spans.start_segment_index, self.spans.end_segment_index
-        ):
-            validate_span(robot, start, end)
-
-    def validate_values_for_robot(self, robot):
-        """Validate concrete guide offsets and segment lengths.
-
-        Args:
-            robot (SoftRobot): Continuum host with material frame conventions.
-
-        Returns:
-            result (None): Invalid geometry raises ValueError.
-        """
-        self.spans.validate_values_for_robot(robot)
-        if not bool(
-            jnp.all(jnp.isfinite(robot.segment_length) & (robot.segment_length > 0))
-        ):
-            raise ValueError("Routing requires positive finite segment lengths.")
 
     def solve_routing(self, robot, configuration, *, initial_guess=None):
         """Resolve straight spans and their analytical length derivatives.
@@ -159,30 +113,11 @@ class StraightSpanRouting(ConfigurationDependentThreadlikeRouting):
             entries[jnp.asarray(self.spans.start_segment_index)],
             exits[jnp.asarray(self.spans.end_segment_index)],
         )
-        spans, guides, previous = [], [], {}
-        lengths = jnp.zeros(self.spans.num_paths, dtype=configuration.dtype)
-        for index, path in enumerate(self.spans.span_path_index):
-            spans.append(
-                jax.tree.map(lambda values, index=index: values[index], evaluated)
-            )
-            lengths = lengths.at[path].add(evaluated.length[index])
-            if path in previous:
-                displacement, _, coincident = guide_kinematics(
-                    robot,
-                    configuration,
-                    self.spans.start_segment_index[index],
-                    self.spans.end_offset[previous[path]],
-                    self.spans.start_offset[index],
-                )
-                distance = _guide_length(displacement, coincident)
-                guides.append(
-                    RoutingGuideSolution(
-                        index, distance, displacement, coincident | (distance > 1e-12)
-                    )
-                )
-                lengths = lengths.at[path].add(distance)
-            previous[path] = index
-        return RoutingSolution(tuple(spans), lengths, tuple(guides))
+        spans = tuple(
+            jax.tree.map(lambda values, index=index: values[index], evaluated)
+            for index in range(self.spans.num_spans)
+        )
+        return self._assemble_solution(robot, configuration, spans)
 
     def path_length_jacobian(self, robot, configuration, solution):
         """Return the analytical derivative of a resolved path family.
@@ -198,39 +133,22 @@ class StraightSpanRouting(ConfigurationDependentThreadlikeRouting):
                 yield NaNs.
         """
         self.validate_structure_for_robot(robot)
-        if len(solution.spans) != self.spans.num_spans or any(
-            not isinstance(span, StraightSpanSolution) for span in solution.spans
+        if (
+            not isinstance(solution, RoutingSolution)
+            or len(solution.spans) != self.spans.num_spans
+            or any(
+                not isinstance(span, StraightSpanSolution) for span in solution.spans
+            )
         ):
             raise ValueError("solution must contain matching straight spans.")
-        if jnp.shape(configuration) != (robot.num_coordinates,):
+        configuration = jnp.asarray(configuration, dtype=float)
+        if configuration.shape != (robot.num_coordinates,):
             raise ValueError("configuration must match the host coordinate count.")
-        jacobian = jnp.zeros((self.spans.num_paths, robot.num_coordinates))
-        previous = {}
-        for index, path in enumerate(self.spans.span_path_index):
-            span = solution.spans[index]
-            jacobian = jacobian.at[path].add(
-                jnp.where(span.converged, span.length_jacobian, jnp.nan)
-            )
-            if path in previous:
-                displacement, derivative, coincident = guide_kinematics(
-                    robot,
-                    configuration,
-                    self.spans.start_segment_index[index],
-                    self.spans.end_offset[previous[path]],
-                    self.spans.start_offset[index],
-                )
-                distance = _guide_length(displacement, coincident)
-                gradient = (
-                    displacement
-                    @ derivative
-                    / jnp.where(distance > 1e-12, distance, 1.0)
-                )
-                gradient = jnp.where(coincident, 0.0, gradient)
-                jacobian = jacobian.at[path].add(
-                    jnp.where(coincident | (distance > 1e-12), gradient, jnp.nan)
-                )
-            previous[path] = index
-        return jacobian
+        gradients = [
+            jnp.where(span.converged, span.length_jacobian, jnp.nan)
+            for span in solution.spans
+        ]
+        return self._assemble_jacobian(robot, configuration, gradients)
 
     def span_positions(self, robot, configuration, solution, span_index, fractions):
         """Interpolate a straight span in world coordinates.

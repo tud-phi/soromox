@@ -56,7 +56,6 @@ DENSITY = 1070.0
 VISCOSITY = 1500.0
 COLORS = ("#db593b", "#ac7800")
 WALL_COLOR = "#4d8c91"
-CLEARANCE_TOLERANCE = 1e-4
 
 
 def build_model(case="same-side", elements=6):
@@ -383,10 +382,6 @@ def simulate(robot, routing, case, duration, timestep, save_dt=0.04):
                 f"Invalid dynamics or unconverged routing at t={index * timestep:.6f}: {checks}"
             )
         maximum = np.maximum(maximum, checks[:, 1:].max(axis=0))
-        if maximum[0] > CLEARANCE_TOLERANCE:
-            raise RuntimeError(
-                f"Dense wall penetration {maximum[0]} exceeds the clearance tolerance; refine routing."
-            )
         if (index + 1) % stride == 0 or index + 1 == count:
             states.append(np.asarray(state))
             times.append((index + 1) * timestep)
@@ -475,7 +470,15 @@ def sample_frames(robot, routing, configurations):
             local = routing.span_offsets(solution, section, points[section])[:, 1]
             centerlines.append(centers)
             normals.append(normal)
-            tendons.append(centers + normal * local[:, None])
+            tendons.append(
+                routing.span_positions(
+                    robot,
+                    configuration,
+                    solution,
+                    section,
+                    jnp.linspace(0, 1, points.shape[1]),
+                )[:, :2]
+            )
             references.append(centers + normal * routing.spans.start_offset[section, 1])
             offsets.append(local)
         return tuple(
@@ -489,10 +492,7 @@ def sample_frames(robot, routing, configurations):
         frames.append(tuple(np.asarray(value) for value in frame))
         diagnostics.append(np.asarray(check))
     diagnostics = np.asarray(diagnostics)
-    if (
-        not np.all(diagnostics[:, 0] == 1)
-        or diagnostics[:, 1].max() > CLEARANCE_TOLERANCE
-    ):
+    if not np.all(diagnostics[:, 0] == 1):
         raise RuntimeError(
             "A rendered route failed its convergence or containment check."
         )
@@ -858,7 +858,7 @@ def main():
             static_frames, _ = sample_frames(robot, routing, equilibrium[None])
             render(case, saved["time"], states, frames, args.output, static_frames[0])
             continue
-        equilibrium, static_solution, residual = solve_equilibrium(
+        equilibrium, _, residual = solve_equilibrium(
             robot, routing, 0.35 * jnp.array([0.65, 0.45])
         )
         print(

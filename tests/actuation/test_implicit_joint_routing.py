@@ -213,6 +213,38 @@ def test_joint_guide_kinematics_matches_autodiff(kind):
     assert_allclose(analytical, numerical, atol=1e-10, rtol=1e-8)
 
 
+@pytest.mark.parametrize("strategy", [ShortestPathRouting, StraightSpanRouting])
+def test_interleaved_paths_keep_their_own_guide_connections(strategy):
+    """Shared path assembly connects each span to the preceding span of its path."""
+    robot = _joint_robot()
+    offsets = jnp.array([[0, 0, 0], [0, 0.004, 0]] * 2, dtype=float)
+    spans = RoutingSpanParams(
+        offsets, offsets, (0, 1, 0, 1), (0, 0, 1, 1), (0, 0, 1, 1)
+    )
+    routing = (
+        strategy(spans)
+        if strategy is StraightSpanRouting
+        else strategy(
+            ShortestPathRoutingParams(spans, CircularLumenParams.constant(0.02, 2)),
+            PiecewiseLinearRoutingDiscretization(elements_per_segment=2),
+        )
+    )
+    angle = 0.4
+    configuration = jnp.array([0, angle, 0], dtype=float)
+    solution = eqx.filter_jit(routing.solve_routing)(robot, configuration)
+    assert bool(solution.converged)
+    assert tuple(guide.downstream_span for guide in solution.guides) == (2, 3)
+    chord = 0.008 * np.sin(angle / 2)
+    assert_allclose(solution.path_lengths, [0.2, 0.2 + chord], atol=1e-9)
+    assert_allclose([guide.length for guide in solution.guides], [0, chord], atol=1e-12)
+    jacobian = routing.path_length_jacobian(robot, configuration, solution)
+    assert_allclose(jacobian[:, 1], [0, 0.004 * np.cos(angle / 2)], atol=1e-10)
+    numerical = jax.jacfwd(
+        eqx.filter_jit(lambda values: routing.solve_routing(robot, values).path_lengths)
+    )(configuration)
+    assert_allclose(jacobian, numerical, atol=1e-8)
+
+
 def test_unsplit_moving_joint_requires_guides():
     """Reject a free span through a joint whose passage is unspecified."""
     routing = ShortestPathRouting(

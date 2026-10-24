@@ -46,6 +46,7 @@ from soromox.systems.components.inertia import (
     spatial_mass_action,
     weighted_inertias,
 )
+from soromox.systems.pcs.kinematics import constant_strain_segment_kinematics
 from soromox.systems.pcs.params import PCSParams
 from soromox.systems.pcs.structures import PCSStructure
 from soromox.systems.soft_robot import SoftRobot
@@ -988,7 +989,7 @@ class PCS(SoftRobot):
             result (tuple[Array, Array, Array]): Local link transforms, body
                 Jacobians, and identity joints; see the SoftRobot contract.
         """
-        return self._constant_strain_segment_kinematics(configuration)
+        return constant_strain_segment_kinematics(self, configuration)
 
     def strain_and_basis(
         self, configuration: Array, segment_indices: Array, points: Array

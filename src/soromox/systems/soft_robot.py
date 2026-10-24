@@ -129,44 +129,6 @@ class SoftRobot(DynamicalSystem):
             "The host must implement relative_segment_kinematics."
         )
 
-    def _constant_strain_segment_kinematics(self, configuration):
-        """Evaluate PCS link transforms and analytical body Jacobians once.
-
-        Args:
-            configuration (Array): Configuration, shape ``(num_coordinates,)``.
-
-        Returns:
-            result (tuple[Array, Array, Array]): Arrays following the
-                ``relative_segment_kinematics`` contract, with identity joints.
-        """
-        strains, bases = self.strain_and_basis(
-            configuration,
-            jnp.arange(self.num_segments),
-            jnp.cumsum(self.segment_length),
-        )
-
-        def evaluate(strain, basis, length):
-            """Return a constant-strain transform and its body Jacobian."""
-            if self.is_planar:
-                increment = length * strain[2:5]
-                planar = se2.exp(increment, self.global_eps)
-                transform = jnp.eye(4).at[:2, :2].set(planar[:2, :2])
-                transform = transform.at[:2, 3].set(planar[:2, 2])
-                derivative = se2.left_jacobian(-increment, self.tangent_eps) @ (
-                    length * basis[2:5]
-                )
-                derivative = jnp.pad(derivative, ((2, 1), (0, 0)))
-            else:
-                increment = length * strain
-                transform = se3.exp(increment, self.global_eps)
-                derivative = se3.left_jacobian(-increment, self.tangent_eps) @ (
-                    length * basis
-                )
-            return transform, derivative
-
-        transforms, jacobians = vmap(evaluate)(strains, bases, self.segment_length)
-        return transforms, jacobians, jnp.broadcast_to(jnp.eye(4), transforms.shape)
-
     @property
     def moving_joint_indices(self) -> tuple[int, ...]:
         """Indices of segments preceded by a moving joint.

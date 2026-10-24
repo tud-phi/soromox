@@ -23,6 +23,7 @@ from soromox.actuation import (
     RoutingSpanParams,
     ShortestPathRouting,
     ShortestPathRoutingParams,
+    StraightSpanRouting,
 )
 from soromox.actuation._routing_solver import (
     RoutingProblem,
@@ -119,6 +120,22 @@ def test_parameter_composition_and_topology_preserving_updates():
         params.replace(spans=params.spans.replace(end_offset=[[0, 0.03, 0]]))
     with pytest.raises(ValueError, match="positive"):
         CircularLumenParams([0.0])
+
+
+def test_routing_strategies_reject_each_others_solution_types():
+    """Reject incompatible solve states before accessing strategy-specific fields."""
+    robot = _robot()
+    optimized = _routing()
+    straight = StraightSpanRouting(optimized.spans)
+    configuration = jnp.zeros(robot.num_coordinates)
+    straight_solution = straight.solve_routing(robot, configuration)
+    with pytest.raises(ValueError, match="initial_guess"):
+        optimized.solve_routing(robot, configuration, initial_guess=straight_solution)
+    with pytest.raises(ValueError, match="optimized spans"):
+        optimized.path_length_jacobian(robot, configuration, straight_solution)
+    optimized_solution = eqx.filter_jit(optimized.solve_routing)(robot, configuration)
+    with pytest.raises(ValueError, match="straight spans"):
+        straight.path_length_jacobian(robot, configuration, optimized_solution)
 
 
 def test_guides_are_explicit_and_contiguous():

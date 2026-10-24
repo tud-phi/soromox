@@ -13,9 +13,9 @@ import numpy as np
 from jax import Array
 
 from soromox.systems.params import BaseSystemParams, _contains_tracer
-from soromox.utils.geometry.kinematics import transform_point
+from soromox.utils.geometry.poses import transform_point
 
-from ._routing_geometry import guide_kinematics, span_entry_position, validate_span
+from ._routing_geometry import guide_kinematics, span_entry_position
 from ._routing_solver import (
     RoutingProblem,
     RoutingSolverOptions,
@@ -176,6 +176,14 @@ class RoutingSpanParams(BaseSystemParams):
         self.validate_structure()
         if any(end >= robot.num_segments for end in self.end_segment_index):
             raise ValueError("Routing span exceeds the host segment count.")
+        if any(
+            start < joint <= end
+            for start, end in zip(self.start_segment_index, self.end_segment_index)
+            for joint in robot.moving_joint_indices
+        ):
+            raise ValueError(
+                "A span crossing a moving joint requires prescribed guides; split it at the joint."
+            )
 
     def validate_values_for_robot(self, robot):
         """Check transverse geometry in aligned continuum segment frames.
@@ -633,8 +641,11 @@ class ConfigurationDependentThreadlikeRouting(eqx.Module):
     return their state explicitly for warm starts.
 
     Attributes:
+        params: Strategy parameters containing numerical geometry and static topology.
         spans: Shared guide geometry and mapping of spans to physical paths.
     """
+
+    params: BaseSystemParams
 
     @property
     @abstractmethod
@@ -697,33 +708,115 @@ class ConfigurationDependentThreadlikeRouting(eqx.Module):
         """
         ...
 
-    @abstractmethod
+    def with_params(self, params):
+        """Replace numerical geometry while retaining routing topology.
+
+        Args:
+            params (RoutingSpanParams | ShortestPathRoutingParams): Parameters of
+                the same type and topology as this strategy's current parameters.
+
+        Returns:
+            result (ConfigurationDependentThreadlikeRouting): Strategy with
+                validated replacement geometry and unchanged algorithm settings.
+        """
+        self.params.assert_same_topology(params)
+        params.validate_for_update()
+        return eqx.tree_at(lambda routing: routing.params, self, params)
+
     def validate_structure_for_robot(self, robot) -> None:
-        """Validate static host compatibility and span connectivity.
+        """Validate segment bounds and prescribed guides at moving joints.
 
         Args:
-            robot (SoftRobot): Continuum host providing material strains and guide
-                kinematics.
+            robot (SoftRobot): Continuum host with static segment topology.
 
-        Returns:
-            result (None): ``None``. Invalid host topology or unsupported span crossings
-                raise an exception.
+        Raises:
+            ValueError: Span connectivity is incompatible with the host.
         """
-        ...
+        self.spans.validate_structure_for_robot(robot)
 
-    @abstractmethod
     def validate_values_for_robot(self, robot) -> None:
-        """Validate concrete geometry for the host.
+        """Validate guide geometry and positive finite segment lengths.
 
         Args:
-            robot (SoftRobot): Continuum host providing material strains and guide
-                kinematics.
+            robot (SoftRobot): Continuum host with material frame conventions.
+
+        Raises:
+            ValueError: Host lengths or guide offsets are invalid.
+        """
+        self.spans.validate_values_for_robot(robot)
+        if not bool(
+            jnp.all(jnp.isfinite(robot.segment_length) & (robot.segment_length > 0))
+        ):
+            raise ValueError("Routing requires positive finite segment lengths.")
+
+    def _assemble_solution(self, robot, configuration, spans):
+        """Combine resolved spans and joint connections into physical paths.
+
+        Args:
+            robot (SoftRobot): Host supplying relative joint kinematics.
+            configuration (Array): Configuration, shape ``(num_coordinates,)``.
+            spans (tuple): Resolved span solutions in input order.
 
         Returns:
-            result (None): ``None``. Invalid concrete host or guide geometry raises
-                ValueError.
+            result (RoutingSolution): Spans, guide connections, and total lengths.
         """
-        ...
+        lengths = jnp.zeros(self.spans.num_paths, dtype=configuration.dtype)
+        guides, previous = [], {}
+        for index, path in enumerate(self.spans.span_path_index):
+            lengths = lengths.at[path].add(spans[index].length)
+            if path in previous:
+                displacement, _, coincident = guide_kinematics(
+                    robot,
+                    configuration,
+                    self.spans.start_segment_index[index],
+                    self.spans.end_offset[previous[path]],
+                    self.spans.start_offset[index],
+                )
+                distance = _guide_length(displacement, coincident)
+                guides.append(
+                    RoutingGuideSolution(
+                        index, distance, displacement, coincident | (distance > 1e-12)
+                    )
+                )
+                lengths = lengths.at[path].add(distance)
+            previous[path] = index
+        return RoutingSolution(spans, lengths, tuple(guides))
+
+    def _assemble_jacobian(self, robot, configuration, span_gradients):
+        """Combine span and guide derivatives in physical path order.
+
+        Args:
+            robot (SoftRobot): Host supplying relative joint kinematics.
+            configuration (Array): Configuration, shape ``(num_coordinates,)``.
+            span_gradients (list[Array]): One configuration gradient per span,
+                each shaped ``(num_coordinates,)``.
+
+        Returns:
+            result (Array): Length Jacobian, shape ``(num_paths, num_coordinates)``.
+                Collapsed moving guide connections invalidate the affected row.
+        """
+        jacobian = jnp.zeros(
+            (self.spans.num_paths, robot.num_coordinates), dtype=configuration.dtype
+        )
+        previous = {}
+        for index, path in enumerate(self.spans.span_path_index):
+            jacobian = jacobian.at[path].add(span_gradients[index])
+            if path in previous:
+                displacement, derivative, coincident = guide_kinematics(
+                    robot,
+                    configuration,
+                    self.spans.start_segment_index[index],
+                    self.spans.end_offset[previous[path]],
+                    self.spans.start_offset[index],
+                )
+                distance = _guide_length(displacement, coincident)
+                unit = displacement / jnp.where(distance > 1e-12, distance, 1)
+                gradient = jnp.where(coincident, 0, unit @ derivative)
+                jacobian = jacobian.at[path].add(
+                    jnp.where(coincident | (distance > 1e-12), gradient, jnp.nan)
+                )
+            previous[path] = index
+        return jacobian
 
     @abstractmethod
     def solve_routing(
@@ -812,22 +905,6 @@ def _samples(knots, order):
     return points.ravel(), (widths[:, None] * jnp.asarray(weights / 2)).ravel()
 
 
-def _host_strains(robot, configuration, segment_indices, points):
-    """Evaluate material strains through the host's kinematics interface.
-
-    Args:
-        robot (SoftRobot): Continuum host implementing ``strain_and_basis``.
-        configuration (Array): Generalized configuration, shape ``(num_coordinates,)``.
-        segment_indices (Array): Segment indices with shape ``(num_points,)``.
-        points (Array): Global backbone coordinates with shape ``(num_points,)``.
-
-    Returns:
-        result (Array): Strains in angular/linear spatial order, shape ``(num_points,
-            6)``.
-    """
-    return robot.strain_and_basis(configuration, segment_indices, points)[0]
-
-
 class ShortestPathRouting(ConfigurationDependentThreadlikeRouting):
     """Shortest feasible paths through hollow sections and prescribed guides.
 
@@ -873,21 +950,6 @@ class ShortestPathRouting(ConfigurationDependentThreadlikeRouting):
         """
         return self.params.spans
 
-    def with_params(self, params: ShortestPathRoutingParams):
-        """Create a routing instance with replacement parameters.
-
-        Args:
-            params (ShortestPathRoutingParams): Replacement ShortestPathRoutingParams
-                with the same topology.
-
-        Returns:
-            result (ShortestPathRouting): New routing instance with updated geometry and
-                the same solver and mesh settings.
-        """
-        self.params.assert_same_topology(params)
-        params.validate_for_update()
-        return eqx.tree_at(lambda routing: routing.params, self, params)
-
     def validate_structure_for_robot(self, robot):
         """Check host topology and span compatibility.
 
@@ -900,11 +962,7 @@ class ShortestPathRouting(ConfigurationDependentThreadlikeRouting):
                 raise an exception.
         """
         self.params.validate_structure()
-        self.spans.validate_structure_for_robot(robot)
-        for start, end in zip(
-            self.spans.start_segment_index, self.spans.end_segment_index
-        ):
-            validate_span(robot, start, end)
+        super().validate_structure_for_robot(robot)
         if self.params.domain.inner_radius.shape != (robot.num_segments,):
             raise ValueError("Lumen radii must contain one value per host segment.")
 
@@ -920,11 +978,7 @@ class ShortestPathRouting(ConfigurationDependentThreadlikeRouting):
                 ValueError.
         """
         self.params.validate_values()
-        self.spans.validate_values_for_robot(robot)
-        if not bool(
-            jnp.all(jnp.isfinite(robot.segment_length) & (robot.segment_length > 0))
-        ):
-            raise ValueError("Routing requires positive finite segment lengths.")
+        super().validate_values_for_robot(robot)
 
     def solve_routing(self, robot, configuration, *, initial_guess=None):
         """Solve all spans and return lengths, coefficients, and diagnostics.
@@ -951,43 +1005,26 @@ class ShortestPathRouting(ConfigurationDependentThreadlikeRouting):
         if initial_guess is not None and (
             not isinstance(initial_guess, RoutingSolution)
             or len(initial_guess.spans) != self.spans.num_spans
+            or any(
+                not isinstance(span, RoutingSpanSolution)
+                for span in initial_guess.spans
+            )
         ):
             raise ValueError(
                 "initial_guess must be a RoutingSolution with matching spans."
             )
-        solutions = []
-        guides = []
-        previous = {}
-        lengths = jnp.zeros(self.spans.num_paths, dtype=configuration.dtype)
-        for span_index, path_index in enumerate(self.spans.span_path_index):
-            guess = (
+        solutions = tuple(
+            self._solve_span(
+                robot,
+                configuration,
+                index,
                 None
                 if initial_guess is None
-                else initial_guess.spans[span_index].coefficients
+                else initial_guess.spans[index].coefficients,
             )
-            solution = self._solve_span(robot, configuration, span_index, guess)
-            solutions.append(solution)
-            lengths = lengths.at[path_index].add(solution.length)
-            if path_index in previous:
-                displacement, _, coincident = guide_kinematics(
-                    robot,
-                    configuration,
-                    self.spans.start_segment_index[span_index],
-                    self.spans.end_offset[previous[path_index]],
-                    self.spans.start_offset[span_index],
-                )
-                distance = _guide_length(displacement, coincident)
-                guides.append(
-                    RoutingGuideSolution(
-                        span_index,
-                        distance,
-                        displacement,
-                        coincident | (distance > 1e-12),
-                    )
-                )
-                lengths = lengths.at[path_index].add(distance)
-            previous[path_index] = span_index
-        return RoutingSolution(tuple(solutions), lengths, tuple(guides))
+            for index in range(self.spans.num_spans)
+        )
+        return self._assemble_solution(robot, configuration, solutions)
 
     def _solve_span(self, robot, configuration, span_index, initial_guess):
         """Assemble, optimize, and validate one guided span.
@@ -1035,7 +1072,7 @@ class ShortestPathRouting(ConfigurationDependentThreadlikeRouting):
         offsets, derivatives = _basis(knots, points, dimension)
         walls, _ = _basis(knots, wall_points, dimension)
         endpoint, _ = _basis(knots, knots[-1:], dimension)
-        strains = _host_strains(robot, configuration, segment_indices, points)
+        strains, _ = robot.strain_and_basis(configuration, segment_indices, points)
         start_offset = self.spans.start_offset[span_index]
         end_offset = self.spans.end_offset[span_index]
         radius_scale = self.params.domain.inner_radius[start]
@@ -1228,18 +1265,18 @@ class ShortestPathRouting(ConfigurationDependentThreadlikeRouting):
                 forces in velocity coordinates, use :meth:`path_velocity_jacobian`.
         """
         self.validate_structure_for_robot(robot)
-        if len(solution.spans) != self.spans.num_spans:
-            raise ValueError("solution must have matching routing spans.")
+        if (
+            not isinstance(solution, RoutingSolution)
+            or len(solution.spans) != self.spans.num_spans
+            or any(not isinstance(span, RoutingSpanSolution) for span in solution.spans)
+        ):
+            raise ValueError("solution must contain matching optimized spans.")
 
         configuration = jnp.asarray(configuration, dtype=float)
         if configuration.shape != (robot.num_coordinates,):
             raise ValueError("configuration must match the host coordinate count.")
-        jacobian = jnp.zeros(
-            (self.spans.num_paths, robot.num_coordinates), dtype=configuration.dtype
-        )
-        previous = {}
-        for index, path in enumerate(self.spans.span_path_index):
-            span = solution.spans[index]
+        gradients = []
+        for index, span in enumerate(solution.spans):
             points, weights = _samples(span.knots, self.discretization.quadrature_order)
             basis, derivative = _basis(span.knots, points, span.coefficients.shape[1])
             coefficients = span.coefficients.ravel()
@@ -1267,19 +1304,5 @@ class ShortestPathRouting(ConfigurationDependentThreadlikeRouting):
             gradient = jnp.where(
                 span.converged & jnp.all(norms > 1e-12), gradient, jnp.nan
             )
-            jacobian = jacobian.at[path].add(gradient)
-            if path in previous:
-                displacement, guide_jacobian, coincident = guide_kinematics(
-                    robot,
-                    configuration,
-                    self.spans.start_segment_index[index],
-                    self.spans.end_offset[previous[path]],
-                    self.spans.start_offset[index],
-                )
-                distance = _guide_length(displacement, coincident)
-                unit = displacement / jnp.where(distance > 1e-12, distance, 1)
-                gradient = jnp.where(coincident, 0, unit @ guide_jacobian)
-                gradient = jnp.where(coincident | (distance > 1e-12), gradient, jnp.nan)
-                jacobian = jacobian.at[path].add(gradient)
-            previous[path] = index
-        return jacobian
+            gradients.append(gradient)
+        return self._assemble_jacobian(robot, configuration, gradients)
