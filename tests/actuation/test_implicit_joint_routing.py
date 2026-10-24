@@ -16,6 +16,7 @@ from soromox.actuation import (
     ShortestPathRoutingParams,
     StraightSpanRouting,
 )
+from soromox.actuation._routing_geometry import guide_kinematics
 from soromox.systems import (
     GVS,
     PCS,
@@ -201,13 +202,11 @@ def test_joint_guide_kinematics_matches_autodiff(kind):
     configuration = jnp.linspace(0.01, 0.1, robot.num_coordinates)
     upstream = jnp.array([0.0, 0.004, 0.001])
     downstream = jnp.array([0.0, -0.002, 0.003])
-    displacement, analytical, coincident = robot.routing_guide_kinematics(
-        configuration, 1, upstream, downstream
+    displacement, analytical, coincident = guide_kinematics(
+        robot, configuration, 1, upstream, downstream
     )
     numerical = jax.jacfwd(
-        lambda values: robot.routing_guide_kinematics(values, 1, upstream, downstream)[
-            0
-        ]
+        lambda values: guide_kinematics(robot, values, 1, upstream, downstream)[0]
     )(configuration)
     assert bool(jnp.all(jnp.isfinite(displacement)))
     assert not bool(coincident)
@@ -345,9 +344,9 @@ def test_variable_strain_basis_matches_configuration_derivative(scaled):
     configuration = jnp.linspace(-0.01, 0.01, robot.num_coordinates)
     points = jnp.array([0.01, 0.04, 0.09])
     indices = jnp.zeros(3, dtype=int)
-    strains, basis = robot.routing_strain_and_basis(configuration, indices, points)
+    strains, basis = robot.strain_and_basis(configuration, indices, points)
     numerical = jax.jacfwd(
-        lambda values: robot.routing_strain_and_basis(values, indices, points)[0]
+        lambda values: robot.strain_and_basis(values, indices, points)[0]
     )(configuration)
     assert bool(jnp.all(jnp.isfinite(strains)))
     assert_allclose(basis, numerical, atol=1e-12)

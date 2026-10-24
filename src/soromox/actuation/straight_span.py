@@ -4,8 +4,10 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 
+from soromox.utils.geometry.kinematics import segment_boundary_poses
 from soromox.utils.lie_algebra import se3
 
+from ._routing_geometry import guide_kinematics, validate_span
 from .implicit_threadlike import (
     ConfigurationDependentThreadlikeRouting,
     RoutingGuideSolution,
@@ -68,7 +70,7 @@ class StraightSpanRouting(ConfigurationDependentThreadlikeRouting):
         for start, end in zip(
             self.spans.start_segment_index, self.spans.end_segment_index
         ):
-            robot.validate_routing_span(start, end)
+            validate_span(robot, start, end)
 
     def validate_values_for_robot(self, robot):
         """Validate concrete guide offsets and segment lengths.
@@ -108,8 +110,10 @@ class StraightSpanRouting(ConfigurationDependentThreadlikeRouting):
             raise ValueError("configuration must match the host coordinate count.")
         if self.spans.num_spans == 0:
             return RoutingSolution((), jnp.zeros(0, dtype=configuration.dtype), ())
-        links, body_jacobians, joints = robot.routing_segment_kinematics(configuration)
-        entries, exits = robot.routing_boundary_poses(configuration, links, joints)
+        links, body_jacobians, joints = robot.relative_segment_kinematics(configuration)
+        entries, exits = segment_boundary_poses(
+            robot.base_transform_from_configuration(configuration), links, joints
+        )
         relative = {}
         for first, last in zip(
             self.spans.start_segment_index, self.spans.end_segment_index
@@ -163,7 +167,8 @@ class StraightSpanRouting(ConfigurationDependentThreadlikeRouting):
             )
             lengths = lengths.at[path].add(evaluated.length[index])
             if path in previous:
-                displacement, _, coincident = robot.routing_guide_kinematics(
+                displacement, _, coincident = guide_kinematics(
+                    robot,
                     configuration,
                     self.spans.start_segment_index[index],
                     self.spans.end_offset[previous[path]],
@@ -207,7 +212,8 @@ class StraightSpanRouting(ConfigurationDependentThreadlikeRouting):
                 jnp.where(span.converged, span.length_jacobian, jnp.nan)
             )
             if path in previous:
-                displacement, derivative, coincident = robot.routing_guide_kinematics(
+                displacement, derivative, coincident = guide_kinematics(
+                    robot,
                     configuration,
                     self.spans.start_segment_index[index],
                     self.spans.end_offset[previous[path]],

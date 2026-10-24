@@ -959,8 +959,8 @@ class PlanarPCS(SoftRobot):
 
         return xi
 
-    def routing_segment_kinematics(self, configuration):
-        """Evaluate each constant-strain segment once for guide routing.
+    def relative_segment_kinematics(self, configuration):
+        """Evaluate each constant-strain segment's relative transform and Jacobian.
 
         Args:
             configuration (Array): Configuration, shape ``(num_coordinates,)``.
@@ -969,9 +969,9 @@ class PlanarPCS(SoftRobot):
             result (tuple[Array, Array, Array]): Local link transforms, body
                 Jacobians, and identity joints; see the SoftRobot contract.
         """
-        return self._constant_strain_routing_segment_kinematics(configuration)
+        return self._constant_strain_segment_kinematics(configuration)
 
-    def routing_strain_and_basis(
+    def strain_and_basis(
         self, configuration: Array, segment_indices: Array, points: Array
     ) -> tuple[Array, Array]:
         """Embed planar strains and their analytical basis in spatial order.

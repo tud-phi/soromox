@@ -8,7 +8,8 @@ import pytest
 from numpy.testing import assert_allclose
 from system_param_builders import pcs_params, planar_pcs_params
 
-from soromox.actuation import RoutingSpanParams, StraightSpanRouting
+from soromox.actuation import RoutingSpanParams, StraightSpanRouting, ThreadlikeRouting
+from soromox.actuation import straight_span as straight_module
 from soromox.systems import (
     GVS,
     PCS,
@@ -22,6 +23,38 @@ from soromox.systems import (
 )
 
 jax.config.update("jax_enable_x64", True)
+
+
+def _world_endpoint(robot, configuration, segment, at_end, offset):
+    """Reference endpoint using independent full-backbone frame evaluations."""
+    local_derivative = jnp.zeros((3, robot.num_coordinates))
+    if not at_end and segment > 0:
+        transform, spatial_jacobian, _ = robot.joint_kinematics(configuration, segment)
+        offset = transform[:3, :3] @ offset + transform[:3, 3]
+        local_derivative = (
+            jnp.cross(spatial_jacobian[:3].T, offset).T + spatial_jacobian[3:]
+        )
+    position = jnp.sum(robot.segment_length[: segment + int(at_end)])
+    pose, jacobian = robot.forward_kinematics_and_jacobian_inertialframe(
+        configuration, position
+    )
+    internal = jacobian[..., jacobian.shape[-1] - robot.num_internal_dofs :]
+    if robot.is_planar:
+        cosine, sine = jnp.cos(pose[0]), jnp.sin(pose[0])
+        rotation = jnp.array([[cosine, -sine, 0], [sine, cosine, 0], [0, 0, 1]])
+        rotated = rotation @ offset
+        point = jnp.array([pose[1], pose[2], 0]) + rotated
+        derivative = jnp.pad(internal[1:], ((0, 1), (0, 0)))
+        derivative = (
+            derivative + jnp.array([-rotated[1], rotated[0], 0])[:, None] * internal[0]
+        )
+    else:
+        rotation = pose[:3, :3]
+        rotated = rotation @ offset
+        point = pose[:3, 3] + rotated
+        derivative = internal[3:] + jnp.cross(internal[:3].T, rotated).T
+    derivative = jnp.pad(derivative, ((0, 0), (robot.num_base_coordinates, 0)))
+    return point, derivative + rotation @ local_derivative
 
 
 def _robot(kind, floating):
@@ -79,6 +112,47 @@ def _robot(kind, floating):
     return PCS(params, PCSStructure(num_gauss_points=3), floating_base=floating)
 
 
+@pytest.mark.parametrize("kind", ["gvs", "gvs_scaled"])
+def test_fixed_routing_retains_cached_strain_bases(kind, monkeypatch):
+    """Fixed routing shares local strain algebra without sampling new bases."""
+    robot = _robot(kind, False)
+    configuration = jnp.linspace(-0.12, 0.18, robot.num_coordinates)
+    routing = ThreadlikeRouting.linear(
+        intercept=jnp.array([[0.0, 0.003, 0.001]]),
+        slope=jnp.zeros((1, 3)),
+        start_segment_index=(0,),
+        end_segment_index=(2,),
+    )
+    expected = (
+        robot._threadlike_path_lengths(configuration, routing),
+        robot._threadlike_path_length_jacobian(configuration, routing),
+    )
+    calls = []
+    evaluate = GVS._link_strain_and_basis
+
+    def shared(host, *args):
+        """Record use of the common local strain kernel."""
+        calls.append("strain")
+        return evaluate(host, *args)
+
+    def forbidden(*args, **kwargs):
+        """Reject basis resampling and global configuration basis assembly."""
+        raise AssertionError("Fixed routing must retain its cached bases")
+
+    monkeypatch.setattr(GVS, "_link_strain_and_basis", shared)
+    monkeypatch.setattr(GVS, "_eval_B_segment", forbidden)
+    monkeypatch.setattr(GVS, "strain_and_basis", forbidden)
+    actual = jax.jit(
+        lambda values: (
+            robot._threadlike_path_lengths(values, routing),
+            robot._threadlike_path_length_jacobian(values, routing),
+        )
+    )(configuration)
+    assert calls
+    for value, reference in zip(actual, expected):
+        assert_allclose(value, reference, atol=1e-12)
+
+
 def test_gvs_guides_share_cell_integration(monkeypatch):
     """Multiple guides share one vectorized link integration and boundary scan."""
     robot = _robot("gvs", False)
@@ -87,8 +161,8 @@ def test_gvs_guides_share_cell_integration(monkeypatch):
         RoutingSpanParams(offsets, offsets, (0, 1, 2), (0, 0, 0), (1, 1, 1))
     )
     calls = []
-    segments = GVS.routing_segment_kinematics
-    boundaries = GVS.routing_boundary_poses
+    segments = GVS.relative_segment_kinematics
+    boundaries = straight_module.segment_boundary_poses
     cell = GVS._magnus_jacobian_step_terms
 
     def integrate(host, configuration):
@@ -96,10 +170,10 @@ def test_gvs_guides_share_cell_integration(monkeypatch):
         calls.append("segments")
         return segments(host, configuration)
 
-    def compose(host, configuration, links, joints):
+    def compose(base, links, joints):
         """Record the shared boundary traversal."""
         calls.append("boundaries")
-        return boundaries(host, configuration, links, joints)
+        return boundaries(base, links, joints)
 
     def advance(host, *args):
         """Record the cell body traced once for the vectorized link scan."""
@@ -110,10 +184,10 @@ def test_gvs_guides_share_cell_integration(monkeypatch):
         """Reject independent endpoint integration or runtime autodiff."""
         raise AssertionError("Unexpected repeated integration or autodiff")
 
-    monkeypatch.setattr(GVS, "routing_segment_kinematics", integrate)
-    monkeypatch.setattr(GVS, "routing_boundary_poses", compose)
+    monkeypatch.setattr(GVS, "relative_segment_kinematics", integrate)
+    monkeypatch.setattr(straight_module, "segment_boundary_poses", compose)
     monkeypatch.setattr(GVS, "_magnus_jacobian_step_terms", advance)
-    monkeypatch.setattr(GVS, "routing_endpoint_kinematics", forbidden)
+    monkeypatch.setattr(GVS, "forward_kinematics_and_jacobian_inertialframe", forbidden)
     for name in ("grad", "jacfwd", "jacrev"):
         monkeypatch.setattr(jax, name, forbidden)
     solution = routing.solve_routing(robot, jnp.zeros(robot.num_coordinates))
@@ -153,12 +227,10 @@ def test_relative_spans_match_world_endpoints_and_derivatives(kind, floating):
         for index, (first, last) in enumerate(
             zip(routing.spans.start_segment_index, routing.spans.end_segment_index)
         ):
-            start, start_jacobian = robot.routing_endpoint_kinematics(
-                values, first, False, starts[index]
+            start, start_jacobian = _world_endpoint(
+                robot, values, first, False, starts[index]
             )
-            end, end_jacobian = robot.routing_endpoint_kinematics(
-                values, last, True, ends[index]
-            )
+            end, end_jacobian = _world_endpoint(robot, values, last, True, ends[index])
             displacement = end - start
             length = jnp.linalg.norm(displacement)
             positions.append(jnp.stack([start, end]))

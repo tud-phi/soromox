@@ -86,7 +86,7 @@ class SoftRobot(DynamicalSystem):
     actuators: tuple[Actuator, ...]
     passive_elements: tuple[PassiveElement, ...]
 
-    def routing_strain_and_basis(
+    def strain_and_basis(
         self, configuration: Array, segment_indices: Array, points: Array
     ) -> tuple[Array, Array]:
         """Evaluate material strains and their analytical configuration basis.
@@ -104,12 +104,12 @@ class SoftRobot(DynamicalSystem):
             because a rigid motion does not change material strain.
 
         Raises:
-            NotImplementedError: The host does not implement material routing.
+            NotImplementedError: The host does not implement material strain sampling.
         """
-        raise NotImplementedError("The host must implement routing_strain_and_basis.")
+        raise NotImplementedError("The host must implement strain_and_basis.")
 
-    def routing_segment_kinematics(self, configuration):
-        """Evaluate local segment transforms for all prescribed routing guides.
+    def relative_segment_kinematics(self, configuration):
+        """Evaluate relative segment transforms and body Jacobians.
 
         Args:
             configuration (Array): Configuration, shape ``(num_coordinates,)``.
@@ -123,11 +123,13 @@ class SoftRobot(DynamicalSystem):
                 are zero. Each link is evaluated independently of upstream motion.
 
         Raises:
-            NotImplementedError: The host has no local routing implementation.
+            NotImplementedError: The host has no relative segment kinematics implementation.
         """
-        raise NotImplementedError("The host must implement routing_segment_kinematics.")
+        raise NotImplementedError(
+            "The host must implement relative_segment_kinematics."
+        )
 
-    def _constant_strain_routing_segment_kinematics(self, configuration):
+    def _constant_strain_segment_kinematics(self, configuration):
         """Evaluate PCS link transforms and analytical body Jacobians once.
 
         Args:
@@ -135,9 +137,9 @@ class SoftRobot(DynamicalSystem):
 
         Returns:
             result (tuple[Array, Array, Array]): Arrays following the
-                ``routing_segment_kinematics`` contract, with identity joints.
+                ``relative_segment_kinematics`` contract, with identity joints.
         """
-        strains, bases = self.routing_strain_and_basis(
+        strains, bases = self.strain_and_basis(
             configuration,
             jnp.arange(self.num_segments),
             jnp.cumsum(self.segment_length),
@@ -165,126 +167,39 @@ class SoftRobot(DynamicalSystem):
         transforms, jacobians = vmap(evaluate)(strains, bases, self.segment_length)
         return transforms, jacobians, jnp.broadcast_to(jnp.eye(4), transforms.shape)
 
-    def routing_boundary_poses(self, configuration, links, joints):
-        """Compose all segment entry and exit poses in one backbone traversal.
-
-        Args:
-            configuration (Array): Configuration, shape ``(num_coordinates,)``.
-            links (Array): Local link transforms, shape ``(num_segments, 4, 4)``.
-            joints (Array): Preceding joint transforms with the same shape.
+    @property
+    def moving_joint_indices(self) -> tuple[int, ...]:
+        """Indices of segments preceded by a moving joint.
 
         Returns:
-            result (tuple[Array, Array]): World entry and exit transforms, each
-                shaped ``(num_segments, 4, 4)``. Entry poses include their joint.
+            Static segment indices; empty for continuous backbones.
         """
-        base = self.base_transform_from_configuration(configuration)
-        if self.is_planar:
-            base = jnp.eye(4).at[:2, :2].set(base[:2, :2]).at[:2, 3].set(base[:2, 2])
+        return ()
 
-        def advance(previous, transforms):
-            """Return the next boundary and both sides of its link."""
-            link, joint = transforms
-            entry = previous @ joint
-            exit_pose = entry @ link
-            return exit_pose, (entry, exit_pose)
-
-        _, boundaries = lax.scan(advance, base, (links, joints))
-        return boundaries
-
-    def _routing_point_kinematics(self, configuration, position, offset):
-        """Evaluate an offset point for internal routing derivatives.
-
-        Args:
-            configuration: Host configuration, shape ``(num_coordinates,)``.
-            position: Scalar backbone abscissa in metres.
-            offset: Material point offset, shape ``(3,)``.
-
-        Returns:
-            World position, rotation, and position Jacobian with shapes ``(3,)``,
-            ``(3, 3)``, and ``(3, num_coordinates)``. Base columns are zero:
-            only internal motion contributes to internal cable lengths.
-        """
-        pose, jacobian = self.forward_kinematics_and_jacobian_inertialframe(
-            configuration, position
-        )
-        internal = jacobian[..., jacobian.shape[-1] - self.num_internal_dofs :]
-        if self.is_planar:
-            cosine, sine = jnp.cos(pose[0]), jnp.sin(pose[0])
-            rotation = jnp.array([[cosine, -sine, 0], [sine, cosine, 0], [0, 0, 1]])
-            rotated = rotation @ offset
-            point = jnp.array([pose[1], pose[2], 0]) + rotated
-            derivative = jnp.pad(internal[1:], ((0, 1), (0, 0)))
-            derivative = (
-                derivative
-                + jnp.array([-rotated[1], rotated[0], 0])[:, None] * internal[0]
-            )
-        else:
-            rotation = pose[:3, :3]
-            rotated = rotation @ offset
-            point = pose[:3, 3] + rotated
-            derivative = internal[3:] + jnp.cross(internal[:3].T, rotated).T
-        return (
-            point,
-            rotation,
-            jnp.pad(derivative, ((0, 0), (self.num_base_coordinates, 0))),
-        )
-
-    def routing_endpoint_kinematics(self, configuration, segment, at_end, offset):
-        """Evaluate a prescribed guide at a segment entry or exit.
-
-        Args:
-            configuration (Array): Host configuration, shape ``(num_coordinates,)``.
-            segment (int): Static segment index.
-            at_end (bool): Static flag selecting the exit rather than entry frame.
-            offset (Array): Material guide offset in metres, shape ``(3,)``.
-
-        Returns:
-            result (tuple[Array, Array]): World guide position and its internal
-                configuration Jacobian, shaped ``(3,)`` and ``(3, num_coordinates)``.
-                Base columns are zero because rigid base motion preserves internal
-                lengths. Joint hosts distinguish upstream exit frames from
-                downstream entry frames.
-        """
-        position = jnp.sum(self.segment_length[: segment + int(at_end)])
-        point, _, jacobian = self._routing_point_kinematics(
-            configuration, position, offset
-        )
-        return point, jacobian
-
-    def validate_routing_span(self, start: int, end: int) -> None:
-        """Validate an interval with continuous material frames.
-
-        Args:
-            start: Inclusive first segment index.
-            end: Inclusive last segment index.
-
-        Returns:
-            ``None``. Hosts with joints override this check for spans crossing
-            a discontinuity; guides can terminate spans at such interfaces.
-        """
-
-    def routing_guide_kinematics(
-        self, configuration: Array, segment: int, upstream: Array, downstream: Array
+    def joint_kinematics(
+        self, configuration: Array, segment: int
     ) -> tuple[Array, Array, Array]:
-        """Evaluate a straight guide connection at a continuous interface.
+        """Evaluate a joint relative to the preceding segment's exit frame.
 
         Args:
             configuration: Configuration, shape ``(num_coordinates,)``.
-            segment: Segment whose entry follows the interface.
-            upstream: Guide in the preceding segment's tip frame, shape ``(3,)``.
-            downstream: Guide in this segment's entry frame, shape ``(3,)``.
+            segment: Static segment index identifying its preceding joint.
 
         Returns:
-            Guide displacement in the upstream frame, shape ``(3,)``; its
-            analytical configuration Jacobian, shape ``(3, num_coordinates)``;
-            and a scalar boolean identifying guides that coincide for every
-            configuration. Hosts with joints override this identity transform.
+            result (tuple[Array, Array, Array]): Transform, shape ``(4, 4)``;
+                spatial twist Jacobian in the upstream frame, shape
+                ``(6, num_coordinates)``; and constant motion generators in
+                angular/linear order, shape ``(6, num_generators)``. The generators
+                span every possible joint twist, including any reference twist.
+                A point annihilated by every generator stays fixed for every joint
+                state. Base and link columns in the Jacobian are zero.
+                Continuous backbones return identity transforms and zero columns.
         """
         del segment
         return (
-            downstream - upstream,
-            jnp.zeros((3, self.num_coordinates), dtype=configuration.dtype),
-            jnp.all(upstream == downstream),
+            jnp.eye(4, dtype=configuration.dtype),
+            jnp.zeros((6, self.num_coordinates), dtype=configuration.dtype),
+            jnp.zeros((6, 0), dtype=configuration.dtype),
         )
 
     @property

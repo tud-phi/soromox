@@ -709,18 +709,27 @@ velocity columns; use it to compute generalized forces on a floating robot.
 This distinction matters for spatial bases, whose quaternion pose has seven
 coordinates and whose velocity has six components.
 
-Host implementations provide `routing_strain_and_basis`,
-`routing_segment_kinematics`, `routing_boundary_poses`,
-`routing_endpoint_kinematics`, `routing_guide_kinematics`, and
-`validate_routing_span`. Endpoint kinematics distinguish entry and exit frames
-at a joint and return internal configuration derivatives with zero base columns.
-Local segment kinematics return link transforms, link body Jacobians, and joint
-transforms. Boundary composition uses these transforms to distinguish both sides
-of a moving joint. Straight spans share these evaluations across all guides.
-GVS shares its local material-strain evaluator with standard threadlike routing;
-global basis assembly is only performed when needed. The routing strategy does not inspect
-private attributes to select a rod model. A span crossing a moving joint without
-prescribed guides is rejected because there is no joint passage geometry.
+The existing `SoftRobot` class provides three general kinematics operations:
+
+- `strain_and_basis(configuration, segment_indices, points)` returns spatial
+  strains and their configuration derivatives at specified material points.
+- `relative_segment_kinematics(configuration)` returns link transforms, link
+  body Jacobians, and preceding joint transforms. Link Jacobians have zero base
+  and joint columns.
+- `joint_kinematics(configuration, segment)` returns a relative joint transform,
+  its spatial twist Jacobian, and constant motion generators. The generators
+  allow a common fixed point to be identified for every joint state.
+
+The `moving_joint_indices` property supplies static joint topology. Geometry
+utilities compose boundary frames and transform points. The routing layer uses
+these operations to evaluate guide connections, identify permanently coincident
+guides, and require prescribed guides at moving joints. Straight spans share
+segment evaluations and boundary composition across all guides.
+
+GVS evaluates both sampled and cached material strains through the same local
+kernel. Standard threadlike routing continues to use cached quadrature bases;
+configuration basis assembly is performed only when requested. PCS and PlanarPCS
+share their existing `strain` evaluation between both routing families.
 
 ### Runnable hollow-section simulations
 

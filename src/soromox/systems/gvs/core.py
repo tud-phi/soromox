@@ -5948,9 +5948,9 @@ class GVS(SoftRobot):
         )
         basis = self.B_Xs[segment_index, point_index]
         length = self.segment_lengths[segment_index]
-        if self.scale_rotational_basis_by_length:
-            basis = basis.at[:3, :].divide(length)
-        strain = basis @ q_link + self.xi_ref_Xs[segment_index, point_index]
+        strain, _ = self._link_strain_and_basis(
+            q_link, basis, self.xi_ref_Xs[segment_index, point_index], length
+        )
         offset = routing.offset(path_params, s)
         offset_derivative = routing.derivative(path_params, s)
         tangent = threadlike_tangent(strain[:3], strain[3:], offset, offset_derivative)
@@ -5973,7 +5973,7 @@ class GVS(SoftRobot):
         local = jnp.hstack([so3.skew(offset) @ unit_tangent, unit_tangent])
         return active * local
 
-    def routing_strain_and_basis(
+    def strain_and_basis(
         self, configuration: Array, segment_indices: Array, points: Array
     ) -> tuple[Array, Array]:
         """Evaluate material strains and their analytical configuration basis.
@@ -6002,7 +6002,7 @@ class GVS(SoftRobot):
                 Strain with shape ``(6,)`` and basis with shape
                 ``(6, num_internal_dofs)``.
             """
-            strains, bases = self._routing_strain_and_basis(
+            strains, bases = self._sample_strain_and_basis(
                 gathered[segment, 1], segment, position[None]
             )
             return strains[0], bases[0] @ self.active_dof_map_blocks[segment, 1]
@@ -6010,29 +6010,20 @@ class GVS(SoftRobot):
         strains, basis = vmap(evaluate)(segment_indices, points)
         return strains, jnp.pad(basis, ((0, 0), (0, 0), (self.num_base_coordinates, 0)))
 
-    def validate_routing_span(self, start: int, end: int) -> None:
-        """Require prescribed guides where a routed path crosses moving joints.
-
-        Args:
-            start: Inclusive first segment index.
-            end: Inclusive last segment index.
+    @property
+    def moving_joint_indices(self) -> tuple[int, ...]:
+        """Return static indices of segments preceded by moving joints.
 
         Returns:
-            ``None`` when all interior interfaces are continuous.
-
-        Raises:
-            ValueError: A moving joint lies inside a span. Split that span at
-                the joint and prescribe its upstream and downstream guides.
+            Segment indices in backbone order, including the root if it moves.
         """
-        if any(
-            self.structure.segments[index].joint.type != "fixed"
-            for index in range(start + 1, end + 1)
-        ):
-            raise ValueError(
-                "A span crossing a moving joint requires prescribed guides; split it at the joint."
-            )
+        return tuple(
+            index
+            for index, segment in enumerate(self.structure.segments)
+            if segment.joint.type != "fixed"
+        )
 
-    def routing_segment_kinematics(self, configuration):
+    def relative_segment_kinematics(self, configuration):
         """Integrate each GVS link once with a local body Jacobian.
 
         Uses the host's Magnus cells and scaled strain bases. Only the current
@@ -6092,66 +6083,53 @@ class GVS(SoftRobot):
             joints,
         )
 
-    def routing_endpoint_kinematics(self, configuration, segment, at_end, offset):
-        """Evaluate a guide on the correct side of a segment's entry joint.
-
-        Args:
-            configuration (Array): Host configuration, shape ``(num_coordinates,)``.
-            segment (int): Static segment index.
-            at_end (bool): Static flag selecting the link exit.
-            offset (Array): Material guide offset in metres, shape ``(3,)``.
-
-        Returns:
-            result (tuple[Array, Array]): World position and internal configuration
-                Jacobian, shaped ``(3,)`` and ``(3, num_coordinates)``. Rigid base
-                columns are zero.
-        """
-        if at_end or segment == 0:
-            return super().routing_endpoint_kinematics(
-                configuration, segment, at_end, offset
-            )
-        displacement, local_jacobian, _ = self.routing_guide_kinematics(
-            configuration, segment, jnp.zeros(3), offset
-        )
-        position = jnp.sum(self.segment_length[:segment])
-        point, rotation, jacobian = self._routing_point_kinematics(
-            configuration, position, displacement
-        )
-        return point, jacobian + rotation @ local_jacobian
-
-    def routing_guide_kinematics(
-        self, configuration: Array, segment: int, upstream: Array, downstream: Array
+    def joint_kinematics(
+        self, configuration: Array, segment: int
     ) -> tuple[Array, Array, Array]:
-        """Evaluate the cable connecting prescribed guides across a joint.
+        """Evaluate a GVS joint transform, spatial Jacobian, and generators.
 
         Args:
-            configuration: Configuration with shape ``(num_coordinates,)``.
-            segment: Segment entered after the joint.
-            upstream: Guide in the upstream tip frame, shape ``(3,)``.
-            downstream: Guide in the downstream entry frame, shape ``(3,)``.
+            configuration: Configuration, shape ``(num_coordinates,)``.
+            segment: Static index of the segment following the joint.
 
         Returns:
-            Displacement in the upstream frame, shape ``(3,)``; its analytical
-            configuration Jacobian, shape ``(3, num_coordinates)``; and a
-            boolean indicating guides that coincide for every joint state.
-            No joint thickness or obstacle geometry is assumed.
+            result (tuple[Array, Array, Array]): Transform, shape ``(4, 4)``;
+                spatial twist Jacobian in the upstream frame, shape
+                ``(6, num_coordinates)``; and constant motion generators, shape
+                ``(6, max_dof + 1)``. Generators include the reference twist.
+                Base and link columns in the Jacobian are zero.
         """
         _, internal = self.split_configuration(configuration)
         joint_coordinates = self._min_size_gathered(internal)[segment, 0]
         basis = self.B_joint[segment]
+        reference = self.xi_ref_joint[segment]
         transform, _, spatial_basis = self._joint_jacobian_step_terms(
-            basis, self.xi_ref_joint[segment], joint_coordinates
+            basis, reference, joint_coordinates
         )
-        endpoint = transform[:3, :3] @ downstream + transform[:3, 3]
-        local_jacobian = jnp.cross(spatial_basis[:3].T, endpoint).T + spatial_basis[3:]
-        jacobian = local_jacobian @ self.active_dof_map_blocks[segment, 0]
+        jacobian = spatial_basis @ self.active_dof_map_blocks[segment, 0]
         jacobian = jnp.pad(jacobian, ((0, 0), (self.num_base_coordinates, 0)))
-        fixed_point = jnp.cross(basis[:3].T, downstream).T + basis[3:]
-        coincident = jnp.all(upstream == downstream) & jnp.all(fixed_point == 0)
-        return endpoint - upstream, jacobian, coincident
+        return transform, jacobian, jnp.column_stack((basis, reference))
 
-    def _routing_strain_and_basis(self, q_link, segment_index, points):
-        """Share material strain evaluation between both routing families.
+    def _link_strain_and_basis(self, q_link, basis, reference, length):
+        """Evaluate link strain from a supplied basis, including cached samples.
+
+        Args:
+            q_link (Array): Padded link coordinates, shape ``(max_dof,)``.
+            basis (Array): Unscaled basis, shape ``(..., 6, max_dof)``.
+            reference (Array): Reference strain, shape ``(..., 6)``.
+            length (Array): Scalar reference link length.
+
+        Returns:
+            result (tuple[Array, Array]): Strains, shape ``(..., 6)``, and scaled
+                local bases, shape ``(..., 6, max_dof)``. Cached quadrature bases
+                pass directly through this operation without resampling.
+        """
+        if self.scale_rotational_basis_by_length:
+            basis = basis.at[..., :3, :].divide(length)
+        return basis @ q_link + reference, basis
+
+    def _sample_strain_and_basis(self, q_link, segment_index, points):
+        """Sample material strains and local bases at specified abscissae.
 
         Args:
             q_link: Padded link coordinates, shape ``(max_dof,)``.
@@ -6166,10 +6144,8 @@ class GVS(SoftRobot):
         length = self.segment_lengths[segment_index]
         normalized = (points - self.segment_end_positions[segment_index]) / length
         basis = self._eval_B_segment(segment_index, normalized)
-        if self.scale_rotational_basis_by_length:
-            basis = basis.at[:, :3, :].divide(length)
         reference = self.xi_ref_Xs[segment_index, 0]
-        return jnp.einsum("pij,j->pi", basis, q_link) + reference, basis
+        return self._link_strain_and_basis(q_link, basis, reference, length)
 
     def _threadlike_strain_and_derivative(
         self,
@@ -6192,7 +6168,7 @@ class GVS(SoftRobot):
         """
         length = self.segment_lengths[segment_index]
         normalized = (s_ps - self.segment_end_positions[segment_index]) / length
-        xi_ps, _ = self._routing_strain_and_basis(q_link, segment_index, s_ps)
+        xi_ps, _ = self._sample_strain_and_basis(q_link, segment_index, s_ps)
         basis_derivative = self._eval_dB_segment(segment_index, normalized)
         if self.scale_rotational_basis_by_length:
             basis_derivative = basis_derivative.at[:, :3, :].divide(length)
@@ -6457,9 +6433,9 @@ class GVS(SoftRobot):
                     + self.integration_points[segment_index, point_index] * length
                 )
                 basis = self.B_Xs[segment_index, point_index]
-                if self.scale_rotational_basis_by_length:
-                    basis = basis.at[:3, :].divide(length)
-                strain = basis @ q_link + self.xi_ref_Xs[segment_index, point_index]
+                strain, _ = self._link_strain_and_basis(
+                    q_link, basis, self.xi_ref_Xs[segment_index, point_index], length
+                )
 
                 def path_density(
                     path_params: BaseThreadlikeRoutingParams,

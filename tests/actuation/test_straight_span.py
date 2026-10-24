@@ -14,6 +14,7 @@ from soromox.actuation import (
     StraightSpanRouting,
     _routing_solver,
 )
+from soromox.actuation import straight_span as straight_module
 from soromox.systems import PlanarPCS, PlanarPCSStructure
 
 jax.config.update("jax_enable_x64", True)
@@ -165,8 +166,8 @@ def test_guides_share_segment_and_boundary_evaluations(monkeypatch):
     routing = StraightSpanRouting(
         RoutingSpanParams(offsets, offsets, (0, 1, 2), (0, 0, 0), (0, 0, 0))
     )
-    segments = PlanarPCS.routing_segment_kinematics
-    boundaries = PlanarPCS.routing_boundary_poses
+    segments = PlanarPCS.relative_segment_kinematics
+    boundaries = straight_module.segment_boundary_poses
     calls = []
 
     def evaluate(host, configuration):
@@ -174,13 +175,13 @@ def test_guides_share_segment_and_boundary_evaluations(monkeypatch):
         calls.append("segments")
         return segments(host, configuration)
 
-    def compose(host, configuration, links, joints):
+    def compose(base, links, joints):
         """Record shared world boundary composition."""
         calls.append("boundaries")
-        return boundaries(host, configuration, links, joints)
+        return boundaries(base, links, joints)
 
-    monkeypatch.setattr(PlanarPCS, "routing_segment_kinematics", evaluate)
-    monkeypatch.setattr(PlanarPCS, "routing_boundary_poses", compose)
+    monkeypatch.setattr(PlanarPCS, "relative_segment_kinematics", evaluate)
+    monkeypatch.setattr(straight_module, "segment_boundary_poses", compose)
     configuration = jnp.array([2.0, 0.0, 0.0])
     solution = routing.solve_routing(robot, configuration)
     assert calls == ["segments", "boundaries"]

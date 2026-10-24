@@ -13,7 +13,9 @@ import numpy as np
 from jax import Array
 
 from soromox.systems.params import BaseSystemParams, _contains_tracer
+from soromox.utils.geometry.kinematics import transform_point
 
+from ._routing_geometry import guide_kinematics, span_entry_position, validate_span
 from ._routing_solver import (
     RoutingProblem,
     RoutingSolverOptions,
@@ -811,10 +813,10 @@ def _samples(knots, order):
 
 
 def _host_strains(robot, configuration, segment_indices, points):
-    """Evaluate material strains through the host's routing interface.
+    """Evaluate material strains through the host's kinematics interface.
 
     Args:
-        robot (SoftRobot): Continuum host implementing ``routing_strain_and_basis``.
+        robot (SoftRobot): Continuum host implementing ``strain_and_basis``.
         configuration (Array): Generalized configuration, shape ``(num_coordinates,)``.
         segment_indices (Array): Segment indices with shape ``(num_points,)``.
         points (Array): Global backbone coordinates with shape ``(num_points,)``.
@@ -823,7 +825,7 @@ def _host_strains(robot, configuration, segment_indices, points):
         result (Array): Strains in angular/linear spatial order, shape ``(num_points,
             6)``.
     """
-    return robot.routing_strain_and_basis(configuration, segment_indices, points)[0]
+    return robot.strain_and_basis(configuration, segment_indices, points)[0]
 
 
 class ShortestPathRouting(ConfigurationDependentThreadlikeRouting):
@@ -902,7 +904,7 @@ class ShortestPathRouting(ConfigurationDependentThreadlikeRouting):
         for start, end in zip(
             self.spans.start_segment_index, self.spans.end_segment_index
         ):
-            robot.validate_routing_span(start, end)
+            validate_span(robot, start, end)
         if self.params.domain.inner_radius.shape != (robot.num_segments,):
             raise ValueError("Lumen radii must contain one value per host segment.")
 
@@ -967,7 +969,8 @@ class ShortestPathRouting(ConfigurationDependentThreadlikeRouting):
             solutions.append(solution)
             lengths = lengths.at[path_index].add(solution.length)
             if path_index in previous:
-                displacement, _, coincident = robot.routing_guide_kinematics(
+                displacement, _, coincident = guide_kinematics(
+                    robot,
                     configuration,
                     self.spans.start_segment_index[span_index],
                     self.spans.end_offset[previous[path_index]],
@@ -1182,22 +1185,13 @@ class ShortestPathRouting(ConfigurationDependentThreadlikeRouting):
                 World position, shape ``(3,)``.
             """
             pose = robot.forward_kinematics(configuration, position)
-            if robot.is_planar:
-                cosine, sine = jnp.cos(pose[0]), jnp.sin(pose[0])
-                return jnp.array(
-                    [
-                        pose[1] + cosine * offset[0] - sine * offset[1],
-                        pose[2] + sine * offset[0] + cosine * offset[1],
-                        0.0,
-                    ]
-                )
-            return pose[:3, :3] @ offset + pose[:3, 3]
+            return transform_point(pose, offset)
 
         positions = jax.vmap(sample)(points, offsets)
-        entry, _ = robot.routing_endpoint_kinematics(
+        entry = span_entry_position(
+            robot,
             configuration,
             self.spans.start_segment_index[span_index],
-            False,
             self.spans.start_offset[span_index],
         )
         return jnp.where((fractions == 0)[:, None], entry, positions)
@@ -1261,7 +1255,7 @@ class ShortestPathRouting(ConfigurationDependentThreadlikeRouting):
                 self.discretization.elements_per_segment
                 * self.discretization.quadrature_order,
             )
-            strains, strain_basis = robot.routing_strain_and_basis(
+            strains, strain_basis = robot.strain_and_basis(
                 configuration, segments, points
             )
             tangent = (
@@ -1275,13 +1269,12 @@ class ShortestPathRouting(ConfigurationDependentThreadlikeRouting):
             )
             jacobian = jacobian.at[path].add(gradient)
             if path in previous:
-                displacement, guide_jacobian, coincident = (
-                    robot.routing_guide_kinematics(
-                        configuration,
-                        self.spans.start_segment_index[index],
-                        self.spans.end_offset[previous[path]],
-                        self.spans.start_offset[index],
-                    )
+                displacement, guide_jacobian, coincident = guide_kinematics(
+                    robot,
+                    configuration,
+                    self.spans.start_segment_index[index],
+                    self.spans.end_offset[previous[path]],
+                    self.spans.start_offset[index],
                 )
                 distance = _guide_length(displacement, coincident)
                 unit = displacement / jnp.where(distance > 1e-12, distance, 1)
