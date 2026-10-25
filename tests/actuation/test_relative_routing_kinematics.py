@@ -190,7 +190,9 @@ def test_gvs_guides_share_cell_integration(monkeypatch):
     monkeypatch.setattr(GVS, "forward_kinematics_and_jacobian_inertialframe", forbidden)
     for name in ("grad", "jacfwd", "jacrev"):
         monkeypatch.setattr(jax, name, forbidden)
-    solution = routing.solve_routing(robot, jnp.zeros(robot.num_coordinates))
+    solution = routing.solve_routing(
+        robot, jnp.zeros(robot.num_coordinates), backend="jax"
+    )
     assert bool(solution.converged)
     assert calls == ["segments", "cell", "boundaries"]
     assert_allclose(solution.path_lengths, 0.18, atol=1e-12)
@@ -198,7 +200,9 @@ def test_gvs_guides_share_cell_integration(monkeypatch):
 
 @pytest.mark.parametrize("kind", ["planar", "spatial", "gvs", "gvs_scaled"])
 @pytest.mark.parametrize("floating", [False, True])
-def test_relative_spans_match_world_endpoints_and_derivatives(kind, floating):
+def test_relative_spans_match_world_endpoints_and_derivatives(
+    kind, floating, straight_backend
+):
     """Cover shared intervals, upstream motion, floating bases, and padded GVS cells."""
     robot = _robot(kind, floating)
     internal = jnp.linspace(-0.12, 0.18, robot.num_internal_dofs)
@@ -217,7 +221,9 @@ def test_relative_spans_match_world_endpoints_and_derivatives(kind, floating):
     routing = StraightSpanRouting(
         RoutingSpanParams(starts, ends, (0, 1, 2, 3), (0, 0, 1, 2), (1, 1, 1, 2))
     )
-    solution = eqx.filter_jit(routing.solve_routing)(robot, configuration)
+    solution = eqx.filter_jit(routing.solve_routing)(
+        robot, configuration, backend=straight_backend
+    )
     assert bool(solution.converged)
     analytical = routing.path_length_jacobian(robot, configuration, solution)
 
@@ -252,7 +258,9 @@ def test_relative_spans_match_world_endpoints_and_derivatives(kind, floating):
         )
 
     lengths = eqx.filter_jit(
-        lambda values: routing.solve_routing(robot, values).path_lengths
+        lambda values: (
+            routing.solve_routing(robot, values, backend=straight_backend).path_lengths
+        )
     )
     assert_allclose(analytical, jax.jacfwd(lengths)(configuration), atol=1e-11)
     assert_allclose(

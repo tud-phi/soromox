@@ -491,6 +491,18 @@ spans = RoutingSpanParams(
 routing = StraightSpanRouting(spans)
 ```
 
+With the optional `warp-lang` dependency, use
+`routing.solve_routing(robot, configuration, backend="warp")` to evaluate straight
+span geometry and analytical length Jacobians with FP64 Warp kernels. Configuration
+batches, including nested `jax.vmap` calls, share one set of launches with common
+model and guide parameters. Spans within a single section reuse its link transform
+and Jacobian directly. Segment kinematics and joint guide connections currently
+use JAX; differentiation through the solve also uses the JAX implementation.
+The default, `backend=None`, inherits `robot.backend`. Use `backend="jax"` or
+`backend="warp"` to override it per call. `"auto"` selects Warp on GPU and JAX
+on CPU, following the shared execution policy. Hosts without a backend preference
+use JAX. Measure your workload when choosing a backend.
+
 To account for wall contact, use the same guides with a lumen radius per segment:
 
 ```python

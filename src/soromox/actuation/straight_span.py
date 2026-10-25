@@ -41,7 +41,7 @@ class StraightSpanRouting(ConfigurationDependentThreadlikeRouting):
         """
         return self.params
 
-    def solve_routing(self, robot, configuration, *, initial_guess=None):
+    def solve_routing(self, robot, configuration, *, initial_guess=None, backend=None):
         """Resolve straight spans and their analytical length derivatives.
 
         Args:
@@ -49,12 +49,34 @@ class StraightSpanRouting(ConfigurationDependentThreadlikeRouting):
             configuration (Array): Configuration, shape ``(num_coordinates,)``.
             initial_guess (RoutingSolution | None): Unused; accepted for the
                 common routing interface.
+            backend (str | None): Per-call override: ``"auto"``, ``"jax"``, or
+                ``"warp"``. ``None`` inherits ``robot.backend``; hosts without a
+                preference use JAX. Automatic selection uses Warp on GPU and JAX
+                on CPU. Warp uses the optional ``warp-lang`` package for span
+                geometry and analytical derivatives. Host segment kinematics,
+                joint connections, and differentiation through the solve use JAX.
 
         Returns:
             result (RoutingSolution): StraightSpanSolution entries. Nonfinite
                 or collapsed spans report failed convergence and NaN derivatives.
+
+        Raises:
+            ValueError: If the backend, configuration shape, or routing parameters
+                are invalid, or Warp is requested without JAX 64-bit mode.
+            ImportError: If Warp is requested and ``warp-lang`` is unavailable.
         """
+        from soromox.execution import select_execution_backend
+
         del initial_guess
+        backend = select_execution_backend(
+            getattr(robot, "backend", "jax") if backend is None else backend,
+            family_name="straight routing",
+            warp_cpu_supported=True,
+            warp_supported=True,
+            num_velocities=robot.num_velocities,
+        )
+        if backend == "warp" and not jax.config.jax_enable_x64:
+            raise ValueError("Warp straight routing requires JAX 64-bit mode.")
         configuration = jnp.asarray(configuration, dtype=float)
         self.validate_structure_for_robot(robot)
         if not _contains_tracer((self.params, robot)):
@@ -64,6 +86,11 @@ class StraightSpanRouting(ConfigurationDependentThreadlikeRouting):
             raise ValueError("configuration must match the host coordinate count.")
         if self.spans.num_spans == 0:
             return RoutingSolution((), jnp.zeros(0, dtype=configuration.dtype), ())
+        if backend == "warp":
+            from soromox.execution.warp.loader import load_straight_span_evaluator
+
+            spans = load_straight_span_evaluator()(self, robot, configuration)
+            return self._assemble_solution(robot, configuration, spans)
         links, body_jacobians, joints = robot.relative_segment_kinematics(configuration)
         entries, exits = segment_boundary_poses(
             robot.base_transform_from_configuration(configuration), links, joints

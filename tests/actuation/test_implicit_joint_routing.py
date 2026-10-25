@@ -32,6 +32,50 @@ from soromox.systems import (
 jax.config.update("jax_enable_x64", True)
 
 
+@pytest.mark.parametrize("kind", ["revolute", "prismatic"])
+@pytest.mark.parametrize("floating", [False, True])
+@pytest.mark.parametrize("offset", [0.0, 0.004])
+def test_warp_straight_joint_connections_match_jax(kind, floating, offset):
+    """Preserve joint forces, base invariance, and collapsed-guide diagnostics."""
+    pytest.importorskip("warp")
+    robot = _joint_robot(kind, floating)
+    routing = _guided_routing(offset, StraightSpanRouting)
+    internal = jnp.array([0.12, 0.01, -0.08])
+    configuration = (
+        robot.pack_configuration(
+            internal,
+            base_pose=jnp.array([0, 0, np.sin(0.2), np.cos(0.2), 0.4, -0.2, 0.1]),
+        )
+        if floating
+        else internal
+    )
+
+    def evaluate(values, backend):
+        """Return the full solution and analytical configuration Jacobian."""
+        solution = routing.solve_routing(robot, values, backend=backend)
+        return solution, routing.path_length_jacobian(robot, values, solution)
+
+    reference = eqx.filter_jit(evaluate)(configuration, "jax")
+    actual = eqx.filter_jit(evaluate)(configuration, "warp")
+    for value, expected in zip(jax.tree.leaves(actual), jax.tree.leaves(reference)):
+        assert_allclose(value, expected, rtol=1e-12, atol=1e-12)
+    configuration = configuration.at[robot.num_base_coordinates + 1].set(0.0)
+    collapsed, derivative = eqx.filter_jit(evaluate)(configuration, "warp")
+    if kind == "revolute" and offset == 0:
+        assert bool(collapsed.guides[0].differentiable)
+        assert bool(jnp.all(jnp.isfinite(derivative)))
+    else:
+        assert not bool(collapsed.guides[0].differentiable)
+        assert bool(jnp.all(jnp.isnan(derivative)))
+    gradient = jax.grad(
+        lambda values: routing.solve_routing(
+            robot, values, backend="warp"
+        ).path_lengths.sum()
+    )(configuration)
+    joint_gradient = gradient[robot.num_base_coordinates + 1]
+    assert bool(jnp.isfinite(joint_gradient)) == (kind == "revolute" and offset == 0)
+
+
 def _joint_robot(kind="revolute", floating=False):
     """Build two straight hollow links with an intervening joint.
 
