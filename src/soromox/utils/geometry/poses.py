@@ -5,7 +5,7 @@ __all__ = [
     "planar_pose_to_transform",
     "planar_pose_from_transform",
     "quaternion_pose_to_transform",
-    "spatial_transform",
+    "as_spatial_transform",
     "transform_point",
     "segment_boundary_poses",
 ]
@@ -185,8 +185,8 @@ def quaternion_pose_to_transform(pose: Array) -> Array:
     )
 
 
-def spatial_transform(transform):
-    """Embed a planar homogeneous transform in three dimensions.
+def as_spatial_transform(transform):
+    """Return a spatial homogeneous transform, embedding planar inputs.
 
     Args:
         transform (Array): Homogeneous transform, shape ``(3, 3)`` or ``(4, 4)``.
@@ -248,5 +248,5 @@ def segment_boundary_poses(base, links, joints):
         exit_pose = entry @ link
         return exit_pose, (entry, exit_pose)
 
-    _, boundaries = lax.scan(advance, spatial_transform(base), (links, joints))
+    _, boundaries = lax.scan(advance, as_spatial_transform(base), (links, joints))
     return boundaries

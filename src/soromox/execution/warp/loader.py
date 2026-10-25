@@ -95,7 +95,7 @@ def load_straight_span_evaluator() -> Callable:
     """
     try:
         module = import_module(
-            "soromox.execution.warp.actuation.straight_span_executor"
+            "soromox.execution.warp.actuation.threadlike.straight_span_executor"
         )
     except ModuleNotFoundError as error:
         if error.name == "warp":

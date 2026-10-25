@@ -1,8 +1,8 @@
 """Native free-space actuation from configurations and filament tensions.
 
-``StraightSpanPipeline`` owns reusable Warp buffers. Its steady-state methods
+``StraightSpanActuation`` owns reusable Warp buffers. Its steady-state methods
 launch Warp kernels only and can be recorded in a CUDA graph. Numerical model
-and routing operands are prepared once when the pipeline is constructed.
+and routing operands are prepared once when the executor is constructed.
 """
 
 import jax
@@ -10,20 +10,24 @@ import jax.numpy as jnp
 import numpy as np
 import warp as wp
 
-from soromox.execution.warp.actuation.straight_span import (
-    _transform,
+from soromox.execution.warp.common.relative_kinematics import (
+    RelativeKinematicsOperands,
+    launch_kinematics,
+    read_transform,
     relative_intervals_kernel,
 )
-from soromox.execution.warp.actuation.straight_span_kinematics import (
-    StraightKinematicsOperands,
-    relative_kinematics_kernel,
-    strain_samples_kernel,
-)
-from soromox.execution.warp.common.rotations import _quaternion_rotation_matrix
 
 
 def interval_workspace_count(routing):
-    """Reuse link buffers directly when all spans stay inside one segment."""
+    """Count distinct intervals requiring composition beyond a single link.
+
+    Args:
+        routing (StraightSpanRouting): Guide topology, shared by all environments.
+
+    Returns:
+        int: Number of distinct interval workspace slots, or zero when every
+            span can reuse its link transform and Jacobian directly.
+    """
     bounds = tuple(
         zip(routing.spans.start_segment_index, routing.spans.end_segment_index)
     )
@@ -31,7 +35,21 @@ def interval_workspace_count(routing):
 
 
 def routing_topology(routing, model):
-    """Prepare shared intervals and predecessor spans, preserving input order."""
+    """Prepare shared intervals and predecessor spans in input order.
+
+    Args:
+        routing (StraightSpanRouting): Validated span topology and guide offsets.
+        model (RelativeKinematicsOperands): Prepared joint generators used to
+            identify guides that coincide for every joint configuration.
+
+    Returns:
+        tuple[Array, ...]: Inclusive interval bounds ``(I, 2)``, span-to-interval
+            indices ``(S,)``, path indices ``(S,)``, predecessor indices ``(S,)``
+            with ``-1`` for the first span, and invariant-coincidence flags
+            ``(S,)``. Indices use int32 and flags use bool. Single-link spans
+            index the link buffers directly; other intervals preserve first-use
+            order. Here S denotes routing spans.
+    """
     bounds = tuple(
         zip(routing.spans.start_segment_index, routing.spans.end_segment_index)
     )
@@ -130,7 +148,24 @@ def _length_gradient(
 
 @wp.struct
 class StraightPathData:
-    """Non-owning arrays for path and joint-guide evaluation."""
+    """Borrowed arrays for straight threadlike paths and joint connections.
+
+    Keep each referenced allocation alive for launches and captured graphs.
+    E denotes environments, I intervals, L links, S spans, and D internal DOFs.
+
+    Attributes:
+        transforms: Relative interval transforms ``(E, I, 4, 4)``.
+        jacobians: Interval body Jacobians, angular-linear order, ``(E, I, 6, D)``.
+        joints: Relative preceding-joint transforms ``(E, L, 4, 4)``.
+        joint_jacobians: Joint body Jacobians ``(E, L, 6, D)``.
+        coincident: Invariant coincidence of each preceding connection ``(S,)``.
+        intervals: Inclusive first/last link indices ``(I, 2)``.
+        span_intervals: Interval index for each span ``(S,)``.
+        paths: Physical path index for each span ``(S,)``.
+        predecessors: Previous span on the same path, or -1, ``(S,)``.
+        start_offsets: Guides in link-entry frames ``(S, 3)``, in metres.
+        end_offsets: Guides in link-exit frames ``(S, 3)``, in metres.
+    """
 
     transforms: wp.array4d[wp.float64]
     jacobians: wp.array4d[wp.float64]
@@ -153,7 +188,7 @@ def _span_column(data: StraightPathData, environment: int, span: int, coordinate
     start = _offset(data.start_offsets, span)
     end = _offset(data.end_offsets, span)
     displacement, rotation = _chord(
-        _transform(data.transforms, environment, interval), start, end
+        read_transform(data.transforms, environment, interval), start, end
     )
     result += _length_gradient(
         displacement,
@@ -169,7 +204,7 @@ def _span_column(data: StraightPathData, environment: int, span: int, coordinate
         segment = data.intervals[interval, 0]
         upstream = _offset(data.end_offsets, previous)
         displacement, rotation = _chord(
-            _transform(data.joints, environment, segment), upstream, start
+            read_transform(data.joints, environment, segment), upstream, start
         )
         if not data.coincident[span]:
             result += _length_gradient(
@@ -200,7 +235,20 @@ def _path_column(data: StraightPathData, environment: int, path: int, coordinate
 def path_matrix_kernel(
     data: StraightPathData, velocity_coordinates: bool, matrix: wp.array3d[wp.float64]
 ):
-    """Write minus the path derivative in configuration or velocity coordinates."""
+    """Write minus the path-length derivative in the requested coordinates.
+
+    Args:
+        data: Prepared interval and guide arrays; see ``StraightPathData``.
+        velocity_coordinates: Whether matrix rows represent host velocities.
+            Otherwise rows represent configuration coordinates, including the
+            base quaternion when present.
+        matrix: Caller-owned FP64 output ``(E, V, P)`` or ``(E, Q, P)`` for
+            environments, velocities/configurations, and physical paths.
+
+    Returns:
+        None. Launch with ``dim=matrix.shape``. Every entry is overwritten.
+        Base velocity rows are zero; invalid internal geometry yields NaNs.
+    """
     environment, coordinate, path = wp.tid()
     internal = coordinate - (matrix.shape[1] - data.jacobians.shape[3])
     if velocity_coordinates and internal < 0:
@@ -216,7 +264,18 @@ def path_force_kernel(
     tensions: wp.array2d[wp.float64],
     force: wp.array2d[wp.float64],
 ):
-    """Accumulate generalized forces directly, without a path Jacobian buffer."""
+    """Accumulate span and joint-guide forces into a generalized-force buffer.
+
+    Args:
+        data: Prepared interval and guide arrays; see ``StraightPathData``.
+        tensions: Signed axial loads ``(E, P)``; positive denotes tension.
+        force: Caller-owned FP64 output ``(E, V)``. Clear it before launching.
+
+    Returns:
+        None. Launch with ``dim=(E, S, V)`` for environments, spans, and
+        velocities. FP64 atomic additions accumulate the negative path-length
+        derivatives times loads; invalid internal derivatives propagate NaNs.
+    """
     environment, span, coordinate = wp.tid()
     internal = coordinate - (force.shape[1] - data.jacobians.shape[3])
     path = data.paths[span]
@@ -230,50 +289,21 @@ def path_force_kernel(
 
 
 @wp.kernel(enable_backward=False)
-def routing_boundaries_kernel(
-    q: wp.array2d[wp.float64],
-    data: StraightPathData,
-    links: wp.array4d[wp.float64],
-    fixed_base: wp.array2d[wp.float64],
-    entries: wp.array4d[wp.float64],
-    exits: wp.array4d[wp.float64],
-):
-    """Compose world endpoints only when a full routing solution is requested."""
-    environment = wp.tid()
-    base_count = q.shape[1] - data.jacobians.shape[3]
-    pose = wp.identity(n=4, dtype=wp.float64)
-    if base_count == 0:
-        for row in range(4):
-            for column in range(4):
-                pose[row, column] = fixed_base[row, column]
-    elif base_count == 3:
-        angle = q[environment, 0]
-        pose[0, 0] = wp.cos(angle)
-        pose[0, 1] = -wp.sin(angle)
-        pose[1, 0] = wp.sin(angle)
-        pose[1, 1] = wp.cos(angle)
-        pose[0, 3] = q[environment, 1]
-        pose[1, 3] = q[environment, 2]
-    else:
-        rotation = _quaternion_rotation_matrix(q, environment)
-        for row in range(3):
-            pose[row, 3] = q[environment, row + 4]
-            for column in range(3):
-                pose[row, column] = rotation[row, column]
-    for segment in range(links.shape[1]):
-        entry = pose @ _transform(data.joints, environment, segment)
-        pose = entry @ _transform(links, environment, segment)
-        for row in range(4):
-            for column in range(4):
-                entries[environment, segment, row, column] = entry[row, column]
-                exits[environment, segment, row, column] = pose[row, column]
-
-
-@wp.kernel(enable_backward=False)
 def guide_geometry_kernel(
     data: StraightPathData, geometry: wp.array3d[wp.float64], valid: wp.array2d[wp.bool]
 ):
-    """Write joint connection displacements and lengths in downstream span order."""
+    """Evaluate connections between consecutive spans of each threadlike path.
+
+    Args:
+        data: Prepared relative interval and joint-guide data.
+        geometry: FP64 output ``(E, S, 4)``: upstream-frame displacement followed
+            by length in metres. Spans without predecessors receive zeros.
+        valid: Boolean output ``(E, S)`` indicating noncollapsed or invariant
+            coincident connections.
+
+    Returns:
+        None. Launch with ``dim=(E, S)``; all output entries are overwritten.
+    """
     environment, span = wp.tid()
     previous = data.predecessors[span]
     displacement = wp.vec3d()
@@ -286,7 +316,7 @@ def guide_geometry_kernel(
             _offset(data.start_offsets, span),
         )
         displacement, rotation = _chord(
-            _transform(data.joints, environment, segment), start, end
+            read_transform(data.joints, environment, segment), start, end
         )
         coincident = data.coincident[span]
         length = _distance(displacement)
@@ -299,34 +329,36 @@ def guide_geometry_kernel(
 
 @wp.kernel(enable_backward=False)
 def path_lengths_kernel(data: StraightPathData, lengths: wp.array2d[wp.float64]):
-    """Sum physical span and connecting guide lengths for each path."""
+    """Sum physical spans and joint connections for each threadlike path.
+
+    Args:
+        data: Prepared relative interval and joint-guide data.
+        lengths: FP64 output ``(E, P)`` in metres, for environments and paths.
+
+    Returns:
+        None. Launch with ``dim=lengths.shape``; all entries are overwritten.
+    """
     environment, path = wp.tid()
     value = _path_column(data, environment, path, -1)
     lengths[environment, path] = value[0]
 
 
-def launch_kinematics(
-    q, operands, strains, links, link_jacobians, joints, joint_jacobians
-):
-    """Launch native relative kinematics with prepared Warp operand arrays."""
-    wp.launch(
-        strain_samples_kernel,
-        dim=(q.shape[0], links.shape[1], operands[4].shape[1], 6),
-        inputs=[q, *operands[:4]],
-        outputs=[strains],
-        device=q.device,
-    )
-    wp.launch(
-        relative_kinematics_kernel,
-        dim=(q.shape[0], links.shape[1], link_jacobians.shape[3] + 1),
-        inputs=[strains, operands[0], operands[1], operands[4]],
-        outputs=[links, link_jacobians, joints, joint_jacobians],
-        device=q.device,
-    )
-
-
 def prepare_path_data(q, operands, topology, offsets, workspace):
-    """Evaluate local and shared-interval kinematics in caller-owned buffers."""
+    """Evaluate local and shared-interval kinematics in caller-owned buffers.
+
+    Args:
+        q (wp.array): Contiguous FP64 Warp configurations ``(E, Q)``.
+        operands: Warp arrays for basis1, basis2, reference1, reference2, and
+            distances, following ``RelativeKinematicsOperands``.
+        topology: Warp arrays returned by ``routing_topology`` in the same order.
+        offsets: Start and end guide arrays, each ``(S, 3)``.
+        workspace: Warp buffers in ``workspace_shapes`` dictionary order.
+
+    Returns:
+        StraightPathData: Views into the supplied buffers and guide data.
+            Single-link intervals reuse link buffers. Launches are enqueued
+            on the current stream of q's device.
+    """
     strains, links, link_jacobians, joints, joint_jacobians, transforms, jacobians = (
         workspace
     )
@@ -354,7 +386,20 @@ def prepare_path_data(q, operands, topology, offsets, workspace):
 
 
 def workspace_shapes(batch, segments, internal_dofs, intervals, cells):
-    """Return reusable shared-strain, local, and interval workspace shapes."""
+    """Describe reusable strain, local-frame, and interval buffers.
+
+    Args:
+        batch (int): Number of environments.
+        segments (int): Number of robot links with preceding joints.
+        internal_dofs (int): Configuration coordinates excluding the base.
+        intervals (int): Number of interval workspace slots; zero reuses links.
+        cells (int): Padded integration-cell count, including the joint cell.
+
+    Returns:
+        dict[str, tuple[int, ...]]: FP64 buffer shapes in launch-argument order:
+            strains, links, link_jacobians, joints, joint_jacobians, transforms,
+            and jacobians. Preserve this order when allocating the workspace.
+    """
     return {
         "strains": (batch, segments * cells, 2, 6),
         "links": (batch, segments, 4, 4),
@@ -366,15 +411,27 @@ def workspace_shapes(batch, segments, internal_dofs, intervals, cells):
     }
 
 
-class StraightSpanPipeline:
-    """Reusable native Warp actuation for a batch sharing model and guides.
+class StraightSpanActuation:
+    """Native Warp threadlike actuation for straight spans between guides.
 
-    Construct outside capture, then call ``force(q, tensions)`` or ``matrix(q)``
-    with contiguous FP64 Warp arrays. Outputs alias reusable buffers; copy them
-    if they must survive subsequent calls. Calls on one instance must be ordered
-    on the same stream. Rebuild after changing model or routing parameters.
-    No JAX evaluation, device-buffer allocation, or numerical host transfer occurs
-    during these calls.
+    Construct before CUDA graph capture. Outputs alias reusable buffers; copy
+    results that must survive subsequent calls. Calls on one instance must be
+    ordered on the same stream. Rebuild after changing model or guide parameters.
+
+    Args:
+        robot (SoftRobot): PlanarPCS, PCS, or GVS host with FP64 model data.
+        routing (StraightSpanRouting): Prescribed guides and span connectivity.
+        batch_size (int): Positive number of environments sharing model and guides.
+        device (str | wp.Device | None): Warp device or device name; None uses Warp's current device.
+
+    Attributes:
+        force_buffer: Reused generalized forces ``(batch_size, num_velocities)``.
+        matrix_buffer: Reused actuation matrices
+            ``(batch_size, num_velocities, num_paths)``.
+
+    Raises:
+        ValueError: Invalid batch size, guide geometry, topology, or disabled
+            JAX 64-bit mode during model preparation.
     """
 
     def __init__(self, robot, routing, *, batch_size=1, device=None):
@@ -388,7 +445,7 @@ class StraightSpanPipeline:
             raise ValueError("Native Warp routing requires JAX 64-bit mode.")
         routing.validate_structure_for_robot(robot)
         routing.validate_values_for_robot(robot)
-        model = StraightKinematicsOperands.from_model(robot)
+        model = RelativeKinematicsOperands.from_model(robot)
         self.device = wp.get_device(device)
         self.batch_size = batch_size
         self.num_coordinates = robot.num_coordinates
@@ -453,8 +510,23 @@ class StraightSpanPipeline:
             q, self.operands, self.topology, self.offsets, self.workspace
         )
 
-    def force(self, q, tensions):
-        """Write and return ``(E, V)`` generalized forces from ``(E, P)`` tensions."""
+    def actuation_force(self, q, tensions):
+        """Evaluate generalized forces for a batch of configurations and loads.
+
+        Args:
+            q (wp.array): Contiguous FP64 Warp configurations ``(batch_size, num_coordinates)``.
+            tensions (wp.array): Contiguous FP64 signed axial loads ``(batch_size, num_paths)``.
+                Positive values denote tension; negative values denote ideal axial
+                compression below buckling. Both inputs must use this executor's device.
+
+        Returns:
+            result (wp.array): Reused ``force_buffer``, shape ``(batch_size, num_velocities)``.
+                No actuation matrix or world guide geometry is formed. Synchronize
+                the stream before reading the result on the host.
+
+        Raises:
+            ValueError: An input has the wrong shape, dtype, device, or contiguity.
+        """
         self._check(tensions, (self.batch_size, self.num_paths), "tensions")
         data = self._prepare(q)
         self.force_buffer.zero_()
@@ -468,8 +540,21 @@ class StraightSpanPipeline:
             )
         return self.force_buffer
 
-    def matrix(self, q):
-        """Write and return ``(E, V, P)`` actuation matrices."""
+    def actuation_matrix(self, q):
+        """Evaluate the mapping from signed axial loads to generalized forces.
+
+        Args:
+            q (wp.array): Contiguous FP64 Warp configurations ``(batch_size, num_coordinates)``
+                on this executor's device.
+
+        Returns:
+            result (wp.array): Reused ``matrix_buffer``, shape
+                ``(batch_size, num_velocities, num_paths)``. Base rows are zero and
+                invalid internal derivatives are NaN. Synchronize before host reads.
+
+        Raises:
+            ValueError: The input has the wrong shape, dtype, device, or contiguity.
+        """
         data = self._prepare(q)
         if self.num_velocities and self.num_paths:
             wp.launch(
@@ -480,3 +565,86 @@ class StraightSpanPipeline:
                 device=self.device,
             )
         return self.matrix_buffer
+
+
+@wp.kernel(enable_backward=False)
+def straight_spans_kernel(
+    transforms: wp.array4d[wp.float64],
+    body_jacobians: wp.array4d[wp.float64],
+    entries: wp.array4d[wp.float64],
+    exits: wp.array4d[wp.float64],
+    intervals: wp.array2d[wp.int32],
+    span_intervals: wp.array[wp.int32],
+    start_offsets: wp.array2d[wp.float64],
+    end_offsets: wp.array2d[wp.float64],
+    geometry: wp.array3d[wp.float64],
+    jacobians: wp.array3d[wp.float64],
+    valid: wp.array2d[wp.bool],
+):
+    """Evaluate guide endpoints, exact chord lengths, and analytical derivatives.
+
+    Args:
+        transforms: Shared relative interval transforms, ``(E, I, 4, 4)``.
+        body_jacobians: Interval body Jacobians, ``(E, I, 6, D)``.
+        entries: World link entry poses, ``(E, S, 4, 4)``.
+        exits: World link exit poses, ``(E, S, 4, 4)``.
+        intervals: Inclusive segment bounds, ``(I, 2)``.
+        span_intervals: Interval index for each span, ``(P,)``.
+        start_offsets: Entry guide offsets, ``(P, 3)``.
+        end_offsets: Exit guide offsets, ``(P, 3)``.
+        geometry: Output world start/end positions and length, ``(E, P, 7)``.
+        jacobians: Output length configuration derivatives, ``(E, P, D)``.
+        valid: Output finite, noncollapsed displacement flags, ``(E, P)``.
+
+    Returns:
+        None. Launch with dimensions ``(E, P, D + 1)``. Lane zero writes geometry;
+        the other lanes write Jacobian columns. Collapsed spans receive NaNs.
+    """
+    environment, span, lane = wp.tid()
+    interval = span_intervals[span]
+    transform = read_transform(transforms, environment, interval)
+    start_offset = wp.vec3d()
+    end_offset = wp.vec3d()
+    displacement = wp.vec3d()
+    rotation = wp.mat33d()
+    for row in range(3):
+        start_offset[row] = start_offsets[span, row]
+        end_offset[row] = end_offsets[span, row]
+        displacement[row] = transform[row, 3] - start_offset[row]
+        for column in range(3):
+            rotation[row, column] = transform[row, column]
+    displacement += rotation @ end_offset
+    squared = wp.dot(displacement, displacement)
+    length = wp.float64(0.0)
+    if squared > wp.float64(0.0):
+        length = wp.sqrt(squared)
+    accepted = wp.isfinite(displacement) and length > wp.float64(1e-12)
+    if lane == 0:
+        entry = read_transform(entries, environment, intervals[interval, 0])
+        exit_pose = read_transform(exits, environment, intervals[interval, 1])
+        valid[environment, span] = accepted
+        geometry[environment, span, 6] = length
+        for row in range(3):
+            start = entry[row, 3]
+            end = exit_pose[row, 3]
+            for column in range(3):
+                start += entry[row, column] * start_offset[column]
+                end += exit_pose[row, column] * end_offset[column]
+            geometry[environment, span, row] = start
+            geometry[environment, span, row + 3] = end
+    else:
+        coordinate = lane - 1
+        derivative = wp.float64(wp.nan)
+        if accepted:
+            angular = wp.vec3d()
+            linear = wp.vec3d()
+            for component in range(3):
+                angular[component] = body_jacobians[
+                    environment, interval, component, coordinate
+                ]
+                linear[component] = body_jacobians[
+                    environment, interval, component + 3, coordinate
+                ]
+            variation = rotation @ (linear + wp.cross(angular, end_offset))
+            derivative = wp.dot(displacement, variation) / length
+        jacobians[environment, span, coordinate] = derivative

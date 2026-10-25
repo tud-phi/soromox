@@ -7,7 +7,7 @@ from soromox.systems.params import _contains_tracer
 from soromox.utils.geometry.poses import segment_boundary_poses
 from soromox.utils.lie_algebra import se3
 
-from .implicit_threadlike import (
+from .routing import (
     ConfigurationDependentThreadlikeRouting,
     RoutingSolution,
     RoutingSpanParams,
@@ -221,7 +221,7 @@ class StraightSpanRouting(ConfigurationDependentThreadlikeRouting):
         solution = self.solve_routing(robot, configuration, backend="jax")
         return -self.path_velocity_jacobian(robot, configuration, solution).T
 
-    def generalized_force(self, robot, configuration, tensions, *, backend=None):
+    def actuation_force(self, robot, configuration, tensions, *, backend=None):
         """Evaluate tendon forces directly without reconstructing world geometry.
 
         Args:

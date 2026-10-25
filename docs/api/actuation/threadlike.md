@@ -505,25 +505,31 @@ use JAX. Measure your workload when choosing a backend.
 
 For actuation without world endpoint reconstruction, use
 `routing.actuation_matrix(robot, configuration, backend="warp")` or
-`routing.generalized_force(robot, configuration, tensions, backend="warp")`.
+`routing.actuation_force(robot, configuration, tensions, backend="warp")`.
 The latter accumulates forces directly without materializing an actuation matrix.
 Matrix rows and force entries use generalized velocity coordinates, including
 zero floating-base entries for valid routes.
 
+The strategies share the `soromox.actuation.threadlike` namespace: `material`
+contains fixed routing and transmissions, `routing` defines shared span contracts,
+and `straight_span` and `shortest_path` implement the two configuration-dependent
+strategies. The Warp backend mirrors the threadlike grouping; reusable continuum
+kinematics lives in `execution.warp.common.relative_kinematics`.
+
 A native Warp simulation can prepare reusable buffers once:
 
 ```python
-from soromox.execution.warp.actuation import StraightSpanPipeline
+from soromox.execution.warp.actuation.threadlike import StraightSpanActuation
 
-pipeline = StraightSpanPipeline(robot, routing, batch_size=batch_size, device="cuda")
+executor = StraightSpanActuation(robot, routing, batch_size=batch_size, device="cuda")
 # q: contiguous FP64 Warp array (batch_size, robot.num_coordinates)
 # tensions: contiguous FP64 Warp array (batch_size, routing.spans.num_paths)
-force = pipeline.force(q, tensions)
+force = executor.actuation_force(q, tensions)
 ```
 
-`force` aliases the pipeline's output buffer. Calls launch only Warp kernels and
-can be recorded in a CUDA graph after warming up the kernels. Keep the pipeline
-and input buffers alive for graph replay. Use one pipeline per concurrent stream
+`force` aliases the executor's output buffer. Calls launch only Warp kernels and
+can be recorded in a CUDA graph after warming up the kernels. Keep the executor
+and input buffers alive for graph replay. Use one executor per concurrent stream
 and rebuild it after changing model or guide parameters. Construction uses the
 SoRoMoX model data; steady-state calls perform no JAX evaluation or host transfers.
 Native launches are forward-only. Use the JAX-facing methods above when gradients
@@ -658,3 +664,7 @@ a smaller time step and a finer routing mesh.
 ::: soromox.actuation.ShortestPathRouting
 
 ::: soromox.actuation.RoutingSolverOptions
+
+### Native Warp actuation
+
+::: soromox.execution.warp.actuation.threadlike.straight_span.StraightSpanActuation

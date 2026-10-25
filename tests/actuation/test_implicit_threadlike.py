@@ -25,7 +25,7 @@ from soromox.actuation import (
     ShortestPathRoutingParams,
     StraightSpanRouting,
 )
-from soromox.actuation._routing_solver import (
+from soromox.actuation.threadlike._solver import (
     RoutingProblem,
     _forward_solve,
     equalities,
@@ -438,7 +438,7 @@ def test_continuous_wall_bound_catches_a_peak_between_validation_points(monkeypa
     Args:
         monkeypatch: Fixture supplying a prescribed polynomial solver state.
     """
-    from soromox.actuation import implicit_threadlike
+    from soromox.actuation.threadlike import shortest_path as implicit_threadlike
 
     routing = ShortestPathRouting(
         _routing(elements=1).params,
@@ -543,7 +543,7 @@ def test_degenerate_tangent_and_singular_kkt_reject_forward_and_reverse_derivati
     monkeypatch, degenerate
 ):
     """Invalid smooth sensitivities remain explicit in both autodiff modes."""
-    from soromox.actuation import _routing_solver
+    from soromox.actuation.threadlike import _solver as _routing_solver
 
     def fake_solve(problem, initial, options):
         """Return an otherwise feasible state to isolate the derivative guard."""

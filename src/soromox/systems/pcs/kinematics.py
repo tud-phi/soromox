@@ -3,7 +3,7 @@
 import jax.numpy as jnp
 from jax import vmap
 
-from soromox.utils.geometry.poses import spatial_transform
+from soromox.utils.geometry.poses import as_spatial_transform
 from soromox.utils.lie_algebra import se2, se3
 
 
@@ -29,7 +29,7 @@ def constant_strain_segment_kinematics(robot, configuration):
         if robot.is_planar:
             increment = length * strain[2:5]
             planar = se2.exp(increment, robot.global_eps)
-            transform = spatial_transform(planar)
+            transform = as_spatial_transform(planar)
             derivative = se2.left_jacobian(-increment, robot.tangent_eps) @ (
                 length * basis[2:5]
             )

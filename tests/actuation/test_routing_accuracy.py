@@ -7,7 +7,7 @@ import pytest
 from numpy.testing import assert_allclose
 
 from soromox.actuation import RoutingSolverOptions
-from soromox.actuation import _routing_solver as solver
+from soromox.actuation.threadlike import _solver as solver
 
 jax.config.update("jax_enable_x64", True)
 

@@ -6,21 +6,21 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 
-from soromox.actuation.implicit_threadlike import (
+from soromox.actuation.threadlike.routing import (
     RoutingGuideSolution,
     RoutingSolution,
     StraightSpanSolution,
 )
-from soromox.execution.warp.actuation import straight_span_launch as native
-from soromox.execution.warp.actuation.straight_span_actuation import (
+from soromox.execution.warp.actuation.threadlike import straight_span_launch as native
+from soromox.execution.warp.actuation.threadlike.straight_span import (
     interval_workspace_count,
     routing_topology,
     workspace_shapes,
 )
-from soromox.execution.warp.actuation.straight_span_kinematics import (
-    StraightKinematicsOperands,
+from soromox.execution.warp.common.relative_kinematics import (
+    RelativeKinematicsOperands,
 )
-from soromox.utils.geometry.poses import spatial_transform
+from soromox.utils.geometry.poses import as_spatial_transform
 
 
 def _batch_evaluator(operation):
@@ -29,7 +29,7 @@ def _batch_evaluator(operation):
     @jax.custom_batching.custom_vmap
     def execute(routing, robot, configurations, tensions):
         """Pass prepared model data and runtime state to a single native FFI call."""
-        model = StraightKinematicsOperands.from_model(robot)
+        model = RelativeKinematicsOperands.from_model(robot)
         topology = routing_topology(routing, model)
         batch, coordinates = configurations.shape
         spans, paths = routing.spans.num_spans, routing.spans.num_paths
@@ -60,7 +60,7 @@ def _batch_evaluator(operation):
         else:
             fixed_base = jnp.eye(4)
             if not robot.floating_base:
-                fixed_base = spatial_transform(
+                fixed_base = as_spatial_transform(
                     robot.base_transform_from_configuration(
                         jnp.zeros(robot.num_coordinates)
                     )
@@ -174,7 +174,7 @@ def _resolve_jvp(primals, tangents):
             return routing.solve_routing(robot, configuration, backend="jax")
         if operation == "matrix":
             return routing.actuation_matrix(robot, configuration, backend="jax")
-        return routing.generalized_force(robot, configuration, tensions, backend="jax")
+        return routing.actuation_force(robot, configuration, tensions, backend="jax")
 
     return eqx.filter_jvp(reference, primals, tangents)
 

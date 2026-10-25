@@ -16,7 +16,7 @@ from soromox.actuation import (
     ShortestPathRoutingParams,
     StraightSpanRouting,
 )
-from soromox.actuation._routing_geometry import guide_kinematics
+from soromox.actuation.threadlike._geometry import guide_kinematics
 from soromox.systems import (
     GVS,
     PCS,

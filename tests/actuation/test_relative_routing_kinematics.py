@@ -9,7 +9,7 @@ from numpy.testing import assert_allclose
 from system_param_builders import pcs_params, planar_pcs_params
 
 from soromox.actuation import RoutingSpanParams, StraightSpanRouting, ThreadlikeRouting
-from soromox.actuation import straight_span as straight_module
+from soromox.actuation.threadlike import straight_span as straight_module
 from soromox.systems import (
     GVS,
     PCS,

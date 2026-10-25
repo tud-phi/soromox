@@ -44,7 +44,7 @@ def test_native_pipeline(device, kind, floating, monkeypatch):
     wp = pytest.importorskip("warp")
     if device == "cuda" and not wp.is_cuda_available():
         pytest.skip("CUDA device unavailable")
-    from soromox.execution.warp.actuation import StraightSpanPipeline
+    from soromox.execution.warp.actuation.threadlike import StraightSpanActuation
 
     robot, routing, q = _case(kind, floating)
     qs = jnp.stack([q, q.at[-1].add(0.03)])
@@ -53,7 +53,7 @@ def test_native_pipeline(device, kind, floating, monkeypatch):
         jax.vmap(lambda values: routing.actuation_matrix(robot, values, backend="jax"))
     )
     expected = np.asarray(reference(qs))
-    pipeline = StraightSpanPipeline(robot, routing, batch_size=2, device=device)
+    pipeline = StraightSpanActuation(robot, routing, batch_size=2, device=device)
     values = wp.array(np.asarray(qs), dtype=wp.float64, device=device)
     loads = wp.array(np.asarray(tensions), dtype=wp.float64, device=device)
 
@@ -62,8 +62,8 @@ def test_native_pipeline(device, kind, floating, monkeypatch):
 
     monkeypatch.setattr(type(robot), "relative_segment_kinematics", forbidden)
     monkeypatch.setattr(type(robot), "joint_kinematics", forbidden)
-    assert_allclose(pipeline.matrix(values).numpy(), expected, atol=2e-11)
-    force = pipeline.force(values, loads)
+    assert_allclose(pipeline.actuation_matrix(values).numpy(), expected, atol=2e-11)
+    force = pipeline.actuation_force(values, loads)
     assert_allclose(
         force.numpy(), np.einsum("evp,ep->ev", expected, tensions), atol=2e-11
     )
@@ -71,7 +71,7 @@ def test_native_pipeline(device, kind, floating, monkeypatch):
     force.fill_(np.nan)
     if device == "cuda":
         with wp.ScopedCapture(device=device) as capture:
-            pipeline.force(values, loads)
+            pipeline.actuation_force(values, loads)
         # Reuse both model/workspace buffers and the captured graph with new inputs.
         wp.copy(values, wp.array(np.asarray(qs[::-1]), dtype=wp.float64, device=device))
         wp.copy(
@@ -80,11 +80,13 @@ def test_native_pipeline(device, kind, floating, monkeypatch):
         wp.capture_launch(capture.graph)
         target = np.einsum("evp,ep->ev", expected[::-1], tensions * 2)
     else:
-        pipeline.force(values, loads)
+        pipeline.actuation_force(values, loads)
         target = np.einsum("evp,ep->ev", expected, tensions)
     assert_allclose(force.numpy(), target, atol=2e-11)
     with pytest.raises(ValueError, match="tensions"):
-        pipeline.force(values, wp.zeros((2, 1), dtype=wp.float64, device=device))
+        pipeline.actuation_force(
+            values, wp.zeros((2, 1), dtype=wp.float64, device=device)
+        )
 
 
 @pytest.mark.parametrize("kind", ["planar", "spatial", "gvs", "gvs_scaled"])
@@ -94,7 +96,7 @@ def test_native_public_dispatch(kind, monkeypatch):
     robot, routing, q = _case(kind, True)
     tensions = jnp.array([1.2, -0.3])
     expected = routing.actuation_matrix(robot, q, backend="jax")
-    force_reference = routing.generalized_force(robot, q, tensions, backend="jax")
+    force_reference = routing.actuation_force(robot, q, tensions, backend="jax")
 
     def forbidden(*args, **kwargs):
         raise AssertionError("Warp forward execution called JAX kinematics")
@@ -107,7 +109,7 @@ def test_native_public_dispatch(kind, monkeypatch):
         )(q)
         forces = jax.jit(
             jax.vmap(
-                lambda load: routing.generalized_force(robot, q, load, backend="warp")
+                lambda load: routing.actuation_force(robot, q, load, backend="warp")
             )
         )(jnp.stack([tensions, 2 * tensions]))
         solution = jax.jit(
@@ -129,7 +131,7 @@ def test_native_force_derivatives_and_empty_batches():
     tensions = jnp.array([1.0, 2.0])
 
     def force(values, loads, backend):
-        return routing.generalized_force(robot, values, loads, backend=backend)
+        return routing.actuation_force(robot, values, loads, backend=backend)
 
     for arg in (0, 1):
         actual = jax.jit(
@@ -173,9 +175,9 @@ def test_native_joint_force_singularities(kind, offset, floating):
             q = robot.pack_configuration(
                 q, base_pose=jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0])
             )
-        expected = routing.generalized_force(robot, q, tensions, backend="jax")
+        expected = routing.actuation_force(robot, q, tensions, backend="jax")
         actual = jax.jit(
-            lambda values: routing.generalized_force(
+            lambda values: routing.actuation_force(
                 robot, values, tensions, backend="warp"
             )
         )(q)
@@ -199,24 +201,26 @@ def test_cached_derivatives_honor_rejected_spans(straight_backend):
 def test_native_empty_paths_and_input_validation():
     """An empty routing produces zero force without launching any span kernels."""
     wp = pytest.importorskip("warp")
-    from soromox.execution.warp.actuation import StraightSpanPipeline
+    from soromox.execution.warp.actuation.threadlike import StraightSpanActuation
 
     robot, _, q = _case("planar", False)
     routing = StraightSpanRouting(
         RoutingSpanParams(jnp.empty((0, 3)), jnp.empty((0, 3)), (), (), ())
     )
-    pipeline = StraightSpanPipeline(robot, routing, device="cpu")
+    pipeline = StraightSpanActuation(robot, routing, device="cpu")
     values = wp.array(np.asarray(q)[None], dtype=wp.float64, device="cpu")
     loads = wp.empty((1, 0), dtype=wp.float64, device="cpu")
-    assert_allclose(pipeline.force(values, loads).numpy(), 0, atol=0)
-    assert pipeline.matrix(values).shape == (1, robot.num_velocities, 0)
+    assert_allclose(pipeline.actuation_force(values, loads).numpy(), 0, atol=0)
+    assert pipeline.actuation_matrix(values).shape == (1, robot.num_velocities, 0)
     assert_allclose(
-        routing.generalized_force(robot, q, jnp.empty(0), backend="warp"), 0, atol=0
+        routing.actuation_force(robot, q, jnp.empty(0), backend="warp"), 0, atol=0
     )
     with pytest.raises(ValueError, match="q must"):
-        pipeline.force(wp.zeros((1, q.size), dtype=wp.float32, device="cpu"), loads)
+        pipeline.actuation_force(
+            wp.zeros((1, q.size), dtype=wp.float32, device="cpu"), loads
+        )
     with pytest.raises(ValueError, match="tensions"):
-        routing.generalized_force(robot, q, jnp.ones(1), backend="warp")
+        routing.actuation_force(robot, q, jnp.ones(1), backend="warp")
 
 
 def test_native_fp32_guide_storage():

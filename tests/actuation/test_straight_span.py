@@ -12,9 +12,9 @@ from soromox.actuation import (
     ConfigurationDependentThreadlikeRouting,
     RoutingSpanParams,
     StraightSpanRouting,
-    _routing_solver,
 )
-from soromox.actuation import straight_span as straight_module
+from soromox.actuation.threadlike import _solver as _routing_solver
+from soromox.actuation.threadlike import straight_span as straight_module
 from soromox.systems import PlanarPCS, PlanarPCSStructure
 
 jax.config.update("jax_enable_x64", True)
