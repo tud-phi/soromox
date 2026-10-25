@@ -510,11 +510,13 @@ The latter accumulates forces directly without materializing an actuation matrix
 Matrix rows and force entries use generalized velocity coordinates, including
 zero floating-base entries for valid routes.
 
-The strategies share the `soromox.actuation.threadlike` namespace: `material`
+The strategies share the `soromox.actuation.threadlike` namespace: `fixed_routing`
 contains fixed routing and transmissions, `routing` defines shared span contracts,
 and `straight_span` and `shortest_path` implement the two configuration-dependent
-strategies. The Warp backend mirrors the threadlike grouping; reusable continuum
-kinematics lives in `execution.warp.common.relative_kinematics`.
+strategies. The Warp backend mirrors the threadlike grouping: its `fixed_routing`
+module prepares data and checks eligibility for linear fixed routing, while
+`straight_span` evaluates free-space routing. Reusable continuum kinematics lives
+in `execution.warp.common.relative_kinematics`.
 
 A native Warp simulation can prepare reusable buffers once:
 

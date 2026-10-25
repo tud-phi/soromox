@@ -1,6 +1,6 @@
 """Native threadlike actuation contracts and optional Warp execution."""
 
-from .linear import (
+from .fixed_routing import (
     LinearThreadlikeActuationData,
     supports_linear_threadlike_force,
     supports_linear_threadlike_matrix,

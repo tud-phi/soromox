@@ -1,7 +1,7 @@
-"""Material and configuration-dependent routing for threadlike actuation."""
+"""Fixed and configuration-dependent routing for threadlike actuation."""
 
 from ._solver import RoutingSolverOptions
-from .material import (
+from .fixed_routing import (
     BaseThreadlikeRoutingParams,
     LinearThreadlikeRoutingParams,
     ThreadlikeActuator,
