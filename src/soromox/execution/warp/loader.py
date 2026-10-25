@@ -104,7 +104,7 @@ def load_straight_span_evaluator() -> Callable:
                 "Install it with `pip install soromox[warp]`."
             ) from error
         raise
-    return module.resolve_spans
+    return module.evaluate
 
 
 @cache

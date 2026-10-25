@@ -1,4 +1,4 @@
-"""JAX batching and differentiation for Warp straight-span geometry."""
+"""JAX batching and differentiation around native Warp free-space actuation."""
 
 from math import prod
 
@@ -6,174 +6,181 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 
-from soromox.actuation.implicit_threadlike import StraightSpanSolution
-from soromox.execution.warp.actuation.straight_span import (
-    single_segment_spans,
-    straight_spans,
+from soromox.actuation.implicit_threadlike import (
+    RoutingGuideSolution,
+    RoutingSolution,
+    StraightSpanSolution,
+)
+from soromox.execution.warp.actuation import straight_span_launch as native
+from soromox.execution.warp.actuation.straight_span_actuation import (
+    interval_workspace_count,
+    routing_topology,
+    workspace_shapes,
+)
+from soromox.execution.warp.actuation.straight_span_kinematics import (
+    StraightKinematicsOperands,
 )
 from soromox.utils.geometry.poses import spatial_transform
 
 
-@jax.custom_batching.custom_vmap
-def _execute_batch(routing, robot, configurations):
-    """Resolve spans for a canonical batch using shared host link kinematics.
+def _batch_evaluator(operation):
+    """Specialize batching for solutions, matrices, or direct forces."""
 
-    Args:
-        routing: Validated StraightSpanRouting with at least one span.
-        robot: SoftRobot supplying relative link kinematics.
-        configurations: Configuration batch, ``(E, D)``.
-
-    Returns:
-        Tuple of span solutions with an environment dimension on every leaf.
-    """
-    if configurations.dtype != jnp.float64:
-        raise ValueError("Warp straight routing requires JAX 64-bit mode.")
-    if configurations.shape[0] == 0:
-        return tuple(
-            StraightSpanSolution(
-                jnp.empty((0, 3)),
-                jnp.empty((0, 3)),
-                jnp.empty((0,)),
-                jnp.empty((0, robot.num_coordinates)),
-                jnp.empty((0,), dtype=bool),
+    @jax.custom_batching.custom_vmap
+    def execute(routing, robot, configurations, tensions):
+        """Pass prepared model data and runtime state to a single native FFI call."""
+        model = StraightKinematicsOperands.from_model(robot)
+        topology = routing_topology(routing, model)
+        batch, coordinates = configurations.shape
+        spans, paths = routing.spans.num_spans, routing.spans.num_paths
+        internal = robot.num_internal_dofs
+        shapes = workspace_shapes(
+            batch,
+            robot.num_segments,
+            internal,
+            interval_workspace_count(routing),
+            model.distances.shape[1],
+        )
+        arguments = [
+            configurations,
+            model.basis1.astype(jnp.float64),
+            model.basis2.astype(jnp.float64),
+            model.reference1.astype(jnp.float64),
+            model.reference2.astype(jnp.float64),
+            model.distances.astype(jnp.float64),
+            *topology,
+            routing.spans.start_offset.astype(jnp.float64),
+            routing.spans.end_offset.astype(jnp.float64),
+        ]
+        if operation == "force":
+            arguments.append(tensions)
+            shapes["force"] = (batch, robot.num_velocities)
+        elif operation == "matrix":
+            shapes["matrix"] = (batch, robot.num_velocities, paths)
+        else:
+            fixed_base = jnp.eye(4)
+            if not robot.floating_base:
+                fixed_base = spatial_transform(
+                    robot.base_transform_from_configuration(
+                        jnp.zeros(robot.num_coordinates)
+                    )
+                )
+            arguments.append(fixed_base.astype(jnp.float64))
+            shapes.update(
+                {
+                    "entries": (batch, robot.num_segments, 4, 4),
+                    "exits": (batch, robot.num_segments, 4, 4),
+                    "geometry": (batch, spans, 7),
+                    "span_jacobians": (batch, spans, internal),
+                    "valid": (batch, spans),
+                    "guide_geometry": (batch, spans, 4),
+                    "guide_valid": (batch, spans),
+                    "lengths": (batch, paths),
+                    "matrix": (batch, coordinates, paths),
+                }
             )
-            for _ in range(routing.spans.num_spans)
+        if batch == 0:
+            outputs = [
+                jnp.empty(
+                    shape,
+                    dtype=bool if name in ("valid", "guide_valid") else jnp.float64,
+                )
+                for name, shape in shapes.items()
+            ]
+        else:
+            outputs = getattr(native, operation)(*arguments, output_dims=shapes)
+        if operation != "routing":
+            return outputs[-1]
+        geometry, jacobians, valid, guides, guide_valid, lengths, matrix = outputs[-7:]
+        jacobians = jnp.pad(
+            jacobians, ((0, 0), (0, 0), (robot.num_base_coordinates, 0))
         )
-    bounds = tuple(
-        zip(routing.spans.start_segment_index, routing.spans.end_segment_index)
-    )
-    intervals = tuple(dict.fromkeys(bounds))
-    links, body_jacobians, joints = jax.vmap(robot.relative_segment_kinematics)(
-        configurations
-    )
-    bases = jax.vmap(
-        lambda configuration: spatial_transform(
-            robot.base_transform_from_configuration(configuration)
+        # Invalid spans invalidate every configuration derivative, including base columns.
+        jacobians = jnp.where(valid[..., None], jacobians, jnp.nan)
+        solved = tuple(
+            StraightSpanSolution(
+                geometry[:, i, :3],
+                geometry[:, i, 3:6],
+                geometry[:, i, 6],
+                jacobians[:, i],
+                valid[:, i],
+            )
+            for i in range(spans)
         )
-    )(configurations)[:, None]
-    batch, segments = links.shape[:2]
-    span_count, interval_count = len(bounds), len(intervals)
-    coordinates = configurations.shape[1]
-    output_dims = {
-        "entries": (batch, segments, 4, 4),
-        "exits": (batch, segments, 4, 4),
-        "geometry": (batch, span_count, 7),
-        "jacobians": (batch, span_count, coordinates),
-        "valid": (batch, span_count),
-    }
-    if all(first == last for first, last in bounds):
-        evaluator = single_segment_spans
-        interval_array = jnp.tile(
-            jnp.arange(segments, dtype=jnp.int32)[:, None], (1, 2)
+        previous, connections = set(), []
+        for index, path in enumerate(routing.spans.span_path_index):
+            if path in previous:
+                connections.append(
+                    RoutingGuideSolution(
+                        index,
+                        guides[:, index, 3],
+                        guides[:, index, :3],
+                        guide_valid[:, index],
+                    )
+                )
+            previous.add(path)
+        return RoutingSolution(
+            solved, lengths, tuple(connections), -jnp.swapaxes(matrix, -1, -2)
         )
-        indices = jnp.asarray(routing.spans.start_segment_index, dtype=jnp.int32)
-    else:
-        evaluator = straight_spans
-        interval_array = jnp.asarray(intervals, dtype=jnp.int32)
-        indices = jnp.asarray(
-            [intervals.index(bound) for bound in bounds], dtype=jnp.int32
+
+    @execute.def_vmap
+    def batch(axis_size, in_batched, routing, robot, configurations, tensions):
+        """Flatten nested batches while retaining shared numerical parameters."""
+        routing_batched, robot_batched, q_batched, tension_batched = in_batched
+        if any(jax.tree.leaves((routing_batched, robot_batched))):
+            raise ValueError(
+                "Warp straight routing batches configurations with shared parameters."
+            )
+        if not q_batched:
+            configurations = jnp.broadcast_to(
+                configurations, (axis_size, *configurations.shape)
+            )
+        if not tension_batched:
+            tensions = jnp.broadcast_to(tensions, (axis_size, *tensions.shape))
+        leading = configurations.shape[:-1]
+        result = execute(
+            routing,
+            robot,
+            configurations.reshape((prod(leading), configurations.shape[-1])),
+            tensions.reshape((prod(leading), tensions.shape[-1])),
         )
-        output_dims.update(
-            {
-                "transforms": (batch, interval_count, 4, 4),
-                "interval_jacobians": (batch, interval_count, 6, coordinates),
-            }
+        result = jax.tree.map(
+            lambda value: value.reshape((*leading, *value.shape[1:])), result
         )
-    outputs = evaluator(
-        links,
-        joints,
-        body_jacobians,
-        bases,
-        interval_array,
-        indices,
-        routing.spans.start_offset.astype(jnp.float64),
-        routing.spans.end_offset.astype(jnp.float64),
-        output_dims=output_dims,
-    )
-    geometry, jacobians, valid = outputs[-3:]
-    return tuple(
-        StraightSpanSolution(
-            geometry[:, index, :3],
-            geometry[:, index, 3:6],
-            geometry[:, index, 6],
-            jacobians[:, index],
-            valid[:, index],
-        )
-        for index in range(span_count)
-    )
+        return result, jax.tree.map(lambda _: True, result)
+
+    return execute
 
 
-@_execute_batch.def_vmap
-def _execute_batch_vmap(axis_size, in_batched, routing, robot, configurations):
-    """Flatten nested configuration batches into one set of Warp launches.
-
-    Args:
-        axis_size: Number of environments.
-        in_batched: Batched flags for routing, model, and configuration leaves.
-        routing: Shared routing parameters.
-        robot: Shared host model.
-        configurations: Configuration batch with an optional added leading axis.
-
-    Returns:
-        Batched span solutions and matching output batching flags.
-
-    Raises:
-        ValueError: If model or guide parameters are batched.
-    """
-    routing_batched, robot_batched, configuration_batched = in_batched
-    if any(jax.tree.leaves((routing_batched, robot_batched))):
-        raise ValueError(
-            "Warp straight routing batches configurations with shared parameters."
-        )
-    if not configuration_batched:
-        configurations = jnp.broadcast_to(
-            configurations, (axis_size, *configurations.shape)
-        )
-    leading = configurations.shape[:-1]
-    result = _execute_batch(
-        routing,
-        robot,
-        configurations.reshape((prod(leading), configurations.shape[-1])),
-    )
-    result = jax.tree.map(
-        lambda value: value.reshape((*leading, *value.shape[1:])), result
-    )
-    return result, jax.tree.map(lambda _: True, result)
+_EVALUATORS = {
+    operation: _batch_evaluator(operation)
+    for operation in ("routing", "matrix", "force")
+}
 
 
 @eqx.filter_custom_jvp
-def resolve_spans(routing, robot, configuration):
-    """Resolve Warp spans while preserving JAX derivatives through the routing.
-
-    Args:
-        routing: Validated straight routing with at least one span.
-        robot: Host model.
-        configuration: Configuration vector, ``(D,)``.
-
-    Returns:
-        Tuple of straight span solutions. Explicit length Jacobians are evaluated
-        in Warp; transformed calls use the JAX reference, as other Warp executors do.
-    """
-    return jax.tree.map(
-        lambda value: value[0], _execute_batch(routing, robot, configuration[None])
-    )
+def _resolve(routing, robot, configuration, tensions, operation):
+    """Use native forward execution and the analytical JAX reference for AD."""
+    result = _EVALUATORS[operation](routing, robot, configuration[None], tensions[None])
+    return jax.tree.map(lambda value: value[0], result)
 
 
-@resolve_spans.def_jvp
-def _resolve_spans_jvp(primals, tangents):
-    """Evaluate routing sensitivities with the JAX reference implementation.
+@_resolve.def_jvp
+def _resolve_jvp(primals, tangents):
+    """Differentiate configuration, guide, model, and tension parameters in JAX."""
 
-    Args:
-        primals: Routing, host, and configuration.
-        tangents: Corresponding perturbations.
+    def reference(routing, robot, configuration, tensions, operation):
+        if operation == "routing":
+            return routing.solve_routing(robot, configuration, backend="jax")
+        if operation == "matrix":
+            return routing.actuation_matrix(robot, configuration, backend="jax")
+        return routing.generalized_force(robot, configuration, tensions, backend="jax")
 
-    Returns:
-        Span solutions and their directional derivatives.
-    """
-    return eqx.filter_jvp(
-        lambda routing, robot, configuration: (
-            routing.solve_routing(robot, configuration, backend="jax").spans
-        ),
-        primals,
-        tangents,
-    )
+    return eqx.filter_jvp(reference, primals, tangents)
+
+
+def evaluate(routing, robot, configuration, tensions=None, operation="routing"):
+    """Resolve geometry or evaluate actuation without JAX runtime kinematics."""
+    if tensions is None:
+        tensions = jnp.empty((0,), dtype=configuration.dtype)
+    return _resolve(routing, robot, configuration, tensions, operation)

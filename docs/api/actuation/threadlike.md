@@ -493,15 +493,41 @@ routing = StraightSpanRouting(spans)
 
 With the optional `warp-lang` dependency, use
 `routing.solve_routing(robot, configuration, backend="warp")` to evaluate straight
-span geometry and analytical length Jacobians with FP64 Warp kernels. Configuration
-batches, including nested `jax.vmap` calls, share one set of launches with common
-model and guide parameters. Spans within a single section reuse its link transform
-and Jacobian directly. Segment kinematics and joint guide connections currently
-use JAX; differentiation through the solve also uses the JAX implementation.
+segment kinematics, span geometry, joint-guide connections, and analytical path
+Jacobians with FP64 Warp kernels. Configuration batches, including nested
+`jax.vmap` calls, share one set of launches with common model and guide parameters.
+Each link is integrated once and relative intervals are shared across paths.
+Differentiation through these APIs uses the JAX reference implementation.
 The default, `backend=None`, inherits `robot.backend`. Use `backend="jax"` or
 `backend="warp"` to override it per call. `"auto"` selects Warp on GPU and JAX
 on CPU, following the shared execution policy. Hosts without a backend preference
 use JAX. Measure your workload when choosing a backend.
+
+For actuation without world endpoint reconstruction, use
+`routing.actuation_matrix(robot, configuration, backend="warp")` or
+`routing.generalized_force(robot, configuration, tensions, backend="warp")`.
+The latter accumulates forces directly without materializing an actuation matrix.
+Matrix rows and force entries use generalized velocity coordinates, including
+zero floating-base entries for valid routes.
+
+A native Warp simulation can prepare reusable buffers once:
+
+```python
+from soromox.execution.warp.actuation import StraightSpanPipeline
+
+pipeline = StraightSpanPipeline(robot, routing, batch_size=batch_size, device="cuda")
+# q: contiguous FP64 Warp array (batch_size, robot.num_coordinates)
+# tensions: contiguous FP64 Warp array (batch_size, routing.spans.num_paths)
+force = pipeline.force(q, tensions)
+```
+
+`force` aliases the pipeline's output buffer. Calls launch only Warp kernels and
+can be recorded in a CUDA graph after warming up the kernels. Keep the pipeline
+and input buffers alive for graph replay. Use one pipeline per concurrent stream
+and rebuild it after changing model or guide parameters. Construction uses the
+SoRoMoX model data; steady-state calls perform no JAX evaluation or host transfers.
+Native launches are forward-only. Use the JAX-facing methods above when gradients
+through the actuation are needed.
 
 To account for wall contact, use the same guides with a lumen radius per segment:
 

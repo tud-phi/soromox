@@ -524,11 +524,15 @@ class RoutingSolution(eqx.Module):
             straight connections between adjacent spans of the same path.
         guides: Straight connections in downstream span order. An empty tuple
             means every physical path consists of a single span.
+        length_jacobian: Optional cached path derivatives in configuration
+            coordinates, including connecting guides. Straight routing supplies
+            this during its shared geometry evaluation.
     """
 
     spans: tuple[RoutingSpanSolution | StraightSpanSolution, ...]
     path_lengths: Array
     guides: tuple[RoutingGuideSolution, ...] = ()
+    length_jacobian: Array | None = None
 
     @property
     def converged(self):

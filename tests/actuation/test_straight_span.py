@@ -196,7 +196,7 @@ def test_straight_span_dispatch_inherits_model_and_overrides(
     def resolve(strategy, host, configuration):
         """Record Warp dispatch using a deterministic reference result."""
         calls.append("warp")
-        return strategy.solve_routing(host, configuration, backend="jax").spans
+        return strategy.solve_routing(host, configuration, backend="jax")
 
     monkeypatch.setattr(loader, "load_straight_span_evaluator", lambda: resolve)
     monkeypatch.setattr(jax, "default_backend", lambda: device)
@@ -295,6 +295,7 @@ def test_nonfinite_straight_spans_are_rejected(curvature, straight_backend):
     )
     assert not bool(solution.converged)
     assert bool(jnp.all(jnp.isnan(solution.spans[0].length_jacobian)))
+    assert_allclose(solution.path_lengths, [solution.spans[0].length], equal_nan=True)
 
 
 def test_guides_share_segment_and_boundary_evaluations(monkeypatch):

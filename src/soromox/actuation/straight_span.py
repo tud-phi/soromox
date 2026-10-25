@@ -52,9 +52,9 @@ class StraightSpanRouting(ConfigurationDependentThreadlikeRouting):
             backend (str | None): Per-call override: ``"auto"``, ``"jax"``, or
                 ``"warp"``. ``None`` inherits ``robot.backend``; hosts without a
                 preference use JAX. Automatic selection uses Warp on GPU and JAX
-                on CPU. Warp uses the optional ``warp-lang`` package for span
-                geometry and analytical derivatives. Host segment kinematics,
-                joint connections, and differentiation through the solve use JAX.
+                on CPU. Warp uses the optional ``warp-lang`` package for native
+                segment kinematics, span geometry, joint connections, and path
+                derivatives. Differentiation through the solve uses JAX.
 
         Returns:
             result (RoutingSolution): StraightSpanSolution entries. Nonfinite
@@ -65,32 +65,15 @@ class StraightSpanRouting(ConfigurationDependentThreadlikeRouting):
                 are invalid, or Warp is requested without JAX 64-bit mode.
             ImportError: If Warp is requested and ``warp-lang`` is unavailable.
         """
-        from soromox.execution import select_execution_backend
-
         del initial_guess
-        backend = select_execution_backend(
-            getattr(robot, "backend", "jax") if backend is None else backend,
-            family_name="straight routing",
-            warp_cpu_supported=True,
-            warp_supported=True,
-            num_velocities=robot.num_velocities,
-        )
-        if backend == "warp" and not jax.config.jax_enable_x64:
-            raise ValueError("Warp straight routing requires JAX 64-bit mode.")
         configuration = jnp.asarray(configuration, dtype=float)
-        self.validate_structure_for_robot(robot)
-        if not _contains_tracer((self.params, robot)):
-            with jax.ensure_compile_time_eval():
-                self.validate_values_for_robot(robot)
-        if configuration.shape != (robot.num_coordinates,):
-            raise ValueError("configuration must match the host coordinate count.")
+        backend = self._actuation_backend(robot, configuration, backend)
         if self.spans.num_spans == 0:
             return RoutingSolution((), jnp.zeros(0, dtype=configuration.dtype), ())
         if backend == "warp":
             from soromox.execution.warp.loader import load_straight_span_evaluator
 
-            spans = load_straight_span_evaluator()(self, robot, configuration)
-            return self._assemble_solution(robot, configuration, spans)
+            return load_straight_span_evaluator()(self, robot, configuration)
         links, body_jacobians, joints = robot.relative_segment_kinematics(configuration)
         entries, exits = segment_boundary_poses(
             robot.base_transform_from_configuration(configuration), links, joints
@@ -144,7 +127,15 @@ class StraightSpanRouting(ConfigurationDependentThreadlikeRouting):
             jax.tree.map(lambda values, index=index: values[index], evaluated)
             for index in range(self.spans.num_spans)
         )
-        return self._assemble_solution(robot, configuration, spans)
+        solution = self._assemble_solution(robot, configuration, spans)
+        return RoutingSolution(
+            spans,
+            solution.path_lengths,
+            solution.guides,
+            self._assemble_jacobian(
+                robot, configuration, [span.length_jacobian for span in spans]
+            ),
+        )
 
     def path_length_jacobian(self, robot, configuration, solution):
         """Return the analytical derivative of a resolved path family.
@@ -171,11 +162,93 @@ class StraightSpanRouting(ConfigurationDependentThreadlikeRouting):
         configuration = jnp.asarray(configuration, dtype=float)
         if configuration.shape != (robot.num_coordinates,):
             raise ValueError("configuration must match the host coordinate count.")
+        if solution.length_jacobian is not None:
+            accepted = jnp.ones(self.spans.num_paths, dtype=bool)
+            for path, span in zip(self.spans.span_path_index, solution.spans):
+                accepted = accepted.at[path].set(accepted[path] & span.converged)
+            for guide in solution.guides:
+                path = self.spans.span_path_index[guide.downstream_span]
+                accepted = accepted.at[path].set(accepted[path] & guide.differentiable)
+            return jnp.where(accepted[:, None], solution.length_jacobian, jnp.nan)
         gradients = [
             jnp.where(span.converged, span.length_jacobian, jnp.nan)
             for span in solution.spans
         ]
         return self._assemble_jacobian(robot, configuration, gradients)
+
+    def _actuation_backend(self, robot, configuration, backend):
+        """Validate native actuation inputs and resolve the execution preference."""
+        from soromox.execution import select_execution_backend
+
+        selected = select_execution_backend(
+            getattr(robot, "backend", "jax") if backend is None else backend,
+            family_name="straight routing",
+            warp_cpu_supported=True,
+            warp_supported=hasattr(robot, "B_xi") or hasattr(robot, "B_Z1"),
+            num_velocities=robot.num_velocities,
+        )
+        if selected == "warp" and not jax.config.jax_enable_x64:
+            raise ValueError("Warp straight routing requires JAX 64-bit mode.")
+        self.validate_structure_for_robot(robot)
+        if not _contains_tracer((self.params, robot)):
+            with jax.ensure_compile_time_eval():
+                self.validate_values_for_robot(robot)
+        if configuration.shape != (robot.num_coordinates,):
+            raise ValueError("configuration must match the host coordinate count.")
+        return selected
+
+    def actuation_matrix(self, robot, configuration, *, backend=None):
+        """Evaluate ``-J_velocity.T`` without reconstructing world guide positions.
+
+        Args:
+            robot (SoftRobot): PlanarPCS, PCS, or GVS host.
+            configuration (Array): Configuration, shape ``(num_coordinates,)``.
+            backend (str | None): Execution override, following :meth:`solve_routing`.
+
+        Returns:
+            result (Array): Matrix of shape ``(num_velocities, num_paths)``.
+                Invalid geometry produces NaN internal rows for the affected paths.
+                Floating base rows are zero because routing is base-invariant.
+        """
+        configuration = jnp.asarray(configuration, dtype=float)
+        selected = self._actuation_backend(robot, configuration, backend)
+        if selected == "warp":
+            from soromox.execution.warp.loader import load_straight_span_evaluator
+
+            return load_straight_span_evaluator()(
+                self, robot, configuration, operation="matrix"
+            )
+        solution = self.solve_routing(robot, configuration, backend="jax")
+        return -self.path_velocity_jacobian(robot, configuration, solution).T
+
+    def generalized_force(self, robot, configuration, tensions, *, backend=None):
+        """Evaluate tendon forces directly without reconstructing world geometry.
+
+        Args:
+            robot (SoftRobot): PlanarPCS, PCS, or GVS host.
+            configuration (Array): Configuration, shape ``(num_coordinates,)``.
+            tensions (Array): Signed filament loads, shape ``(num_paths,)``; positive is
+                tension and negative is ideal axial compression below buckling.
+            backend (str | None): Execution override, following :meth:`solve_routing`.
+
+        Returns:
+            result (Array): Generalized force, shape ``(num_velocities,)``. Warp
+                skips world geometry and does not materialize an actuation matrix.
+        """
+        configuration, tensions = (
+            jnp.asarray(configuration, dtype=float),
+            jnp.asarray(tensions, dtype=float),
+        )
+        selected = self._actuation_backend(robot, configuration, backend)
+        if tensions.shape != (self.spans.num_paths,):
+            raise ValueError("tensions must match the number of routing paths.")
+        if selected == "warp":
+            from soromox.execution.warp.loader import load_straight_span_evaluator
+
+            return load_straight_span_evaluator()(
+                self, robot, configuration, tensions, "force"
+            )
+        return self.actuation_matrix(robot, configuration, backend="jax") @ tensions
 
     def span_positions(self, robot, configuration, solution, span_index, fractions):
         """Interpolate a straight span in world coordinates.
