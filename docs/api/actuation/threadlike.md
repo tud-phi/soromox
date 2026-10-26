@@ -654,11 +654,29 @@ resolved at every RK4 stage, and solves static equilibrium using Optimistix.
 The parameters are illustrative. The included cases remain clear of the wall;
 extended wall contact can still cause rejected SLSQP solves.
 
-Outputs include PNG cutaways, MP4 animations, NPZ trajectories, and a JSON report
-under `examples/simulation/pcs/figures/hollow_tendon_routing/`. Use `--case
-same-side` or `--case opposed` to select a layout, `--output` to choose a directory,
-and `--render-only` to redraw saved trajectories. `--check-refinement` compares
-a smaller time step and a finer routing mesh.
+Outputs include shared-renderer PNG snapshots, MP4 animations, NPZ trajectories
+with complete routing solutions, and a JSON report under
+`examples/simulation/pcs/figures/hollow_tendon_routing/`. Use `--case same-side`
+or `--case opposed` to select a layout and `--output` to choose a directory.
+`--check-refinement` compares a smaller time step and a finer routing mesh.
+
+Select `--backend matplotlib` (default), `open3d`, `viser`, `opencv`, or `all`.
+The 3D backends show translucent hollow walls around opaque tendon paths.
+`--snapshot-only` exports the peak-bending frame without a video.
+`--backend none` runs and saves the simulation without rendering.
+
+```bash
+# Simulate once and archive solutions at the exact saved configurations.
+python examples/simulation/pcs/simulate_hollow_tendon_routing.py --case opposed --backend none
+# Replay the same solutions; neither command runs routing optimization.
+python examples/simulation/pcs/simulate_hollow_tendon_routing.py --case opposed --render-only --backend open3d
+python examples/simulation/pcs/simulate_hollow_tendon_routing.py --case opposed --render-only --backend viser
+```
+
+For Viser, open the printed local URL in a browser to enable capture; `--port`
+selects the server port. Rendering uses the discretization saved in the archive.
+Archives from the former custom drawing example must be regenerated because they
+do not contain routing solutions.
 
 ### Routing interfaces
 
