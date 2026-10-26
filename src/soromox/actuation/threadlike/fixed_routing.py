@@ -14,14 +14,14 @@ from soromox.systems.params import BaseSystemParams
 if TYPE_CHECKING:
     from soromox.systems.soft_robot import SoftRobot
 
-from .core import (
+from ..core import (
     Actuator,
     ActuatorMetadata,
     DirectEffort,
     PassiveElement,
     Transmission,
 )
-from .friction import (
+from ..friction import (
     BaseThreadlikeFrictionParams,
     FrictionlessParams,
     ThreadlikeFriction,

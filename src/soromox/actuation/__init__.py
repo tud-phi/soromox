@@ -39,7 +39,19 @@ from .mckibben import (
 )
 from .threadlike import (
     BaseThreadlikeRoutingParams,
+    CircularLumenParams,
+    ConfigurationDependentThreadlikeRouting,
     LinearThreadlikeRoutingParams,
+    PiecewiseLinearRoutingDiscretization,
+    RoutingGuideSolution,
+    RoutingSolution,
+    RoutingSolverOptions,
+    RoutingSpanParams,
+    RoutingSpanSolution,
+    ShortestPathRouting,
+    ShortestPathRoutingParams,
+    StraightSpanRouting,
+    StraightSpanSolution,
     ThreadlikeActuator,
     ThreadlikeActuatorParams,
     ThreadlikeImpedance,
@@ -53,6 +65,18 @@ from .threadlike import (
 )
 
 __all__ = [
+    "CircularLumenParams",
+    "ConfigurationDependentThreadlikeRouting",
+    "PiecewiseLinearRoutingDiscretization",
+    "RoutingGuideSolution",
+    "RoutingSolution",
+    "RoutingSolverOptions",
+    "RoutingSpanParams",
+    "RoutingSpanSolution",
+    "ShortestPathRouting",
+    "ShortestPathRoutingParams",
+    "StraightSpanRouting",
+    "StraightSpanSolution",
     "Actuator",
     "ActuatorKind",
     "ActuatorMetadata",
