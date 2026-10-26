@@ -64,56 +64,6 @@ Additional swept geometry families can be supported in both backends with
       docstring_section_style: table
       members_order: source
 
-### Configuration-Dependent Routing
-
-Pass `routing=` to `render_frame`, `show`, or `render_sequence` to overlay
-`StraightSpanRouting` or `ShortestPathRouting`. This works in Matplotlib,
-Open3D, Viser, the generic planar OpenCV renderer, and the inherited Helicoidal
-Viser interfaces. The routing is supplied separately from installed actuators;
-both appear in the scene when `render_actuators=True`.
-
-Reuse the solution already computed during simulation:
-
-```python
-solution = routing.solve_routing(robot, q)
-image = renderer.render_frame(q, routing=routing, routing_solution=solution)
-# For Viser, display the same resolved paths interactively:
-# renderer.show(q, routing=routing, routing_solution=solution)
-```
-
-With `routing_solution`, rendering only samples geometry; it does not invoke
-the routing solver. Omit the solution to solve at each configuration. Supplied
-solutions must correspond to the same robot, routing parameters, and
-configuration; their input configurations are not stored or verified.
-Unconverged or nonfinite routes raise an error.
-
-For playback, stack the saved solutions in the same order as configurations:
-
-```python
-solutions_ts = jax.tree.map(lambda *values: jnp.stack(values), *saved_solutions)
-renderer.render_sequence(
-    ts, q_ts, routing=routing, routing_solution=solutions_ts,
-    record_path="routed_tendons.mp4",
-)
-```
-
-Every solution array has leading axes `(T,)` for one robot's sequence, `(N,)`
-for a static batch, or `(N, T)` for a batched sequence. Singleton axes may be
-omitted; a solution is never broadcast across different configurations. OpenCV
-supports single-robot sequences. Viser live updates accept the same arguments
-on `controller.push_state(q, routing=routing, routing_solution=solution)`.
-
-Each physical path becomes a separate tendon layer, with
-`config.geometry.num_points` samples per span. Adjacent spans are joined by a
-straight connection between their guides, including offset guides across moving
-joints. Floating-base motion is included in world coordinates; display layout
-offsets are then applied once. Existing tendon color, radius, and line-width
-settings apply. Interior paths can be hidden by opaque body surfaces; use the
-existing material opacity settings in Open3D or Viser to inspect them.
-
-Custom renderers can call `soromox.rendering.routing_visual_layers(...)` to
-obtain these same layers, independently of the rendering backend.
-
 ### Actuator and Helper Geometry
 
 For `SoftRobot` systems, the rendering layer automatically adapts supported
@@ -122,6 +72,26 @@ installed actuators and passive elements into semantic geometry when
 objects with points shaped
 `(num_actuators_in_layer, num_points, dim)`. It is also available directly as
 `soromox.rendering.actuator_visual_layers(...)`.
+
+Pass `routing=` to `render_frame`, `show`, or `render_sequence` to add
+`StraightSpanRouting` or `ShortestPathRouting` alongside installed components.
+Matplotlib, Open3D, Viser (including Helicoidal), and generic planar OpenCV share
+this geometry. Reuse a simulation's solution to avoid solving routing again:
+
+```python
+renderer.render_frame(q, routing=routing, routing_solution=solution)
+```
+
+Supplied solutions must match the robot, routing parameters, and configuration.
+For batches or playback, stack solutions in the same robot/time order as the
+configurations; they are never broadcast across configurations. Omitting the
+solution solves routing at each configuration. Viser live `push_state` accepts
+the same arguments. Invalid routes raise an error.
+
+Each physical path uses the existing tendon styling and connects adjacent spans
+through their prescribed guides. Use body opacity settings to see interior paths
+in Open3D or Viser. The public `actuator_visual_layers(...)` adapter also accepts
+`routing` and `routing_solution`; its docstring describes sampling and shapes.
 
 Specialized or third-party robots may override this default by exposing
 `actuator_visual_layers(q, s_points, *, actuator_inputs=None)`.

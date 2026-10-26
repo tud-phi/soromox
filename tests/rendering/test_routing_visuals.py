@@ -17,18 +17,21 @@ from soromox.actuation import (
     ShortestPathRouting,
     ShortestPathRoutingParams,
     StraightSpanRouting,
+    ThreadlikeActuator,
+    ThreadlikeRouting,
 )
 from soromox.rendering import (
     GeometryConfig,
     MatplotlibRenderer,
     RendererConfig,
     RenderOutputConfig,
-    routing_visual_layers,
+    actuator_visual_layers,
 )
 from soromox.rendering import actuation as visual_adapter
 from soromox.systems import (
     GVS,
     GVSSegment,
+    Helicoidal,
     JointSpec,
     LinkSpec,
     PlanarPCS,
@@ -94,7 +97,9 @@ def test_resolved_paths_preserve_endpoints_and_unequal_span_counts(
 ):
     routing, q, solution = case
     monkeypatch.setattr(visual_adapter, "_solve_visual_routing", no_solve)
-    layers = routing_visual_layers(robot, q, routing, solution=solution, num_points=6)
+    layers = actuator_visual_layers(
+        robot, q, jnp.linspace(0, 1, 6), routing=routing, routing_solution=solution
+    )
     assert [layer.points.shape for layer in layers] == [(1, 12, 3), (1, 6, 3)]
     assert [layer.name for layer in layers] == ["routing/path_0", "routing/path_1"]
     for index in range(2):
@@ -112,8 +117,55 @@ def test_omitted_solution_solves_once_for_all_paths(robot, case, monkeypatch):
     routing, q, solution = case
     solve = Mock(return_value=solution)
     monkeypatch.setattr(visual_adapter, "_solve_visual_routing", solve)
-    assert len(routing_visual_layers(robot, q, routing, num_points=6)) == 2
+    assert (
+        len(actuator_visual_layers(robot, q, jnp.linspace(0, 1, 6), routing=routing))
+        == 2
+    )
     solve.assert_called_once_with(robot, q, routing)
+
+
+@pytest.mark.parametrize("custom_hook", [False, True])
+def test_installed_layers_and_saved_routes_coexist(robot, monkeypatch, custom_hook):
+    fixed = ThreadlikeActuator.tendons(
+        ThreadlikeRouting.linear(
+            intercept=jnp.array([[0, 0.002, 0]]),
+            slope=jnp.zeros((1, 3)),
+            start_segment_index=(0,),
+            end_segment_index=(1,),
+        )
+    )
+    robot = eqx.tree_at(lambda model: model.actuators, robot, (fixed,))
+    routing = make_routing(StraightSpanRouting)
+    q = jnp.array([0.4, 0, 0, -0.2, 0, 0])
+    solution = eqx.filter_jit(routing.solve_routing)(robot, q)
+    stations = jnp.linspace(0, 0.2, 6)
+    inputs = jnp.array([2.0])
+    installed = actuator_visual_layers(robot, q, stations, actuator_inputs=inputs)
+    monkeypatch.setattr(visual_adapter, "_solve_visual_routing", no_solve)
+    combined = actuator_visual_layers(
+        robot,
+        q,
+        stations,
+        actuator_inputs=inputs,
+        routing=routing,
+        routing_solution=solution,
+    )
+    assert len(combined) == 3
+    assert_allclose(combined[0].points, installed[0].points)
+    assert_allclose(combined[0].scalar_fields["input"], inputs)
+    hook = Mock(return_value=installed)
+    if custom_hook:
+        monkeypatch.setattr(PlanarPCS, "actuator_visual_layers", hook, raising=False)
+    renderer = MatplotlibRenderer(robot, config=renderer_config())
+    layers = renderer.compute_actuator_visual_layers(
+        q, actuator_inputs=inputs, routing=routing, routing_solution=solution
+    )
+    assert len(layers) == 3
+    assert_allclose(layers[0].points, installed[0].points)
+    for actual, expected in zip(layers[1:], combined[1:], strict=True):
+        assert_allclose(actual.points, expected.points[..., :2])
+    if custom_hook:
+        hook.assert_called_once()
 
 
 def test_existing_solutions_skip_optimizer_in_public_frame_rendering(
@@ -147,8 +199,12 @@ def test_batch_and_trajectory_solutions_keep_order_and_offsets(robot, monkeypatc
     )
     for index in range(2):
         single = jax.tree.map(lambda x, index=index: x[index], solutions)
-        expected = routing_visual_layers(
-            robot, qs[index], routing, solution=single, num_points=6
+        expected = actuator_visual_layers(
+            robot,
+            qs[index],
+            jnp.linspace(0, 1, 6),
+            routing=routing,
+            routing_solution=single,
         )
         assert_allclose(
             batched[0].points[index],
@@ -184,9 +240,13 @@ def test_invalid_solution_is_rejected(robot, case):
     routing, q, solution = case
     invalid = eqx.tree_at(lambda s: s.spans[0].converged, solution, jnp.array(False))
     with pytest.raises(ValueError, match="unconverged"):
-        routing_visual_layers(robot, q, routing, solution=invalid)
+        actuator_visual_layers(
+            robot, q, jnp.linspace(0, 1, 80), routing=routing, routing_solution=invalid
+        )
     with pytest.raises(ValueError, match="at least two"):
-        routing_visual_layers(robot, q, routing, solution=solution, num_points=1)
+        actuator_visual_layers(
+            robot, q, jnp.linspace(0, 1, 1), routing=routing, routing_solution=solution
+        )
     with pytest.raises(ValueError, match="routing is required"):
         MatplotlibRenderer(robot).compute_actuator_visual_layers(
             q, routing_solution=solution
@@ -229,9 +289,9 @@ def test_joint_bridge_and_floating_base_geometry(strategy, monkeypatch):
     )
     solution = eqx.filter_jit(routing.solve_routing)(robot, q)
     monkeypatch.setattr(visual_adapter, "_solve_visual_routing", no_solve)
-    points = routing_visual_layers(robot, q, routing, solution=solution, num_points=6)[
-        0
-    ].points[0]
+    points = actuator_visual_layers(
+        robot, q, jnp.linspace(0, 1, 6), routing=routing, routing_solution=solution
+    )[0].points[0]
     assert_allclose(points[0], [0.5, -0.197, 0.1], atol=1e-12)
     assert_allclose(
         jnp.linalg.norm(points[6] - points[5]), solution.guides[0].length, atol=1e-12
@@ -259,8 +319,8 @@ def test_viser_updates_and_live_frames_reuse_solutions(robot, case, monkeypatch)
     )
     handles = tuple(renderer._scene_handles.actuator_lines)
     assert len(handles) == 2
-    expected = routing_visual_layers(
-        robot, q, routing, solution=solution, num_points=6
+    expected = actuator_visual_layers(
+        robot, q, jnp.linspace(0, 1, 6), routing=routing, routing_solution=solution
     )[0].points[0]
     assert_allclose(handles[0].points[:, 0], expected[:-1], atol=1e-7)
     controller = LiveModeController(renderer)
@@ -294,8 +354,8 @@ def test_open3d_scene_reuses_trajectory_solutions(robot, case, monkeypatch):
         dynamics_spheres_colors=None,
     )
     assert scene.actuator_layers[0].points.shape == (1, 2, 1, 12, 3)
-    expected = routing_visual_layers(
-        robot, q, routing, solution=solution, num_points=6
+    expected = actuator_visual_layers(
+        robot, q, jnp.linspace(0, 1, 6), routing=routing, routing_solution=solution
     )[0].points
     assert_allclose(scene.actuator_layers[0].points[0, 0], expected, atol=1e-12)
 
@@ -328,34 +388,54 @@ def test_viser_sequence_selects_matching_solution_for_each_frame(robot, monkeypa
         plot_configurations=False,
         plot_actuator_positions=False,
     )
-    expected = routing_visual_layers(
+    expected = actuator_visual_layers(
         robot,
         qs[1],
-        routing,
-        solution=jax.tree.map(lambda x: x[1], solutions),
-        num_points=6,
+        jnp.linspace(0, 1, 6),
+        routing=routing,
+        routing_solution=jax.tree.map(lambda x: x[1], solutions),
     )[0].points[0]
     handle = renderer._scene_handles.actuator_lines[0]
     assert_allclose(handle.points[:, 0], expected[:-1], atol=1e-7)
 
 
-def test_helicoidal_renderer_inherits_resolved_routing(robot, monkeypatch):
+def test_helicoidal_renderer_inherits_resolved_routing(monkeypatch):
     from rendering.test_viser_renderer import FakeViserActuatorServer
 
-    from examples.simulation.gvs.simulate_helicoidal import build_robot
     from soromox.rendering import HelicoidalModuleVisual, HelicoidalViserRenderer
     from soromox.rendering.viser_renderer import SceneHandles
 
-    robot = build_robot(num_gauss_points=5)
+    robot = Helicoidal.from_segments(
+        [
+            GVSSegment(
+                link=LinkSpec.circular(
+                    length=0.1,
+                    radius=0.02,
+                    density=1000.0,
+                    young_modulus=1e3,
+                    shear_modulus=5e2,
+                    reference_strain=[0, 0, 0, 1, 0, 0],
+                ),
+                joint=JointSpec.fixed(),
+                basis=StrainBasisSpec(
+                    type="monomial",
+                    strain_selector=[0, 0, 1, 0, 0, 0],
+                    basis_order=[0] * 6,
+                ),
+                num_gauss_points=5,
+            )
+        ],
+        backend="jax",
+    )
     routing = StraightSpanRouting(
-        RoutingSpanParams([[0.0, 0.001, 0.0]], [[0.0, 0.001, 0.0]], (0,), (1,), (1,))
+        RoutingSpanParams([[0.0, 0.001, 0.0]], [[0.0, 0.001, 0.0]], (0,), (0,), (0,))
     )
     q = jnp.zeros(robot.num_coordinates)
     solution = eqx.filter_jit(routing.solve_routing)(robot, q)
     monkeypatch.setattr(visual_adapter, "_solve_visual_routing", no_solve)
     renderer = HelicoidalViserRenderer(
         robot,
-        modules=tuple(HelicoidalModuleVisual(i) for i in (1, 3, 5)),
+        modules=(HelicoidalModuleVisual(0),),
         auto_start=False,
         config=renderer_config(),
     )
@@ -368,8 +448,12 @@ def test_helicoidal_renderer_inherits_resolved_routing(robot, monkeypatch):
     assert any(
         "routing/path_0" in key for key in renderer._scene_handles.actuator_line_keys
     )
-    expected = routing_visual_layers(
-        robot, q, routing, solution=solution, num_points=renderer.num_points
+    expected = actuator_visual_layers(
+        robot,
+        q,
+        jnp.linspace(0, 1, renderer.num_points),
+        routing=routing,
+        routing_solution=solution,
     )[0].points[0]
     assert_allclose(handles[-1].points[:, 0], expected[:-1], atol=1e-7)
 

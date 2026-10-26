@@ -55,7 +55,6 @@ ANCHOR_OFFSET = 0.004
 YOUNG_MODULUS = 3e4
 DENSITY = 1070.0
 VISCOSITY = 1500.0
-ARCHIVE_VERSION = 1
 
 
 class HollowPlanarPCS(PlanarPCS):
@@ -458,7 +457,6 @@ def save_trajectory(path, case, elements, times, states, solutions):
     template solution. This example has two independent paths and no joint guides.
     """
     values = {
-        "archive_version": ARCHIVE_VERSION,
         "case": case,
         "elements": elements,
         "time": times,
@@ -476,14 +474,8 @@ def load_trajectory(path):
 
     Returns:
         Case, discretization size, times, states, and the batched RoutingSolution.
-        Archives from the former custom drawing example must be regenerated.
     """
     with np.load(path, allow_pickle=False) as saved:
-        if (
-            "archive_version" not in saved
-            or int(saved["archive_version"]) != ARCHIVE_VERSION
-        ):
-            raise ValueError("Regenerate this trajectory to save routing solutions.")
         spans = tuple(
             RoutingSpanSolution(
                 **{

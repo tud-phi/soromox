@@ -453,7 +453,7 @@ negligible bending stiffness and inertia. Slack, friction, joint housing
 collisions, and elastic rod buckling require additional models.
 
 Resolved paths can be displayed by the shared renderers, including reuse of
-simulation solutions; see [routing visualization](../rendering/renderers.md#configuration-dependent-routing).
+simulation solutions; see [routing visualization](../rendering/renderers.md#actuator-and-helper-geometry).
 
 ### Define guides and choose a strategy
 
@@ -631,52 +631,6 @@ bound. Increase `validation_samples_per_element` when the bound is overly
 conservative; refine the routing mesh and wall constraint samples when actual
 penetration is excessive. Configure these through
 `PiecewiseLinearRoutingDiscretization`.
-
-First length Jacobians are analytical. Differentiation through optimized
-coefficients additionally requires a regular solution with a stable set of wall
-contacts. These derivatives can be NaN even when the forward route converges.
-When differentiating forces, retain the solution's dependence on configuration
-through `solve_routing`. The [reference paper](https://doi.org/10.1109/TRO.2026.3714660)
-describes the routing formulation and force derivatives.
-
-### Run the hollow-section example
-
-Install `soromox[examples]` and FFmpeg, then run:
-
-```bash
-OPENBLAS_NUM_THREADS=1 JAX_PLATFORMS=cpu MPLCONFIGDIR=/tmp/soromox-mpl \
-  python examples/simulation/pcs/simulate_hollow_tendon_routing.py --check-refinement
-```
-
-The example actuates two hollow planar sections, with tendons anchored at each
-section's ends. It renders resolved routing, simulates dynamics with routing
-resolved at every RK4 stage, and solves static equilibrium using Optimistix.
-The parameters are illustrative. The included cases remain clear of the wall;
-extended wall contact can still cause rejected SLSQP solves.
-
-Outputs include shared-renderer PNG snapshots, MP4 animations, NPZ trajectories
-with complete routing solutions, and a JSON report under
-`examples/simulation/pcs/figures/hollow_tendon_routing/`. Use `--case same-side`
-or `--case opposed` to select a layout and `--output` to choose a directory.
-`--check-refinement` compares a smaller time step and a finer routing mesh.
-
-Select `--backend matplotlib` (default), `open3d`, `viser`, `opencv`, or `all`.
-The 3D backends show translucent hollow walls around opaque tendon paths.
-`--snapshot-only` exports the peak-bending frame without a video.
-`--backend none` runs and saves the simulation without rendering.
-
-```bash
-# Simulate once and archive solutions at the exact saved configurations.
-python examples/simulation/pcs/simulate_hollow_tendon_routing.py --case opposed --backend none
-# Replay the same solutions; neither command runs routing optimization.
-python examples/simulation/pcs/simulate_hollow_tendon_routing.py --case opposed --render-only --backend open3d
-python examples/simulation/pcs/simulate_hollow_tendon_routing.py --case opposed --render-only --backend viser
-```
-
-For Viser, open the printed local URL in a browser to enable capture; `--port`
-selects the server port. Rendering uses the discretization saved in the archive.
-Archives from the former custom drawing example must be regenerated because they
-do not contain routing solutions.
 
 ### Routing interfaces
 
