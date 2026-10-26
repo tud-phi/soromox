@@ -41,6 +41,10 @@ try:
 except ImportError:
     OPEN3D_AVAILABLE = False
 
+from soromox.actuation.threadlike import (
+    ConfigurationDependentThreadlikeRouting,
+    RoutingSolution,
+)
 from soromox.rendering.actuators import (
     TrajectoryActuatorVisualLayer,
     resolve_actuator_rgba,
@@ -1297,6 +1301,8 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         color_config: RendererColorConfig | None,
         render_actuators: bool = True,
         actuator_inputs: Array | None = None,
+        routing: ConfigurationDependentThreadlikeRouting | None = None,
+        routing_solution: RoutingSolution | None = None,
         static_spheres_positions: Array | None,
         static_spheres_radii: Array | None,
         static_spheres_colors: Array | None,
@@ -1363,11 +1369,13 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         )
 
         actuator_layers = ()
-        if render_actuators and self._has_actuator_visuals:
+        if render_actuators and (self._has_actuator_visuals or routing is not None):
             actuator_layers = self.compute_actuator_visual_layers_trajectory(
                 q_ts_arr,
                 offsets,
                 actuator_inputs=actuator_inputs,
+                routing=routing,
+                routing_solution=routing_solution,
             )
 
         static_spheres = self._prepare_static_spheres(
@@ -2036,6 +2044,8 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         camera_config: CameraConfig | None = None,
         render_actuators: bool = True,
         actuator_inputs: Array | None = None,
+        routing: ConfigurationDependentThreadlikeRouting | None = None,
+        routing_solution: RoutingSolution | None = None,
         static_spheres_positions: Array | None = None,
         static_spheres_radii: Array | None = None,
         static_spheres_colors: Array | None = None,
@@ -2052,6 +2062,9 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             camera_config: Camera configuration (fov, position, look_at, etc.)
             render_actuators: Whether to render actuator visual layers if available.
             actuator_inputs: Optional actuator inputs for scalar-colored layers.
+            routing: Optional configuration-dependent threadlike routing overlay.
+            routing_solution: Existing solution for these configurations, with matching
+                batch/time axes. Omit to solve; supplied solutions avoid optimization.
             static_spheres_positions: Optional static sphere centers, shape (M, 3).
             static_spheres_radii: Optional static sphere radii, length M.
             static_spheres_colors: Optional static sphere colors, shape (M, 3/4).
@@ -2071,6 +2084,8 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             color_config=color_config,
             render_actuators=render_actuators,
             actuator_inputs=actuator_inputs,
+            routing=routing,
+            routing_solution=routing_solution,
             static_spheres_positions=static_spheres_positions,
             static_spheres_radii=static_spheres_radii,
             static_spheres_colors=static_spheres_colors,
@@ -2091,6 +2106,8 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         camera_config: CameraConfig | None = None,
         render_actuators: bool = True,
         actuator_inputs: Array | None = None,
+        routing: ConfigurationDependentThreadlikeRouting | None = None,
+        routing_solution: RoutingSolution | None = None,
         static_spheres_positions: Array | None = None,
         static_spheres_radii: Array | None = None,
         static_spheres_colors: Array | None = None,
@@ -2110,6 +2127,9 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             camera_config: Camera configuration (fov, position, look_at, etc.)
             render_actuators: Whether to render actuator visual layers if available.
             actuator_inputs: Optional actuator inputs for scalar-colored layers.
+            routing: Optional configuration-dependent threadlike routing overlay.
+            routing_solution: Existing solution for these configurations, with matching
+                batch/time axes. Omit to solve; supplied solutions avoid optimization.
             static_spheres_positions: Optional static sphere centers, shape (M, 3).
             static_spheres_radii: Optional static sphere radii, length M.
             static_spheres_colors: Optional static sphere colors, shape (M, 3/4).
@@ -2131,6 +2151,8 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             color_config=color_config,
             render_actuators=render_actuators,
             actuator_inputs=actuator_inputs,
+            routing=routing,
+            routing_solution=routing_solution,
             static_spheres_positions=static_spheres_positions,
             static_spheres_radii=static_spheres_radii,
             static_spheres_colors=static_spheres_colors,
@@ -2425,6 +2447,8 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         color_config: RendererColorConfig | None = None,
         render_actuators: bool = True,
         actuator_inputs: Array | None = None,
+        routing: ConfigurationDependentThreadlikeRouting | None = None,
+        routing_solution: RoutingSolution | None = None,
         static_spheres_positions: Array | None = None,
         static_spheres_radii: Array | None = None,
         static_spheres_colors: Array | None = None,
@@ -2461,6 +2485,9 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             color_config: Optional shared renderer color configuration.
             render_actuators: Whether to render actuator visual layers if available.
             actuator_inputs: Optional actuator inputs for scalar-colored layers.
+            routing: Optional configuration-dependent threadlike routing overlay.
+            routing_solution: Existing solution for these configurations, with matching
+                batch/time axes. Omit to solve; supplied solutions avoid optimization.
             static_spheres_positions: Optional static sphere centers, shape (M, 3).
             static_spheres_radii: Optional static sphere radii, length M.
             static_spheres_colors: Optional static sphere colors, shape (M, 3/4).
@@ -2484,6 +2511,8 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             color_config=color_config,
             render_actuators=render_actuators,
             actuator_inputs=actuator_inputs,
+            routing=routing,
+            routing_solution=routing_solution,
             static_spheres_positions=static_spheres_positions,
             static_spheres_radii=static_spheres_radii,
             static_spheres_colors=static_spheres_colors,

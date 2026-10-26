@@ -12,8 +12,15 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 
+from soromox.actuation.threadlike import (
+    ConfigurationDependentThreadlikeRouting,
+    RoutingSolution,
+)
 from soromox.rendering.actuation import (
+    _reshape_routing_solution,
+    _routing_solution_at,
     actuator_visual_layers,
+    routing_visual_layers,
     vectorized_actuator_visual_layers_trajectory,
 )
 from soromox.rendering.actuators import (
@@ -545,7 +552,117 @@ class BaseSoftRobotRenderer(ABC):
         s_ps = self._backbone_abscissae
         return self.robot.forward_kinematics_abscissa_batched(q, s_ps)
 
+    def _routing_layers(self, q, routing, solution):
+        """Sample optional routing and adapt world xyz positions to the backend."""
+        if routing is None:
+            if solution is not None:
+                raise ValueError(
+                    "routing is required when routing_solution is supplied."
+                )
+            return ()
+        layers = routing_visual_layers(
+            self.robot, q, routing, solution=solution, num_points=self.num_points
+        )
+        return tuple(
+            layer.with_points(layer.points[..., : 3 if self.is_3d else 2])
+            for layer in layers
+        )
+
     def compute_actuator_visual_layers(
+        self,
+        q: Array,
+        *,
+        actuator_inputs: Array | None = None,
+        routing: ConfigurationDependentThreadlikeRouting | None = None,
+        routing_solution: RoutingSolution | None = None,
+    ) -> tuple[ActuatorVisualLayer, ...]:
+        """Combine installed actuators with optional resolved routing for one robot.
+
+        ``routing_solution`` must correspond to ``q``; omitting it solves routing
+        once. Existing solutions are sampled without optimization. Routing layers
+        use the configured tendon style and ``num_points`` samples per span.
+        """
+        layers = self._compute_installed_actuator_visual_layers(
+            q, actuator_inputs=actuator_inputs
+        )
+        return layers + self._routing_layers(q, routing, routing_solution)
+
+    def _routing_layers_batched(self, q, routing, solution, *, trajectory=False):
+        """Sample supplied solutions independently, preserving batch/time ordering."""
+        if routing is None:
+            if solution is not None:
+                raise ValueError(
+                    "routing is required when routing_solution is supplied."
+                )
+            return ()
+        q = jnp.asarray(q)
+        shape = q.shape[:-1]
+        solution = _reshape_routing_solution(solution, shape)
+        frames = [
+            self._routing_layers(
+                q[index], routing, _routing_solution_at(solution, index)
+            )
+            for index in np.ndindex(shape)
+        ]
+        if not frames:
+            return ()
+        layer_type = (
+            TrajectoryActuatorVisualLayer if trajectory else BatchedActuatorVisualLayer
+        )
+        return tuple(
+            layer_type(
+                name=layer.name,
+                kind=layer.kind,
+                points=jnp.stack([frame[i].points for frame in frames]).reshape(
+                    (*shape, *layer.points.shape)
+                ),
+            )
+            for i, layer in enumerate(frames[0])
+        )
+
+    def compute_actuator_visual_layers_batched(
+        self,
+        q_batch: Array,
+        base_offsets: Array,
+        *,
+        actuator_inputs: Array | np.ndarray | None = None,
+        routing: ConfigurationDependentThreadlikeRouting | None = None,
+        routing_solution: RoutingSolution | None = None,
+    ) -> tuple[BatchedActuatorVisualLayer, ...]:
+        """Combine actuator layers for ``(N, DOF)`` configurations.
+
+        Optional solution arrays carry leading axis ``N``; a single solution is
+        accepted only for ``N=1``. Layout offsets are applied after sampling.
+        """
+        layers = self._compute_installed_actuator_visual_layers_batched(
+            q_batch, base_offsets, actuator_inputs=actuator_inputs
+        )
+        extra = self._routing_layers_batched(q_batch, routing, routing_solution)
+        return layers + self._offset_batched_actuator_layers(extra, base_offsets)
+
+    def compute_actuator_visual_layers_trajectory(
+        self,
+        q_ts: Array,
+        base_offsets: Array,
+        *,
+        actuator_inputs: Array | np.ndarray | None = None,
+        routing: ConfigurationDependentThreadlikeRouting | None = None,
+        routing_solution: RoutingSolution | None = None,
+    ) -> tuple[TrajectoryActuatorVisualLayer, ...]:
+        """Combine actuator layers for ``(N, T, DOF)`` trajectories.
+
+        Solution arrays carry leading axes ``(N, T)``. Singleton robot/time axes
+        may be omitted. Supplied solutions are reused for all sampled frames.
+        """
+        layers = self._compute_installed_actuator_visual_layers_trajectory(
+            q_ts, base_offsets, actuator_inputs=actuator_inputs
+        )
+        extra = self._routing_layers_batched(
+            q_ts, routing, routing_solution, trajectory=True
+        )
+        return layers + self._offset_trajectory_actuator_layers(extra, base_offsets)
+
+    def _compute_installed_actuator_visual_layers(
         self,
         q: Array,
         *,
@@ -703,7 +820,7 @@ class BaseSoftRobotRenderer(ABC):
             return inputs[frame_idx]
         return inputs
 
-    def compute_actuator_visual_layers_batched(
+    def _compute_installed_actuator_visual_layers_batched(
         self,
         q_batch: Array,
         base_offsets: Array,
@@ -774,7 +891,7 @@ class BaseSoftRobotRenderer(ABC):
             )
         return self._offset_batched_actuator_layers(tuple(batched_layers), base_offsets)
 
-    def compute_actuator_visual_layers_trajectory(
+    def _compute_installed_actuator_visual_layers_trajectory(
         self,
         q_ts: Array,
         base_offsets: Array,

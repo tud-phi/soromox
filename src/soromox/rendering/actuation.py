@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
+import equinox as eqx
 import jax
+import numpy as np
 from jax import Array
 from jax import numpy as jnp
 
 from soromox.actuation.mckibben import ArticulatedMcKibbenActuator
-from soromox.actuation.threadlike import ThreadlikeActuator, ThreadlikeImpedance
+from soromox.actuation.threadlike import (
+    ConfigurationDependentThreadlikeRouting,
+    RoutingSolution,
+    ThreadlikeActuator,
+    ThreadlikeImpedance,
+)
 from soromox.systems.soft_robot import SoftRobot
 
 from .actuators import ActuatorVisualLayer, TrajectoryActuatorVisualLayer
@@ -222,4 +229,122 @@ def vectorized_actuator_visual_layers_trajectory(
     return tuple(layers)
 
 
-__all__ = ["actuator_visual_layers", "vectorized_actuator_visual_layers_trajectory"]
+@eqx.filter_jit
+def _sample_routing_paths(robot, q, routing, solution, num_points):
+    """Sample each physical path, including straight connections between guides."""
+    fractions = jnp.linspace(0.0, 1.0, num_points)
+    spans = tuple(
+        routing.span_positions(robot, q, solution, index, fractions)
+        for index in range(routing.spans.num_spans)
+    )
+    return tuple(
+        jnp.concatenate(
+            [
+                points
+                for index, points in enumerate(spans)
+                if routing.spans.span_path_index[index] == path
+            ],
+            axis=0,
+        )[None, ...]
+        for path in range(routing.spans.num_paths)
+    )
+
+
+@eqx.filter_jit
+def _solve_visual_routing(robot, q, routing):
+    """Solve once per configuration when no existing solution was supplied."""
+    return routing.solve_routing(robot, q)
+
+
+def routing_visual_layers(
+    robot: SoftRobot,
+    q: Array,
+    routing: ConfigurationDependentThreadlikeRouting,
+    *,
+    solution: RoutingSolution | None = None,
+    num_points: int = 80,
+) -> tuple[ActuatorVisualLayer, ...]:
+    """Sample configuration-dependent routing into world-space tendon polylines.
+
+    Args:
+        robot: Host used to solve the routing.
+        q: Configuration, shape ``(robot.num_coordinates,)``.
+        routing: Shortest-path or free-space routing, including guide connectivity.
+        solution: Existing solution for exactly this robot, routing, and configuration.
+            If supplied, no routing optimization or solve is performed. Callers must
+            ensure it matches ``q``; solutions do not store their input configuration.
+        num_points: Samples per span, including both endpoints; at least two.
+
+    Returns:
+        One tendon layer per physical path, named ``routing/path_<index>``. Keeping
+        paths separate supports unequal span counts without padding geometry.
+        Consecutive span endpoints form the straight cable across their joint guides.
+        Positions have shape ``(1, samples_in_path, 3)`` and are in metres.
+        Use existing layer styling to display other filament roles.
+
+    Raises:
+        ValueError: Invalid sample count, incompatible solution topology, or an
+            unconverged/nonfinite route. Invalid routes are not displayed as valid.
+    """
+    if not isinstance(routing, ConfigurationDependentThreadlikeRouting):
+        raise TypeError("routing must be configuration-dependent threadlike routing.")
+    if not isinstance(num_points, int) or num_points < 2:
+        raise ValueError("num_points must be an integer of at least two.")
+    q = jnp.asarray(q)
+    if q.shape != (robot.num_coordinates,):
+        raise ValueError("q must have shape (robot.num_coordinates,).")
+    if solution is None:
+        solution = _solve_visual_routing(robot, q, routing)
+    spans_match = len(solution.spans) == routing.spans.num_spans
+    paths_match = solution.path_lengths.shape == (routing.spans.num_paths,)
+    if not spans_match or not paths_match:
+        raise ValueError("routing_solution must match the routing's spans and paths.")
+    if not bool(solution.converged):
+        raise ValueError("Cannot render an unconverged routing solution.")
+    paths = _sample_routing_paths(robot, q, routing, solution, num_points)
+    if any(not np.all(np.isfinite(points)) for points in paths):
+        raise ValueError("Cannot render nonfinite routing geometry.")
+    return tuple(
+        ActuatorVisualLayer(name=f"routing/path_{index}", kind="tendon", points=points)
+        for index, points in enumerate(paths)
+    )
+
+
+def _reshape_routing_solution(solution, leading_shape):
+    """Normalize optional singleton batch/time axes without broadcasting solutions.
+
+    ``leading_shape`` is the configuration's leading shape after renderer input
+    normalization. Only insertion/removal of singleton axes is permitted. Every
+    array leaf must carry the same leading axes as ``path_lengths``.
+    """
+    if solution is None:
+        return None
+    source = solution.path_lengths.shape[:-1]
+    if tuple(n for n in source if n != 1) != tuple(n for n in leading_shape if n != 1):
+        raise ValueError(
+            f"routing_solution leading shape {source} must match configurations "
+            f"{leading_shape}; solutions are not broadcast across configurations."
+        )
+
+    def reshape(value):
+        if value.shape[: len(source)] != source:
+            raise ValueError(
+                "Every routing_solution array must share its batch/time axes."
+            )
+        return value.reshape((*leading_shape, *value.shape[len(source) :]))
+
+    return jax.tree.map(reshape, solution)
+
+
+def _routing_solution_at(solution, index):
+    """Select a configuration or frame from a normalized solution PyTree."""
+    return (
+        None if solution is None else jax.tree.map(lambda value: value[index], solution)
+    )
+
+
+__all__ = [
+    "actuator_visual_layers",
+    "routing_visual_layers",
+    "vectorized_actuator_visual_layers_trajectory",
+]
