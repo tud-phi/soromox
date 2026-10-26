@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import pytest
@@ -31,6 +32,57 @@ from ._kinematics_equivalence import (
     assert_kinematics_backend_equivalence,
     assert_warp_derivatives_use_jax,
 )
+
+
+@pytest.mark.parametrize("floating_base", [False, True])
+def test_diagonal_and_full_gvs_inertia_layouts_agree(
+    make_gvs_model: Callable[..., Any], floating_base: bool
+) -> None:
+    """Keep both compiled layouts and updated masses correct for either base."""
+
+    pytest.importorskip("warp")
+    if jax.default_backend() != "gpu":
+        pytest.skip("GVS Warp dynamics require CUDA.")
+    diagonal = make_gvs_model("warp", floating_base=floating_base)
+    # Normalize derived parameter dtypes through the update path before tracing.
+    diagonal = diagonal.update_link_params(density=diagonal.params.link.density)
+    full = diagonal.update_link_params(
+        sectional_inertia=diagonal.inner_mass_matrices[:, 0]
+    )
+    assert diagonal.weighted_inertias.shape[-1] == 6
+    assert full.weighted_inertias.shape[-1] == 36
+    internal = jnp.linspace(-0.03, 0.04, diagonal.num_internal_dofs)
+    q = internal
+    if floating_base:
+        base = jnp.array([0.1, -0.15, 0.05, 1.0, 0.02, -0.03, 0.04])
+        q = diagonal.normalize_configuration(jnp.concatenate((base, internal)))
+    q = jnp.stack((q, q))
+    v = jnp.stack(
+        (
+            jnp.linspace(0.07, -0.11, diagonal.num_velocities),
+            jnp.linspace(-0.03, 0.06, diagonal.num_velocities),
+        )
+    )
+    expected = diagonal.dynamics_terms(q, v, backend="jax")
+    for model in (diagonal, full, diagonal):
+        actual = jax.jit(jax.vmap(model.dynamics_terms))(q, v)
+        for term, reference in zip(actual, expected, strict=True):
+            assert_allclose(term, reference, rtol=3e-8, atol=3e-10)
+
+    traces = []
+
+    @eqx.filter_jit
+    def evaluate(model):
+        traces.append(True)
+        return model.dynamics_terms(q, v)
+
+    first = evaluate(diagonal)
+    doubled = evaluate(
+        diagonal.update_link_params(density=2 * diagonal.params.link.density)
+    )
+    assert len(traces) == 1
+    for term, reference in zip(doubled, first, strict=True):
+        assert_allclose(term, 2 * reference, rtol=3e-8, atol=3e-10)
 
 
 def _all_basis_family_model() -> GVS:

@@ -83,3 +83,34 @@ def _mass_jacobian_action(
             first, second, use_first, base_row, k, column
         )
     return value
+
+
+@wp.func
+def _diagonal_mass_vector_action(
+    masses: wp.array2d[wp.float64],
+    item: int,
+    row: int,
+    first: wp.array2d[wp.float64],
+    second: wp.array2d[wp.float64],
+    use_first: bool,
+    base_row: int,
+) -> wp.float64:
+    """Apply a six-column diagonal inertia to one stored vector component."""
+    return masses[item, row] * _vector_value(first, second, use_first, base_row, row)
+
+
+@wp.func
+def _diagonal_mass_jacobian_action(
+    masses: wp.array2d[wp.float64],
+    item: int,
+    row: int,
+    first: wp.array2d[wp.float64],
+    second: wp.array2d[wp.float64],
+    use_first: bool,
+    base_row: int,
+    column: int,
+) -> wp.float64:
+    """Apply a six-column diagonal inertia to one stored Jacobian entry."""
+    return masses[item, row] * _matrix_value(
+        first, second, use_first, base_row, row, column
+    )
