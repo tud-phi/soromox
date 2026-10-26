@@ -11,6 +11,7 @@ from jax import Array
 from soromox.actuation.threadlike import (
     ConfigurationDependentThreadlikeRouting,
     RoutingSolution,
+    ThreadlikeRouting,
 )
 from soromox.rendering.actuation import _reshape_routing_solution, _routing_solution_at
 from soromox.rendering.base import BaseSoftRobotRenderer
@@ -63,7 +64,9 @@ class BaseOpenCVRenderer(BaseSoftRobotRenderer):
         base_offsets: Array | None = None,
         camera_config: CameraConfig | None = None,
         color_config: RendererColorConfig | None = None,
-        routing: ConfigurationDependentThreadlikeRouting | None = None,
+        routing: ThreadlikeRouting
+        | ConfigurationDependentThreadlikeRouting
+        | None = None,
         routing_solution: RoutingSolution | None = None,
     ) -> None:
         """Render animated sequence to video file using ffmpeg.

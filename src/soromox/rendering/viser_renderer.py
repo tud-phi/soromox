@@ -47,6 +47,7 @@ except ImportError:
 from soromox.actuation.threadlike import (
     ConfigurationDependentThreadlikeRouting,
     RoutingSolution,
+    ThreadlikeRouting,
 )
 from soromox.rendering.actuation import _reshape_routing_solution, _routing_solution_at
 from soromox.rendering.actuators import resolve_actuator_rgba
@@ -941,7 +942,9 @@ class ViserRenderer(BaseSoftRobotRenderer):
         *,
         color_config: RendererColorConfig | None = None,
         actuator_inputs: Array | None = None,
-        routing: ConfigurationDependentThreadlikeRouting | None = None,
+        routing: ThreadlikeRouting
+        | ConfigurationDependentThreadlikeRouting
+        | None = None,
         routing_solution: RoutingSolution | None = None,
     ) -> None:
         """Build semantic actuator geometry in the scene.
@@ -952,9 +955,10 @@ class ViserRenderer(BaseSoftRobotRenderer):
             num_robots: Number of robots
             color_config: Shared renderer color configuration.
             actuator_inputs: Optional actuator inputs for scalar-colored layers.
-            routing: Optional configuration-dependent threadlike routing overlay.
-            routing_solution: Existing solution for these configurations, with matching
-                batch/time axes. Omit to solve; supplied solutions avoid optimization.
+            routing: Optional fixed or configuration-dependent threadlike routing.
+            routing_solution: Existing configuration-dependent routing solution, with
+                matching batch/time axes. Omit to solve. Must be ``None`` for
+                fixed routing, which is evaluated directly.
         """
         if (
             (not self._has_actuator_visuals and routing is None)
@@ -1507,7 +1511,9 @@ class ViserRenderer(BaseSoftRobotRenderer):
         camera_config: CameraConfig | None = None,
         render_actuators: bool = True,
         actuator_inputs: Array | None = None,
-        routing: ConfigurationDependentThreadlikeRouting | None = None,
+        routing: ThreadlikeRouting
+        | ConfigurationDependentThreadlikeRouting
+        | None = None,
         routing_solution: RoutingSolution | None = None,
         static_spheres_positions: Array | None = None,
         static_spheres_radii: Array | None = None,
@@ -1525,9 +1531,10 @@ class ViserRenderer(BaseSoftRobotRenderer):
             camera_config: Camera configuration (fov, position, look_at, etc.)
             render_actuators: If True, render actuator visual layers.
             actuator_inputs: Optional actuator inputs for scalar-colored layers.
-            routing: Optional configuration-dependent threadlike routing overlay.
-            routing_solution: Existing solution for these configurations, with matching
-                batch/time axes. Omit to solve; supplied solutions avoid optimization.
+            routing: Optional fixed or configuration-dependent threadlike routing.
+            routing_solution: Existing configuration-dependent routing solution, with
+                matching batch/time axes. Omit to solve. Must be ``None`` for
+                fixed routing, which is evaluated directly.
             static_spheres_positions: Static sphere positions (M, 3)
             static_spheres_radii: Static sphere radii (M,)
             static_spheres_colors: Static sphere colors (M, 3)
@@ -1679,7 +1686,9 @@ class ViserRenderer(BaseSoftRobotRenderer):
         camera_config: CameraConfig | None = None,
         render_actuators: bool = True,
         actuator_inputs: Array | None = None,
-        routing: ConfigurationDependentThreadlikeRouting | None = None,
+        routing: ThreadlikeRouting
+        | ConfigurationDependentThreadlikeRouting
+        | None = None,
         routing_solution: RoutingSolution | None = None,
         static_spheres_positions: Array | None = None,
         static_spheres_radii: Array | None = None,
@@ -1697,9 +1706,10 @@ class ViserRenderer(BaseSoftRobotRenderer):
             camera_config: Camera configuration (fov, position, look_at, etc.)
             render_actuators: If True, render actuator visual layers.
             actuator_inputs: Optional actuator inputs for scalar-colored layers.
-            routing: Optional configuration-dependent threadlike routing overlay.
-            routing_solution: Existing solution for these configurations, with matching
-                batch/time axes. Omit to solve; supplied solutions avoid optimization.
+            routing: Optional fixed or configuration-dependent threadlike routing.
+            routing_solution: Existing configuration-dependent routing solution, with
+                matching batch/time axes. Omit to solve. Must be ``None`` for
+                fixed routing, which is evaluated directly.
             static_spheres_positions: Static sphere positions (M, 3)
             static_spheres_radii: Static sphere radii (M,)
             static_spheres_colors: Static sphere colors (M, 3)
@@ -1826,7 +1836,9 @@ class ViserRenderer(BaseSoftRobotRenderer):
         color_config: RendererColorConfig | None = None,
         render_actuators: bool = True,
         actuator_inputs: Array | None = None,
-        routing: ConfigurationDependentThreadlikeRouting | None = None,
+        routing: ThreadlikeRouting
+        | ConfigurationDependentThreadlikeRouting
+        | None = None,
         routing_solution: RoutingSolution | None = None,
         multi_robot_layout: Literal["grid", "overlay"] = "grid",
         static_spheres_positions: Array | None = None,
@@ -1865,9 +1877,10 @@ class ViserRenderer(BaseSoftRobotRenderer):
             color_config: Shared renderer color configuration
             render_actuators: If True, render actuator visual layers.
             actuator_inputs: Optional actuator inputs for scalar-colored layers.
-            routing: Optional configuration-dependent threadlike routing overlay.
-            routing_solution: Existing solution for these configurations, with matching
-                batch/time axes. Omit to solve; supplied solutions avoid optimization.
+            routing: Optional fixed or configuration-dependent threadlike routing.
+            routing_solution: Existing configuration-dependent routing solution, with
+                matching batch/time axes. Omit to solve. Must be ``None`` for
+                fixed routing, which is evaluated directly.
             multi_robot_layout: "grid" for side-by-side, "overlay" for same position
             static_spheres_positions: Static sphere positions
             static_spheres_radii: Static sphere radii
@@ -1901,6 +1914,10 @@ class ViserRenderer(BaseSoftRobotRenderer):
             q_ts = q_ts[None, :, :]  # (1, T, DOF)
 
         num_robots, num_frames, num_dofs = q_ts.shape
+        if isinstance(routing, ThreadlikeRouting) and routing_solution is not None:
+            raise ValueError(
+                "routing_solution must be None for fixed ThreadlikeRouting."
+            )
         routing_solution = _reshape_routing_solution(
             routing_solution, (num_robots, num_frames)
         )
@@ -2240,7 +2257,9 @@ class ViserRenderer(BaseSoftRobotRenderer):
         base_plate_color: tuple[float, float, float],
         render_actuators: bool = True,
         actuator_inputs: Array | None = None,
-        routing: ConfigurationDependentThreadlikeRouting | None = None,
+        routing: ThreadlikeRouting
+        | ConfigurationDependentThreadlikeRouting
+        | None = None,
         routing_solution: RoutingSolution | None = None,
         color_config: RendererColorConfig | None = None,
     ) -> None:
@@ -2844,7 +2863,9 @@ class LiveModeController:
         self,
         q: np.ndarray,
         *,
-        routing: ConfigurationDependentThreadlikeRouting | None = None,
+        routing: ThreadlikeRouting
+        | ConfigurationDependentThreadlikeRouting
+        | None = None,
         routing_solution: RoutingSolution | None = None,
     ) -> None:
         """Push a new configuration to the renderer.
@@ -2852,7 +2873,8 @@ class LiveModeController:
         Args:
             q: Configuration array (DOF,) or batched (N, DOF)
             routing: Optional threadlike routing overlay for this state.
-            routing_solution: Matching existing solution; omit to solve.
+            routing_solution: Matching configuration-dependent solution; omit to solve.
+                Must be ``None`` for fixed routing.
         """
         if not self._running:
             return
@@ -2918,7 +2940,9 @@ class LiveModeController:
         self,
         q: np.ndarray,
         *,
-        routing: ConfigurationDependentThreadlikeRouting | None = None,
+        routing: ThreadlikeRouting
+        | ConfigurationDependentThreadlikeRouting
+        | None = None,
         routing_solution: RoutingSolution | None = None,
     ) -> None:
         """Process and render a state.

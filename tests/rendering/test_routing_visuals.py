@@ -492,3 +492,253 @@ def test_opencv_sequence_reuses_solution_trajectory(robot, case, monkeypatch, tm
     writer.close.assert_called_once()
     expected = renderer.render_frame(q, routing=routing, routing_solution=solution)
     np.testing.assert_array_equal(writer.write.call_args.args[0], expected)
+
+
+@pytest.fixture(params=["planar", "pcs", "gvs"])
+def fixed_case(robot, request):
+    """Fixed paths with different segment ranges on each continuum host."""
+    if request.param == "pcs":
+        from system_param_builders import pcs_params
+
+        from soromox.systems import PCS, PCSStructure
+
+        robot = PCS(
+            pcs_params(
+                length=jnp.array([0.1, 0.1]),
+                radius=jnp.full(2, 0.02),
+                density=jnp.full(2, 1000.0),
+                young_modulus=jnp.full(2, 1000.0),
+                shear_modulus=jnp.full(2, 500.0),
+                gravity=jnp.zeros(3),
+                damping_matrix=jnp.zeros((12, 12)),
+            ),
+            PCSStructure(num_gauss_points=5),
+            backend="jax",
+        )
+    elif request.param == "gvs":
+        segment = GVSSegment(
+            link=LinkSpec.circular(
+                length=0.1,
+                radius=0.02,
+                density=1000.0,
+                young_modulus=1000.0,
+                shear_modulus=500.0,
+                reference_strain=[0, 0, 0, 1, 0, 0],
+            ),
+            joint=JointSpec.fixed(),
+            basis=StrainBasisSpec(
+                type="monomial",
+                strain_selector=[0, 0, 1, 0, 0, 0],
+                basis_order=[0] * 6,
+            ),
+            num_gauss_points=5,
+        )
+        robot = GVS.from_segments([segment, segment], floating_base=True, backend="jax")
+    internal = jnp.linspace(-0.01, 0.02, robot.num_internal_dofs)
+    q = (
+        robot.pack_configuration(
+            internal, base_pose=jnp.array([0, 0, 0, 1, 0.3, -0.2, 0.1])
+        )
+        if robot.floating_base
+        else internal
+    )
+    routing = ThreadlikeRouting.linear(
+        intercept=jnp.array([[0, 0.003, 0], [0, -0.002, 0]]),
+        slope=jnp.array([[0, 0.004, 0], [0, -0.003, 0]]),
+        start_segment_index=(0, 1),
+        end_segment_index=(1, 1),
+    )
+    return robot, routing, q
+
+
+def test_standalone_fixed_matches_installed_geometry(fixed_case, monkeypatch):
+    robot, routing, q = fixed_case
+    monkeypatch.setattr(visual_adapter, "_solve_visual_routing", no_solve)
+    stations = jnp.array([0.0, 0.03, 0.09, 0.11, 0.17, 0.2])
+    installed = eqx.tree_at(
+        lambda model: model.actuators, robot, (ThreadlikeActuator.tendons(routing),)
+    )
+    expected = actuator_visual_layers(installed, q, stations)[0].points
+    layers = actuator_visual_layers(robot, q, stations, routing=routing)
+    assert [layer.name for layer in layers] == ["routing/path_0", "routing/path_1"]
+    assert_allclose(jnp.concatenate([x.points for x in layers]), expected, atol=1e-12)
+    # Path 1 starts in the second segment: earlier stations clamp to its guide.
+    assert_allclose(layers[1].points[0, 0], layers[1].points[0, 2], atol=1e-12)
+
+    # Custom callbacks remain available to standalone routing.
+    def offset(params, s):
+        return params.intercept + params.slope * jnp.sin(s)
+
+    custom = ThreadlikeRouting(params=routing.params, offset_fn=offset)
+    custom_installed = eqx.tree_at(
+        lambda model: model.actuators, robot, (ThreadlikeActuator.tendons(custom),)
+    )
+    custom_layers = actuator_visual_layers(robot, q, stations, routing=custom)
+    assert_allclose(
+        jnp.concatenate([x.points for x in custom_layers]),
+        actuator_visual_layers(custom_installed, q, stations)[0].points,
+        atol=1e-12,
+    )
+
+
+def test_standalone_fixed_batches_and_trajectories_are_vectorized(
+    fixed_case, monkeypatch
+):
+    robot, routing, q = fixed_case
+    renderer = MatplotlibRenderer(robot, config=renderer_config())
+    # Perturb an internal coordinate, preserving any floating-base quaternion.
+    qs = jnp.stack([q, q.at[-1].add(0.1)])
+    qts = jnp.stack([qs, qs[::-1]])
+    dim = 2 if robot.is_planar else 3
+    offsets = jnp.array([[0.3, 0.2, 0.1], [-0.2, 0.4, -0.3]])[:, :dim]
+    installed = eqx.tree_at(
+        lambda model: model.actuators, robot, (ThreadlikeActuator.tendons(routing),)
+    )
+    expected = MatplotlibRenderer(installed, config=renderer_config())
+
+    # The fixed branch must evaluate all states without the per-state route loop.
+    def reject_per_state_routing(self, q, routing, solution):
+        assert routing is None, "Fixed routing must vectorize configuration axes"
+        return ()
+
+    monkeypatch.setattr(renderer.__class__, "_routing_layers", reject_per_state_routing)
+    monkeypatch.setattr(visual_adapter, "_solve_visual_routing", no_solve)
+    actual = renderer.compute_actuator_visual_layers_trajectory(
+        qts, offsets, routing=routing
+    )
+    reference = expected.compute_actuator_visual_layers_trajectory(qts, offsets)
+    assert_allclose(
+        jnp.concatenate([layer.points for layer in actual], axis=2),
+        reference[0].points,
+        atol=1e-12,
+    )
+    batched = renderer.compute_actuator_visual_layers_batched(
+        qs, offsets, routing=routing
+    )
+    for index in range(2):
+        assert_allclose(batched[index].points, actual[index].points[:, 0], atol=1e-12)
+
+
+def test_fixed_routing_rejects_supplied_solution(robot, case):
+    _, q, solution = case
+    fixed = ThreadlikeRouting.linear(intercept=[[0, 0.003, 0]], end_segment_index=1)
+    renderer = MatplotlibRenderer(robot, config=renderer_config())
+    calls = [
+        lambda: actuator_visual_layers(
+            robot, q, jnp.linspace(0, 0.2, 6), routing=fixed, routing_solution=solution
+        ),
+        lambda: renderer.compute_actuator_visual_layers_batched(
+            q[None], jnp.zeros((1, 2)), routing=fixed, routing_solution=solution
+        ),
+        lambda: renderer.compute_actuator_visual_layers_trajectory(
+            q[None, None], jnp.zeros((1, 2)), routing=fixed, routing_solution=solution
+        ),
+    ]
+    for call in calls:
+        with pytest.raises(ValueError, match="must be None for fixed"):
+            call()
+
+
+def test_standalone_fixed_frame_and_sequence_rendering(robot, monkeypatch, tmp_path):
+    from soromox.rendering import OpenCVPlanarRenderer, opencv_base
+
+    routing = ThreadlikeRouting.linear(intercept=[[0, 0.003, 0]], end_segment_index=1)
+    q = jnp.array([0.4, 0, 0, -0.2, 0, 0])
+    monkeypatch.setattr(visual_adapter, "_solve_visual_routing", no_solve)
+    for cls in (MatplotlibRenderer, OpenCVPlanarRenderer):
+        renderer = cls(robot, config=renderer_config())
+        plain = renderer.render_frame(q)
+        routed = renderer.render_frame(q, routing=routing)
+        assert np.any(plain != routed)
+        np.testing.assert_array_equal(
+            plain, renderer.render_frame(q, routing=routing, render_actuators=False)
+        )
+    writer = Mock(stderr_log=None)
+    monkeypatch.setattr(opencv_base, "FFmpegVideoWriter", Mock(return_value=writer))
+    renderer.render_sequence(
+        jnp.array([0.0, 1.0]),
+        jnp.stack([q, q]),
+        routing=routing,
+        record_path=str(tmp_path / "fixed.mp4"),
+    )
+    assert writer.write.call_count == 2
+    np.testing.assert_array_equal(writer.write.call_args.args[0], routed)
+
+
+def test_standalone_fixed_viser_playback_and_live_updates(robot, monkeypatch):
+    from rendering.test_viser_renderer import FakeViserActuatorServer
+
+    from soromox.rendering.viser_renderer import (
+        LiveModeController,
+        SceneHandles,
+        ViserRenderer,
+    )
+
+    routing = ThreadlikeRouting.linear(intercept=[[0, 0.003, 0]], end_segment_index=1)
+    qs = jnp.array([[0.2, 0, 0, -0.4, 0, 0], [0.8, 0, 0, -0.1, 0, 0]])
+    monkeypatch.setattr(visual_adapter, "_solve_visual_routing", no_solve)
+    renderer = ViserRenderer(
+        robot, auto_start=False, open_browser=False, config=renderer_config()
+    )
+    renderer._server = FakeViserActuatorServer()
+    renderer._scene_handles = SceneHandles()
+    renderer._clear_scene = Mock()
+    renderer._setup_camera = Mock()
+    renderer._setup_lighting = Mock()
+    renderer._setup_playback_gui = lambda on_frame_seek: on_frame_seek(1)
+    renderer.render_sequence(
+        jnp.array([0.0, 1.0]),
+        qs,
+        routing=routing,
+        blocking=False,
+        autoplay=False,
+        plot_configurations=False,
+        plot_actuator_positions=False,
+    )
+    expected = actuator_visual_layers(
+        robot, qs[1], renderer._backbone_abscissae, routing=routing
+    )[0].points[0]
+    # Use the renderer stations, which include each segment boundary.
+    handle = renderer._scene_handles.actuator_lines[0]
+    assert_allclose(handle.points[:, 0, :2], expected[:-1], atol=1e-7)
+    assert_allclose(handle.points[..., 2], 0.0)
+    controller = LiveModeController(renderer)
+    controller.start()
+    try:
+        controller.push_state(np.asarray(qs[0]), routing=routing)
+    finally:
+        controller.stop()
+    expected = actuator_visual_layers(
+        robot, qs[0], renderer._backbone_abscissae, routing=routing
+    )[0].points[0]
+    assert_allclose(handle.points[:, 0, :2], expected[:-1], atol=1e-7)
+
+
+def test_standalone_fixed_open3d_trajectory(robot, monkeypatch):
+    from soromox.rendering import Open3DRenderer
+
+    routing = ThreadlikeRouting.linear(intercept=[[0, 0.003, 0]], end_segment_index=1)
+    qs = jnp.array([[0.2, 0, 0, -0.4, 0, 0], [0.8, 0, 0, -0.1, 0, 0]])
+    monkeypatch.setattr(visual_adapter, "_solve_visual_routing", no_solve)
+    renderer = Open3DRenderer(robot, config=renderer_config())
+    scene = renderer._prepare_scene_data(
+        jnp.array([0.0, 1.0]),
+        qs,
+        base_offsets=None,
+        color_config=None,
+        routing=routing,
+        static_spheres_positions=None,
+        static_spheres_radii=None,
+        static_spheres_colors=None,
+        dynamic_spheres_positions=None,
+        dynamic_spheres_radii=None,
+        dynamics_spheres_colors=None,
+    )
+    expected = actuator_visual_layers(
+        robot, qs[1], renderer._backbone_abscissae, routing=routing
+    )[0].points
+    assert_allclose(
+        scene.actuator_layers[0].points[0, 1, ..., :2], expected, atol=1e-12
+    )
+
+    assert_allclose(scene.actuator_layers[0].points[..., 2], 0.0)

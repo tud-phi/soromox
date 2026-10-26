@@ -13,6 +13,7 @@ from jax import Array
 from soromox.actuation.threadlike import (
     ConfigurationDependentThreadlikeRouting,
     RoutingSolution,
+    ThreadlikeRouting,
 )
 from soromox.rendering.actuators import resolve_actuator_rgba
 from soromox.rendering.config import RendererConfig
@@ -148,7 +149,9 @@ class OpenCVPlanarRenderer(BaseOpenCVRenderer):
         camera_config: CameraConfig | None = None,
         render_actuators: bool = True,
         actuator_inputs: Array | None = None,
-        routing: ConfigurationDependentThreadlikeRouting | None = None,
+        routing: ThreadlikeRouting
+        | ConfigurationDependentThreadlikeRouting
+        | None = None,
         routing_solution: RoutingSolution | None = None,
     ) -> np.ndarray:
         """Render single configuration to BGR image array.
@@ -161,9 +164,10 @@ class OpenCVPlanarRenderer(BaseOpenCVRenderer):
             camera_config: Camera override; the planar pixel projection is unchanged.
             render_actuators: Whether to render actuator visual layers if available.
             actuator_inputs: Optional actuator inputs for scalar-colored layers.
-            routing: Optional configuration-dependent threadlike routing overlay.
-            routing_solution: Existing solution for these configurations, with matching
-                batch/time axes. Omit to solve; supplied solutions avoid optimization.
+            routing: Optional fixed or configuration-dependent threadlike routing.
+            routing_solution: Existing configuration-dependent routing solution, with
+                matching batch/time axes. Omit to solve. Must be ``None`` for
+                fixed routing, which is evaluated directly.
 
         Returns:
             img (np.ndarray): BGR image of shape (height, width, 3), dtype uint8.
@@ -278,7 +282,9 @@ class OpenCVPlanarRenderer(BaseOpenCVRenderer):
         camera_config: CameraConfig | None = None,
         render_actuators: bool = True,
         actuator_inputs: Array | None = None,
-        routing: ConfigurationDependentThreadlikeRouting | None = None,
+        routing: ThreadlikeRouting
+        | ConfigurationDependentThreadlikeRouting
+        | None = None,
         routing_solution: RoutingSolution | None = None,
     ) -> None:
         """Display single frame in OpenCV window.
@@ -291,9 +297,10 @@ class OpenCVPlanarRenderer(BaseOpenCVRenderer):
             camera_config: Camera override; the planar pixel projection is unchanged.
             render_actuators: Whether to render actuator visual layers if available.
             actuator_inputs: Optional actuator inputs for scalar-colored layers.
-            routing: Optional configuration-dependent threadlike routing overlay.
-            routing_solution: Existing solution for these configurations, with matching
-                batch/time axes. Omit to solve; supplied solutions avoid optimization.
+            routing: Optional fixed or configuration-dependent threadlike routing.
+            routing_solution: Existing configuration-dependent routing solution, with
+                matching batch/time axes. Omit to solve. Must be ``None`` for
+                fixed routing, which is evaluated directly.
         """
         self._warn_simple_appearance(getattr(self, "_rendering_mode", "static"))
         img = self.render_frame(

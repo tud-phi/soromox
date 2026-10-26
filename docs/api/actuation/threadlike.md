@@ -452,9 +452,6 @@ guides at moving joints. They describe taut, frictionless filaments with
 negligible bending stiffness and inertia. Slack, friction, joint housing
 collisions, and elastic rod buckling require additional models.
 
-Resolved paths can be displayed by the shared renderers, including reuse of
-simulation solutions; see [routing visualization](../rendering/renderers.md#actuator-and-helper-geometry).
-
 ### Define guides and choose a strategy
 
 A **path** is one physical filament. A **span** is its portion between two

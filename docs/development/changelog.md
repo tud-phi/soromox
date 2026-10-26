@@ -14,8 +14,8 @@ Describe the delta from the last release, not intermediate development changes.
 
 ### Added
 
-- Shared rendering of free-space and implicit threadlike paths in Matplotlib,
-  Open3D, Viser (including Helicoidal), and planar OpenCV, with optional reuse
+- Shared rendering of standalone fixed, free-space, and implicit threadlike paths
+  in Matplotlib, Open3D, Viser (including Helicoidal), and planar OpenCV, with reuse
   of routing solutions for frames, batches, and playback. The hollow-tendon
   example saves complete routing solutions for replay with all four backends.
 

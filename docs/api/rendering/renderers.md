@@ -73,25 +73,9 @@ objects with points shaped
 `(num_actuators_in_layer, num_points, dim)`. It is also available directly as
 `soromox.rendering.actuator_visual_layers(...)`.
 
-Pass `routing=` to `render_frame`, `show`, or `render_sequence` to add
-`StraightSpanRouting` or `ShortestPathRouting` alongside installed components.
-Matplotlib, Open3D, Viser (including Helicoidal), and generic planar OpenCV share
-this geometry. Reuse a simulation's solution to avoid solving routing again:
-
-```python
-renderer.render_frame(q, routing=routing, routing_solution=solution)
-```
-
-Supplied solutions must match the robot, routing parameters, and configuration.
-For batches or playback, stack solutions in the same robot/time order as the
-configurations; they are never broadcast across configurations. Omitting the
-solution solves routing at each configuration. Viser live `push_state` accepts
-the same arguments. Invalid routes raise an error.
-
-Each physical path uses the existing tendon styling and connects adjacent spans
-through their prescribed guides. Use body opacity settings to see interior paths
-in Open3D or Viser. The public `actuator_visual_layers(...)` adapter also accepts
-`routing` and `routing_solution`; its docstring describes sampling and shapes.
+Optional `routing=` displays a standalone threadlike route alongside installed
+components. For configuration-dependent routing, pass a matching
+`routing_solution=` to reuse a saved solution without solving again.
 
 Specialized or third-party robots may override this default by exposing
 `actuator_visual_layers(q, s_points, *, actuator_inputs=None)`.

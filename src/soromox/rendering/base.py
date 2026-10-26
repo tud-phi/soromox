@@ -15,8 +15,10 @@ from jax import Array
 from soromox.actuation.threadlike import (
     ConfigurationDependentThreadlikeRouting,
     RoutingSolution,
+    ThreadlikeRouting,
 )
 from soromox.rendering.actuation import (
+    _fixed_routing_points,
     _reshape_routing_solution,
     _routing_solution_at,
     _routing_visual_layers,
@@ -552,13 +554,29 @@ class BaseSoftRobotRenderer(ABC):
         s_ps = self._backbone_abscissae
         return self.robot.forward_kinematics_abscissa_batched(q, s_ps)
 
+    def _routing_points_for_backend(self, points):
+        """Match world positions to this renderer's spatial dimension.
+
+        Args:
+            points: Positions with arbitrary leading axes and final axis 2 or 3.
+
+        Returns:
+            Positions with final axis 2 for planar renderers or 3 for spatial
+            renderers. Planar world positions gain ``z=0`` in a spatial scene.
+        """
+        dim = 3 if self.is_3d else 2
+        if points.shape[-1] < dim:
+            points = jnp.pad(points, [(0, 0)] * (points.ndim - 1) + [(0, 1)])
+        return points[..., :dim]
+
     def _routing_layers(self, q, routing, solution):
         """Sample optional routing in world coordinates for this backend.
 
         Args:
             q: Single configuration, shape ``(robot.num_coordinates,)``.
-            routing: Optional configuration-dependent routing strategy.
-            solution: Matching solution, or ``None`` to solve once.
+            routing: Optional fixed or configuration-dependent routing strategy.
+            solution: Matching configuration-dependent solution, or ``None`` to
+                solve once. Must be ``None`` for fixed routing.
 
         Returns:
             One layer per physical path with shape ``(1, samples_in_path, dim)``.
@@ -570,10 +588,10 @@ class BaseSoftRobotRenderer(ABC):
                 configuration shape, or sampled geometry is invalid.
         """
         layers = _routing_visual_layers(
-            self.robot, q, routing, solution=solution, num_points=self.num_points
+            self.robot, q, routing, solution=solution, s_points=self._backbone_abscissae
         )
         return tuple(
-            layer.with_points(layer.points[..., : 3 if self.is_3d else 2])
+            layer.with_points(self._routing_points_for_backend(layer.points))
             for layer in layers
         )
 
@@ -582,7 +600,9 @@ class BaseSoftRobotRenderer(ABC):
         q: Array,
         *,
         actuator_inputs: Array | None = None,
-        routing: ConfigurationDependentThreadlikeRouting | None = None,
+        routing: ThreadlikeRouting
+        | ConfigurationDependentThreadlikeRouting
+        | None = None,
         routing_solution: RoutingSolution | None = None,
     ) -> tuple[ActuatorVisualLayer, ...]:
         """Combine installed actuators with optional resolved routing for one robot.
@@ -591,10 +611,11 @@ class BaseSoftRobotRenderer(ABC):
             q: Generalized coordinates, shape ``(robot.num_coordinates,)``.
             actuator_inputs: Optional installed actuator inputs, shape
                 ``(robot.num_actuators,)``.
-            routing: Optional shortest-path or free-space routing. Each span uses
-                ``num_points`` samples and the configured tendon style.
+            routing: Optional fixed or configuration-dependent routing, using
+                the configured tendon style and sampling resolution.
             routing_solution: Solution for exactly this robot, routing, and ``q``.
-                Reused without solving; omitted solutions are solved once.
+                Reused without solving; omitted solutions are solved once. Must be
+                ``None`` for fixed routing, which is evaluated directly.
 
         Returns:
             Installed layers followed by optional routing layers in world
@@ -615,9 +636,10 @@ class BaseSoftRobotRenderer(ABC):
 
         Args:
             q: Normalized configurations, shape ``(N, DOF)`` or ``(N, T, DOF)``.
-            routing: Optional configuration-dependent routing strategy.
+            routing: Optional fixed or configuration-dependent routing strategy.
             solution: Matching solution PyTree with the same leading axes as
                 ``q``. Singleton axes may be omitted; ``None`` solves each state.
+                Must be ``None`` for fixed routing, which is vectorized over states.
             trajectory: Select trajectory rather than batch layer containers.
 
         Returns:
@@ -635,6 +657,26 @@ class BaseSoftRobotRenderer(ABC):
                 )
             return ()
         q = jnp.asarray(q)
+        expected_ndim = 3 if trajectory else 2
+        if q.ndim != expected_ndim:
+            raise ValueError(f"q must have {expected_ndim} axes, got shape {q.shape}.")
+        layer_type = (
+            TrajectoryActuatorVisualLayer if trajectory else BatchedActuatorVisualLayer
+        )
+        if isinstance(routing, ThreadlikeRouting):
+            points = self._routing_points_for_backend(
+                _fixed_routing_points(
+                    self.robot, q, routing, self._backbone_abscissae, solution
+                )
+            )
+            return tuple(
+                layer_type(
+                    name=f"routing/path_{index}",
+                    kind="tendon",
+                    points=points[..., index : index + 1, :, :],
+                )
+                for index in range(routing.num_paths)
+            )
         shape = q.shape[:-1]
         solution = _reshape_routing_solution(solution, shape)
         frames = [
@@ -645,9 +687,6 @@ class BaseSoftRobotRenderer(ABC):
         ]
         if not frames:
             return ()
-        layer_type = (
-            TrajectoryActuatorVisualLayer if trajectory else BatchedActuatorVisualLayer
-        )
         return tuple(
             layer_type(
                 name=layer.name,
@@ -665,7 +704,9 @@ class BaseSoftRobotRenderer(ABC):
         base_offsets: Array,
         *,
         actuator_inputs: Array | np.ndarray | None = None,
-        routing: ConfigurationDependentThreadlikeRouting | None = None,
+        routing: ThreadlikeRouting
+        | ConfigurationDependentThreadlikeRouting
+        | None = None,
         routing_solution: RoutingSolution | None = None,
     ) -> tuple[BatchedActuatorVisualLayer, ...]:
         """Combine actuator layers for ``(N, DOF)`` configurations.
@@ -675,10 +716,11 @@ class BaseSoftRobotRenderer(ABC):
             base_offsets: Display translations, shape ``(N, 2)`` or ``(N, 3)``.
             actuator_inputs: Optional installed inputs, shape
                 ``(N, robot.num_actuators)`` (or a single vector for ``N=1``).
-            routing: Optional shortest-path or free-space routing.
+            routing: Optional fixed or configuration-dependent routing.
             routing_solution: Solutions with leading axis ``N`` on every leaf.
                 A single solution is accepted only for ``N=1``. Omit to solve
                 each configuration; supplied solutions must match their states.
+                Must be ``None`` for fixed routing, which is evaluated directly.
 
         Returns:
             Layers with points shaped ``(N, channels, samples, dim)`` in metres.
@@ -700,7 +742,9 @@ class BaseSoftRobotRenderer(ABC):
         base_offsets: Array,
         *,
         actuator_inputs: Array | np.ndarray | None = None,
-        routing: ConfigurationDependentThreadlikeRouting | None = None,
+        routing: ThreadlikeRouting
+        | ConfigurationDependentThreadlikeRouting
+        | None = None,
         routing_solution: RoutingSolution | None = None,
     ) -> tuple[TrajectoryActuatorVisualLayer, ...]:
         """Combine actuator layers for ``(N, T, DOF)`` trajectories.
@@ -711,10 +755,11 @@ class BaseSoftRobotRenderer(ABC):
             actuator_inputs: Optional inputs with leading ``(N, T)`` axes, or
                 ``(N,)`` for inputs constant over time. For a single robot,
                 a ``(T, channels)`` array or constant channel vector is accepted.
-            routing: Optional shortest-path or free-space routing.
+            routing: Optional fixed or configuration-dependent routing.
             routing_solution: Solutions with leading axes ``(N, T)`` in the same
                 order as ``q_ts``. Singleton robot/time axes may be omitted.
                 Supplied solutions are reused; omitting them solves each state.
+                Must be ``None`` for fixed routing, which is evaluated directly.
 
         Returns:
             Layers with points shaped ``(N, T, channels, samples, dim)`` in metres,
