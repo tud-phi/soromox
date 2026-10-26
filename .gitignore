@@ -173,3 +173,6 @@ site/
 # camera params saved during rendering
 DepthCamera_*.json
 DepthCapture_*.png
+
+# Instron compression outputs (step records, stiffness, playback archives)
+examples/simulation/gvs/results/
