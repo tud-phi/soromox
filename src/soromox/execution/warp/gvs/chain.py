@@ -24,7 +24,15 @@ SPATIAL_DIM = 6
 
 
 def _make_persistent_chain_at(accumulate_mass_point: wp.Function) -> wp.Function:
-    """Share the chain traversal across general and diagonal inertia variants."""
+    """Share the chain traversal across general and diagonal inertia variants.
+
+    Args:
+        accumulate_mass_point: Warp function that projects one mass point into
+            the dynamics outputs, using the shared accumulator signature.
+
+    Returns:
+        A fixed-base Warp chain function bound to the supplied accumulator.
+    """
 
     @wp.func
     def persistent_chain_at(
@@ -608,7 +616,16 @@ class GVSChainData:
 
 
 def _make_homogeneous_persistent_chain_kernel(chain_at: wp.Function) -> wp.Kernel:
-    """Create a homogeneous entry kernel for one inertia implementation."""
+    """Create a homogeneous entry kernel for one inertia implementation.
+
+    Args:
+        chain_at: Fixed-base Warp chain function with the shared traversal
+            signature and the desired inertia implementation.
+
+    Returns:
+        A Warp kernel accepting ``GVSChainData``, registered in its own module
+        and executing the supplied chain function once per environment.
+    """
 
     @wp.kernel(enable_backward=False, module="unique")
     def homogeneous_persistent_chain_kernel(data: GVSChainData):

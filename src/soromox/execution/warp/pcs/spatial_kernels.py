@@ -239,23 +239,36 @@ def _make_spatial_persistent_chain_kernel(diagonal: bool) -> wp.Kernel:
 
     The diagonal variant excludes full-matrix branches from generated CUDA code.
     The generic variant remains available to direct callers for either layout.
+
+    Args:
+        diagonal: Whether to require six-column diagonal inertia. If false,
+            the kernel accepts either six-column or 36-column inertia.
+
+    Returns:
+        A Warp kernel with the shared spatial chain signature and the selected
+        inertia arithmetic, registered in its own module.
     """
 
     @wp.kernel(enable_backward=False, module="unique")
     def spatial_persistent_chain_kernel(
+        # Inputs: local-operator outputs in producer order.
         adjoint_inverse: wp.array2d[wp.float64],
         transported_tangent: wp.array2d[wp.float64],
         local_velocity: wp.array2d[wp.float64],
         transported_tangent_dot_velocity: wp.array2d[wp.float64],
+        # Inputs: active-coordinate mapping and generalized velocities.
         active_indices: wp.array2d[wp.int32],
         active_scales: wp.array2d[wp.float64],
         active_dof_ends: wp.array[wp.int32],
         qd: wp.array2d[wp.float64],
+        # Inputs: inertia projection and gravity.
         inertia_upper_rows: wp.array[wp.int32],
         inertia_upper_columns: wp.array[wp.int32],
         weighted_masses: wp.array2d[wp.float64],
         gravity_base: wp.array[wp.float64],
+        # Launch configuration closes the input prefix.
         block_dim: wp.int32,
+        # Outputs: first scratch bank, then second scratch bank.
         jacobian_first: wp.array2d[wp.float64],
         derivative_first: wp.array2d[wp.float64],
         velocity_first: wp.array2d[wp.float64],
@@ -264,11 +277,16 @@ def _make_spatial_persistent_chain_kernel(diagonal: bool) -> wp.Kernel:
         derivative_second: wp.array2d[wp.float64],
         velocity_second: wp.array2d[wp.float64],
         gravity_second: wp.array2d[wp.float64],
+        # Outputs: physical dynamics terms in SoRoMoX (M, Cv, G) order.
         inertia: wp.array3d[wp.float64],
         coriolis_qd: wp.array2d[wp.float64],
         gravity_force: wp.array2d[wp.float64],
     ):
         """Traverse one spatial PCS chain per persistent cooperative block.
+
+        The signature matches :func:`launch_spatial_persistent_chain`: all
+        read-only inputs precede the eight scratch buffers and three results.
+        Each scratch buffer is initialized here before use.
 
         Args:
             adjoint_inverse: Flattened inverse-adjoint operators.
@@ -620,19 +638,24 @@ _diagonal_spatial_persistent_chain_kernel = _make_spatial_persistent_chain_kerne
 
 
 def launch_spatial_persistent_chain(
+    # Inputs: local-operator outputs in producer order.
     adjoint_inverse: wp.array2d[wp.float64],
     transported_tangent: wp.array2d[wp.float64],
     local_velocity: wp.array2d[wp.float64],
     transported_tangent_dot_velocity: wp.array2d[wp.float64],
+    # Inputs: active-coordinate mapping and generalized velocities.
     active_indices: wp.array2d[wp.int32],
     active_scales: wp.array2d[wp.float64],
     active_dof_ends: wp.array[wp.int32],
     qd: wp.array2d[wp.float64],
+    # Inputs: inertia projection and gravity.
     inertia_upper_rows: wp.array[wp.int32],
     inertia_upper_columns: wp.array[wp.int32],
     weighted_masses: wp.array2d[wp.float64],
     gravity_base: wp.array[wp.float64],
+    # Launch configuration closes the input prefix.
     block_dim: int,
+    # Outputs: first scratch bank, then second scratch bank.
     jacobian_first: wp.array2d[wp.float64],
     derivative_first: wp.array2d[wp.float64],
     velocity_first: wp.array2d[wp.float64],
@@ -641,11 +664,22 @@ def launch_spatial_persistent_chain(
     derivative_second: wp.array2d[wp.float64],
     velocity_second: wp.array2d[wp.float64],
     gravity_second: wp.array2d[wp.float64],
+    # Outputs: physical dynamics terms in SoRoMoX (M, Cv, G) order.
     inertia: wp.array3d[wp.float64],
     coriolis_qd: wp.array2d[wp.float64],
     gravity_force: wp.array2d[wp.float64],
 ):
     """Launch one persistent spatial PCS chain block per environment.
+
+    Argument order follows the planar PCS chain: local operators in producer
+    order, coordinate mapping and velocities, inertia/gravity inputs, then
+    launch configuration. All writable arrays follow those inputs, matching
+    Warp's ``inputs``/``outputs`` launch convention. Scratch arrays are grouped
+    by ping-pong bank in :meth:`PCSPipelineShapes.chain_outputs` order, followed
+    by the physical results ``(M, Cv, G)``. The trailing eleven arrays are the
+    outputs of ``wp.jax_callable(..., num_outputs=11)``; they are initialized by
+    the kernel and require no incoming values. Keeping this order also preserves
+    the public positional interface used by direct and fused launchers.
 
     Args:
         adjoint_inverse: Flattened outputs from

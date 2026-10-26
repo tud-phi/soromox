@@ -28,6 +28,14 @@ def _make_accumulate_mass_point(diagonal: bool) -> wp.Function:
 
     Full inertia and mixed packed worlds retain the general implementation.
     Only the homogeneous diagonal variant excludes full-matrix arithmetic.
+
+    Args:
+        diagonal: Whether to require six-column diagonal inertia. If false,
+            the function accepts either six-column or 36-column inertia.
+
+    Returns:
+        A Warp function that accumulates one mass point using the selected
+        inertia arithmetic and the shared projection and scratch-buffer logic.
     """
     mass_jacobian_action = (
         _diagonal_mass_jacobian_action if diagonal else _mass_jacobian_action
