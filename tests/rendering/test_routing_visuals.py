@@ -333,6 +333,7 @@ def test_viser_updates_and_live_frames_reuse_solutions(robot, case, monkeypatch)
 
 
 def test_open3d_scene_reuses_trajectory_solutions(robot, case, monkeypatch):
+    pytest.importorskip("open3d")
     from soromox.rendering import Open3DRenderer
 
     routing, q, solution = case
@@ -715,6 +716,7 @@ def test_standalone_fixed_viser_playback_and_live_updates(robot, monkeypatch):
 
 
 def test_standalone_fixed_open3d_trajectory(robot, monkeypatch):
+    pytest.importorskip("open3d")
     from soromox.rendering import Open3DRenderer
 
     routing = ThreadlikeRouting.linear(intercept=[[0, 0.003, 0]], end_segment_index=1)
