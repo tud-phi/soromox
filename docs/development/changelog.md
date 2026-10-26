@@ -14,6 +14,14 @@ Describe the delta from the last release, not intermediate development changes.
 
 ### Added
 
+- Configuration-dependent threadlike routing for PlanarPCS, PCS, and GVS:
+  straight spans between prescribed guides, or differentiable shortest paths
+  inside circular lumens using `slsqp-jax`. Both provide path lengths and force
+  maps, including moving joints and floating bases; see
+  [PR #238](https://github.com/tud-phi/soromox/pull/238).
+- Native FP64 Warp kernels for free-space threadlike routing and actuation,
+  with batched execution, reusable buffers, and CUDA graph support.
+
 - Added optional continuum Capstan friction for active threadlike actuation in
   PCS, PlanarPCS, and GVS, with analytical routed-path turn and custom friction
   laws; see [threadlike actuation](../api/actuation/threadlike.md#continuum-capstan-friction).
@@ -88,6 +96,10 @@ Describe the delta from the last release, not intermediate development changes.
   rendering guard, allowing image/video export and modern windows.
 
 ### Documentation
+
+- Added a [configuration-dependent routing guide](../api/actuation/threadlike.md#configuration-dependent-routing)
+  and a hollow-tendon example with static equilibrium, dynamic simulation, and
+  rendering of the resolved paths through guides at segment transitions.
 
 - Documented the continuum Capstan derivation, actuator-coordinate scales,
   local length-gradient notation, and distinction from discrete spacer disks.
