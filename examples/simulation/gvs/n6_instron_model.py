@@ -222,13 +222,13 @@ class N6ModuleSpec:
     def helix_params(self) -> HelicoidalHelixParams:
         """Strand-level inputs of the helix reduction (solid rectangular section).
 
-        ``HelicoidalHelixParams.rectangular_hollow`` builds a SOLID rectangle
-        despite its name: ``width`` lies along the strand's radial axis and
-        ``height`` along its circumferential axis.
+        ``HelicoidalHelixParams.rectangular`` places ``height`` along the
+        strand's radial axis (local y) and ``width`` along its circumferential
+        axis (local z), so the 12 mm radial extent is passed as ``height``.
         """
-        return HelicoidalHelixParams.rectangular_hollow(
-            width=self.strand_width,
-            height=self.strand_thickness,
+        return HelicoidalHelixParams.rectangular(
+            height=self.strand_width,
+            width=self.strand_thickness,
             length=self.length,
             radius_base=self.centerline_radius,
             radius_tip=self.centerline_radius,

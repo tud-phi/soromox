@@ -62,6 +62,7 @@ except ModuleNotFoundError:  # executed as a script
 
     sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
     from examples.simulation.gvs import n6_instron_model as model
+from soromox.systems import StrandSection
 from soromox.utils.lie_algebra import so3
 
 N6ModuleSpec = model.N6ModuleSpec
@@ -630,8 +631,9 @@ class ViserViewer:
                     strands_per_family=spec.strands_per_family,
                     phase=spec.phase,
                     family_phase=spec.family_phase,
-                    strand_width=spec.strand_width,
-                    strand_height=spec.strand_thickness,
+                    strand_section=StrandSection.rectangular(
+                        height=spec.strand_width, width=spec.strand_thickness
+                    ),
                 ),
             ),
             config=RendererConfig(camera=CameraConfig(), scene=SceneConfig.studio()),

@@ -19,10 +19,6 @@ from examples.simulation.gvs.n6_instron_model import (
     build_horizontal_n6_module,
     build_upright_n6_module,
 )
-from soromox.rendering.helicoidal.viser_renderer import (
-    RECTANGULAR_STRAND_HEIGHT,
-    RECTANGULAR_STRAND_WIDTH,
-)
 
 jax.config.update("jax_enable_x64", True)
 
@@ -75,9 +71,6 @@ def test_n6_spec_matches_requested_geometry_and_material(spec):
     assert spec.specimen_height == pytest.approx(0.123)
     assert spec.shear_modulus == pytest.approx(2.48e6 / (2 * 1.485))
     assert spec.gravity == 0.0
-    # The section agrees with the committed renderer defaults.
-    assert spec.strand_width == pytest.approx(RECTANGULAR_STRAND_WIDTH)
-    assert spec.strand_thickness == pytest.approx(RECTANGULAR_STRAND_HEIGHT, abs=1e-8)
 
 
 def test_n6_spec_rejects_inconsistent_inputs_and_roundtrips_json(spec):
@@ -98,6 +91,8 @@ def test_helix_params_carry_the_solid_rectangular_section(upright, spec):
         np.asarray(helix.strand_second_moments),
         [width * height**3 / 12, height * width**3 / 12],
     )
+    # The retained section drives the renderer: 12 mm spans the radial axis.
+    assert float(helix.strand_section.radial_extent) == pytest.approx(width / 2)
     assert float(helix.radius_base) == pytest.approx(0.024)
     assert float(helix.num_turns) == 1.0
     assert helix.helices_per_direction == 6
