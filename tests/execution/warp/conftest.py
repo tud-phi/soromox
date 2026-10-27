@@ -82,11 +82,12 @@ def make_gvs_model() -> ModelFactory:
         ),
     )
 
-    def make(backend: ExecutionBackend) -> GVS:
+    def make(backend: ExecutionBackend, *, floating_base: bool = False) -> GVS:
         """Build a GVS model with identical parameters for one backend."""
 
         return GVS.from_segments(
             segments,
+            floating_base=floating_base,
             base_pose=jnp.asarray(
                 [0.0, 2**-0.5, 0.0, 2**-0.5, 0.03, -0.02, 0.01],
                 dtype=jnp.float64,
