@@ -82,6 +82,7 @@ def build_arm(
     density: float,
     youngs_modulus: float,
     poisson_ratio: float,
+    backend: str = "auto",
 ) -> PCS:
     """Build the tendon-actuated SoRoMoX arm model used by the environment.
 
@@ -92,6 +93,7 @@ def build_arm(
         density: Material density in kg/m^3.
         youngs_modulus: Young's modulus in Pa.
         poisson_ratio: Poisson ratio.
+        backend: SoRoMoX execution backend, ``"auto"``, ``"jax"``, or ``"warp"``.
 
     Returns:
         A configured ``PCS`` model with threadlike tendon actuation.
@@ -139,6 +141,7 @@ def build_arm(
         params=body_params,
         base_pose=jnp.array([0.5, -0.5, 0.5, 0.5, 0.0, 0.0, 0.0]),
         actuators=ThreadlikeActuator.tendons(active_tendon_routing),
+        backend=backend,
     )
 
 
@@ -366,7 +369,7 @@ def build_jax_env_fns(
         ball_traj_pos, ball_traj_vel, ball_traj_acc = make_ball_traj(key_traj)
         env_state = EnvState(
             arm_state=SystemState(t=0.0, y=y0),
-            current_force=jnp.zeros((tendon_dim,), dtype=jnp.float32),
+            current_force=jnp.zeros((tendon_dim,), dtype=jnp.float64),
             action_step_counter=jnp.int32(0),
             ball_pos=ball_traj_pos[0],
             ball_vel=ball_traj_vel[0],
@@ -422,7 +425,7 @@ def build_jax_env_fns(
             end-effector position, and invalid-observation flag.
         """
 
-        delta_force = action[:action_dim] * tendon_force_scale
+        delta_force = action[:action_dim].astype(jnp.float64) * tendon_force_scale
         tendon_force = jnp.clip(env_state.current_force + delta_force, 0.0, 25.0)
 
         action_step_counter = env_state.action_step_counter + jnp.int32(1)
@@ -526,6 +529,7 @@ class ParallelSoromoxEnv(VecEnv):
         self.ball_center = tuple(kwargs.get("ball_center", (0.0, 0.0, 0.15)))
         self.ball_radius = float(kwargs.get("ball_radius", 0.10))
         self.ball_surface_vmax = float(kwargs.get("ball_surface_vmax", 0.015))
+        self.backend = str(kwargs.get("backend", "auto"))
 
         self.arm = build_arm(
             num_segments=self.num_segments,
@@ -534,6 +538,7 @@ class ParallelSoromoxEnv(VecEnv):
             density=self.density,
             youngs_modulus=self.youngs_modulus,
             poisson_ratio=self.poisson_ratio,
+            backend=self.backend,
         )
         self.y0 = make_default_y0(self.num_segments)
         (
