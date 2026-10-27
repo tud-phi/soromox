@@ -3,7 +3,10 @@
 Run with ``JAX_PLATFORMS=cpu MPLBACKEND=Agg python
 examples/simulation/pcs/simulate_hollow_tendon_routing.py``.
 The output directory contains MP4 animations, PNG figures, NPZ trajectories,
-and a JSON report. All dimensions and mechanics are illustrative.
+and a JSON report. Select ``--backend matplotlib|open3d|viser|opencv`` or ``all``.
+``--render-only`` reuses the complete routing solutions in the NPZ archive;
+``--snapshot-only`` skips video export. Viser needs a browser at its printed URL.
+All dimensions and mechanics are illustrative.
 
 References:
     Mathew, A. T., Alkayas, A. Y., Alshehhi, A. A. S., Adamu, Y. A.,
@@ -18,24 +21,22 @@ from __future__ import annotations
 import argparse
 import json
 import time
+from dataclasses import fields
 from pathlib import Path
 
 import jax
 import jax.numpy as jnp
-import matplotlib
 import numpy as np
 import optimistix as optx
-
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-from matplotlib.animation import FFMpegWriter
-from matplotlib.lines import Line2D
+from PIL import Image
 
 from soromox.actuation import (
     CircularLumenParams,
     PiecewiseLinearRoutingDiscretization,
+    RoutingSolution,
     RoutingSolverOptions,
     RoutingSpanParams,
+    RoutingSpanSolution,
     ShortestPathRouting,
     ShortestPathRoutingParams,
 )
@@ -54,8 +55,15 @@ ANCHOR_OFFSET = 0.004
 YOUNG_MODULUS = 3e4
 DENSITY = 1070.0
 VISCOSITY = 1500.0
-COLORS = ("#db593b", "#ac7800")
-WALL_COLOR = "#4d8c91"
+
+
+class HollowPlanarPCS(PlanarPCS):
+    """Expose this example's annular section to the shared renderer adapters."""
+
+    def cross_section_geometry(self, q, s):
+        """Return the outer radius and the cavity used by the example's mechanics."""
+        tag, outer, _ = super().cross_section_geometry(q, s)
+        return tag, outer, jnp.full_like(outer, INNER_RADIUS)
 
 
 def build_model(case="same-side", elements=6):
@@ -90,7 +98,7 @@ def build_model(case="same-side", elements=6):
             sectional_inertia=jnp.tile(inertia[None], (2, 1, 1)),
         ),
     )
-    robot = PlanarPCS(
+    robot = HollowPlanarPCS(
         params,
         PlanarPCSStructure(
             strain_selector=jnp.array([True, False, False] * 2),
@@ -354,9 +362,10 @@ def simulate(robot, routing, case, duration, timestep, save_dt=0.04):
             timestep.
 
     Returns:
-        result (tuple[np.ndarray, np.ndarray, dict]): Sample times, states shaped
-            ``(samples, 6)``, and a dictionary of runtime, convergence, clearance, and
-            energy checks.
+        result (tuple): Sample times, states shaped ``(samples, 6)``, a
+            RoutingSolution with a leading sample axis on every array, and runtime,
+            convergence, clearance, and energy checks. Solutions are evaluated at
+            the saved state, not at the last RK4 stage's approximate endpoint.
     """
     initial_configuration, guess, _ = solve_equilibrium(
         robot, routing, tensions_at(0.0, case)
@@ -372,6 +381,12 @@ def simulate(robot, routing, case, duration, timestep, save_dt=0.04):
     ):
         raise ValueError("timestep must divide both duration and 0.04 s exactly.")
     states, times = [np.asarray(state)], [0.0]
+    saved_solutions = [guess]
+    resolve_saved = jax.jit(
+        lambda configuration, previous: routing.solve_routing(
+            robot, configuration, initial_guess=previous
+        )
+    )
     maximum = np.zeros(3)
     started = time.perf_counter()
     for index in range(count):
@@ -383,6 +398,12 @@ def simulate(robot, routing, case, duration, timestep, save_dt=0.04):
             )
         maximum = np.maximum(maximum, checks[:, 1:].max(axis=0))
         if (index + 1) % stride == 0 or index + 1 == count:
+            # RK4's last stage is not the final integrated state. Resolve once
+            # here so the archived solution matches the saved configuration.
+            guess = resolve_saved(state[:2], guess)
+            if not bool(guess.converged):
+                raise RuntimeError("Routing failed at a saved configuration.")
+            saved_solutions.append(guess)
             states.append(np.asarray(state))
             times.append((index + 1) * timestep)
         if (index + 1) % 200 == 0:
@@ -415,395 +436,180 @@ def simulate(robot, routing, case, duration, timestep, save_dt=0.04):
     return (
         np.array(times),
         states,
+        jax.tree.map(lambda *values: jnp.stack(values), *saved_solutions),
         {
             "runtime_seconds": time.perf_counter() - started,
             "max_dense_wall_violation_m": float(maximum[0]),
             "max_stationarity_residual": float(maximum[1]),
             "max_routing_iterations": int(maximum[2]),
-            "routing_solves": count * 4 * routing.spans.num_spans,
+            "routing_solves": (count * 4 + len(saved_solutions) - 1)
+            * routing.spans.num_spans,
             "max_energy_balance_error_J": float(np.max(np.abs(energy_error))),
         },
     )
 
 
-def sample_frames(robot, routing, configurations):
-    """Resolve each saved configuration and transform offsets into world space.
+def save_trajectory(path, case, elements, times, states, solutions):
+    """Save this two-span example's complete solutions as named, non-pickle arrays.
 
-    Args:
-        robot (SoftRobot): Continuum host providing material strains and guide
-            kinematics.
-        routing (ShortestPathRouting): ShortestPathRouting instance for the two hollow
-            sections.
-        configurations (Array): Saved bending configurations, shape ``(frames, 2)``.
+    Every solution array includes a leading time axis. Keeping solver diagnostics
+    and interpolation coefficients allows render-only runs without a solve or a
+    template solution. This example has two independent paths and no joint guides.
+    """
+    values = {
+        "case": case,
+        "elements": elements,
+        "time": times,
+        "state": states,
+        "path_lengths": solutions.path_lengths,
+    }
+    for index, span in enumerate(solutions.spans):
+        for field in fields(RoutingSpanSolution):
+            values[f"span_{index}_{field.name}"] = getattr(span, field.name)
+    np.savez_compressed(path, **values)
+
+
+def load_trajectory(path):
+    """Load saved configurations and exact routing solutions without optimization.
 
     Returns:
-        result (tuple[list[tuple], np.ndarray]): List of resolved drawing frames and
-            per-frame diagnostics shaped ``(frames, 4)``.
+        Case, discretization size, times, states, and the batched RoutingSolution.
     """
-    points = jnp.stack(
-        [
-            jnp.linspace(section * LENGTH, (section + 1) * LENGTH, 121)
-            for section in range(2)
-        ]
-    )
-
-    @jax.jit
-    def sample(configuration):
-        """Resolve and transform one configuration for drawing.
-
-        Args:
-            configuration (Array): Generalized configuration, shape
-                ``(robot.num_coordinates,)``.
-
-        Returns:
-            result (tuple[tuple, Array]): Section centerlines, normals, tendon points,
-                reference routes, and offsets, plus four routing diagnostics.
-        """
-        solution = routing.solve_routing(robot, configuration)
-        centerlines, normals, tendons, references, offsets = [], [], [], [], []
-        for section in range(2):
-            poses = robot.forward_kinematics_abscissa_batched(
-                configuration, points[section]
+    with np.load(path, allow_pickle=False) as saved:
+        spans = tuple(
+            RoutingSpanSolution(
+                **{
+                    field.name: jnp.asarray(saved[f"span_{index}_{field.name}"])
+                    for field in fields(RoutingSpanSolution)
+                }
             )
-            centers = poses[:, 1:]
-            normal = jnp.stack((-jnp.sin(poses[:, 0]), jnp.cos(poses[:, 0])), axis=-1)
-            local = routing.span_offsets(solution, section, points[section])[:, 1]
-            centerlines.append(centers)
-            normals.append(normal)
-            tendons.append(
-                routing.span_positions(
-                    robot,
-                    configuration,
-                    solution,
-                    section,
-                    jnp.linspace(0, 1, points.shape[1]),
-                )[:, :2]
-            )
-            references.append(centers + normal * routing.spans.start_offset[section, 1])
-            offsets.append(local)
-        return tuple(
-            jnp.stack(value)
-            for value in (centerlines, normals, tendons, references, offsets)
-        ), route_diagnostics(solution)
-
-    frames, diagnostics = [], []
-    for configuration in configurations:
-        frame, check = sample(jnp.asarray(configuration))
-        frames.append(tuple(np.asarray(value) for value in frame))
-        diagnostics.append(np.asarray(check))
-    diagnostics = np.asarray(diagnostics)
-    if not np.all(diagnostics[:, 0] == 1):
-        raise RuntimeError(
-            "A rendered route failed its convergence or containment check."
+            for index in range(2)
         )
-    return frames, diagnostics
+        solution = RoutingSolution(spans, jnp.asarray(saved["path_lengths"]))
+        times, states = np.asarray(saved["time"]), np.asarray(saved["state"])
+        if states.shape != (len(times), 6) or solution.path_lengths.shape != (
+            len(times),
+            2,
+        ):
+            raise ValueError(
+                "Saved states and routing solutions must match the time axis."
+            )
+        return str(saved["case"]), int(saved["elements"]), times, states, solution
 
 
-def draw_robot(axis, frame, title, limits=None):
-    """Draw the actual lumen, optimized paths, anchors, and contact samples.
+def render_shared(
+    robot,
+    routing,
+    case,
+    times,
+    states,
+    solutions,
+    output,
+    backend,
+    *,
+    video=True,
+    port=8094,
+):
+    """Render a peak-bending snapshot and playback using only saved solutions.
 
-    Args:
-        axis (Axes): Matplotlib axes receiving the drawing.
-        frame (tuple): Centerlines, normals, tendon points, reference routes, and
-            transverse
-            offsets for both sections.
-        title (str): Title displayed above the drawing.
-        limits (tuple | None): Optional x and y plotting bounds in millimetres.
-
-    Returns:
-        result (None): ``None``. Artists are added to the supplied axes.
+    Viser requires a connected browser at the printed local URL. Other backends
+    export directly. Snapshot and video share the same camera and tendon geometry.
     """
-    centers, normals, tendons, references, offsets = frame
-    for section in range(2):
-        center, normal = centers[section] * 1000, normals[section]
-        for side in (-1, 1):
-            outer = center + side * OUTER_RADIUS * 1000 * normal
-            inner = center + side * INNER_RADIUS * 1000 * normal
-            polygon = np.concatenate((outer, inner[::-1]))
-            axis.fill(polygon[:, 0], polygon[:, 1], color=WALL_COLOR, alpha=0.3)
-            axis.plot(inner[:, 0], inner[:, 1], color=WALL_COLOR, lw=1.0)
-        axis.plot(center[:, 0], center[:, 1], ":", color="#8a999c", lw=0.8)
-        reference = references[section] * 1000
-        tendon = tendons[section] * 1000
-        axis.plot(
-            reference[:, 0],
-            reference[:, 1],
-            "--",
-            color=COLORS[section],
-            alpha=0.5,
-            lw=1,
+    from soromox.rendering import (
+        ActuatorStyleConfig,
+        BackboneColorConfig,
+        CameraConfig,
+        GeometryConfig,
+        MatplotlibRenderer,
+        Open3DRenderer,
+        OpenCVPlanarRenderer,
+        RendererColorConfig,
+        RendererConfig,
+        RenderOutputConfig,
+        SceneConfig,
+        ViserRenderer,
+    )
+
+    scene = SceneConfig.studio()
+    scene.ground.visible = False
+    scene.backdrop.enabled = False
+    scene.shadows = False
+    config = RendererConfig(
+        scene=scene,
+        camera=CameraConfig(
+            position=(0.32, 0.17, 0.48),
+            look_at=(0.02, 0.115, 0.0),
+            up=(0.0, 1.0, 0.0),
+            fov=38.0,
+        ),
+        geometry=GeometryConfig(
+            num_points=65,
+            cross_section_resolution=32,
+            actuator_line_width=3.0,
+            line_width=5.0,
+        ),
+        output=RenderOutputConfig(width=960, height=720),
+        colors=RendererColorConfig(
+            backbone=BackboneColorConfig(
+                segment_colors=[(0.21, 0.58, 0.65, 0.22), (0.38, 0.70, 0.72, 0.22)]
+            ),
+            actuators=ActuatorStyleConfig(
+                default_color=(0.85, 0.12, 0.06), default_radius=0.0008
+            ),
+        ),
+    )
+    if backend == "viser":
+        renderer = ViserRenderer(
+            robot, config=config, host="127.0.0.1", port=port, open_browser=False
         )
-        axis.plot(tendon[:, 0], tendon[:, 1], color=COLORS[section], lw=2.6)
-        axis.scatter(
-            tendon[[0, -1], 0],
-            tendon[[0, -1], 1],
-            color=COLORS[section],
-            edgecolor="white",
-            linewidth=0.7,
-            s=45,
-            zorder=6,
+    elif backend == "opencv":
+        renderer = OpenCVPlanarRenderer(
+            robot, config=config, length_scale=1.3, origin_uv=(480, 660)
         )
-        contact = np.abs(offsets[section]) >= INNER_RADIUS - 2e-5
-        axis.scatter(
-            tendon[contact, 0][::6],
-            tendon[contact, 1][::6],
-            color="#222b36",
-            s=8,
-            zorder=7,
+    else:
+        cls = {"matplotlib": MatplotlibRenderer, "open3d": Open3DRenderer}[backend]
+        if cls is None:
+            raise ImportError(f"Install the rendering dependencies for {backend}.")
+        renderer = cls(robot, config=config)
+    try:
+        if backend == "viser":
+            print(f"Open {renderer.url} for Viser capture", flush=True)
+            deadline = time.monotonic() + 300
+            while not renderer.server.get_clients():
+                if time.monotonic() >= deadline:
+                    raise RuntimeError(
+                        "No Viser browser connected within five minutes."
+                    )
+                time.sleep(0.2)
+        peak = int(np.argmax(np.linalg.norm(states[:, :2], axis=1)))
+        solution = jax.tree.map(lambda value: value[peak], solutions)
+        pixels = renderer.render_frame(
+            states[peak, :2], routing=routing, routing_solution=solution
         )
-        for end in (0, -1):
-            rim = (
-                center[end]
-                + np.array([-1, 1])[:, None] * OUTER_RADIUS * 1000 * normal[end]
-            )
-            axis.plot(rim[:, 0], rim[:, 1], color=WALL_COLOR, lw=1.8)
-    axis.plot([-20, 20], [0, 0], color="#34404d", lw=4)
-    axis.set(
-        title=title,
-        xlabel="Horizontal position [mm]",
-        ylabel="Height [mm]",
-        aspect="equal",
-    )
-    axis.grid(alpha=0.18)
-    if limits is not None:
-        axis.set_xlim(*limits[0])
-        axis.set_ylim(*limits[1])
-
-
-def render(case, times, states, frames, output, static_frame):
-    """Save a cutaway montage, diagnostics, and a video at physical playback speed.
-
-    Args:
-        case (str): Anchor layout: ``"same-side"`` or ``"opposed"``.
-        times (Array): Saved physical times in seconds, shape ``(frames,)``.
-        states (Array): Saved angles, velocities, work, and dissipation, shape
-            ``(frames, 6)``.
-        frames (list[tuple]): Resolved drawing data returned by sample_frames.
-        output (Path): Output directory for figures and animation.
-        static_frame (tuple): Resolved drawing data for the loaded static equilibrium.
-
-    Returns:
-        result (None): ``None``. PNG figures and an MP4 animation are written to the
-            output directory.
-    """
-    plt.rcParams.update(
-        {
-            "font.family": "DejaVu Sans",
-            "font.size": 10,
-            "axes.spines.top": False,
-            "axes.spines.right": False,
-            "figure.facecolor": "#fbfcfd",
-            "axes.facecolor": "#fbfcfd",
-        }
-    )
-    points = (
-        np.concatenate([frame[0].reshape(-1, 2) for frame in [*frames, static_frame]])
-        * 1000
-    )
-    limits = (
-        (min(-30, points[:, 0].min() - 24), max(30, points[:, 0].max() + 24)),
-        (-15, 260),
-    )
-    legend = [
-        Line2D([0], [0], color=COLORS[0], lw=2, label="Resolved tendon 1"),
-        Line2D([0], [0], color=COLORS[1], lw=2, label="Resolved tendon 2"),
-        Line2D([0], [0], color="#777", ls="--", label="Fixed-offset reference"),
-    ]
-    if any(
-        np.any(abs(frame[4]) >= INNER_RADIUS - 2e-5)
-        for frame in [*frames, static_frame]
-    ):
-        legend.append(
-            Line2D(
-                [0], [0], color="#222b36", marker="o", ls="", label="Near wall contact"
-            )
-        )
-    figure, axes = plt.subplots(1, 4, figsize=(12, 6), layout="constrained")
-    for axis, desired in zip(axes[:3], [0.0, 1.5, 3.0]):
-        index = np.argmin(abs(times - desired))
-        draw_robot(axis, frames[index], f"Dynamic state / {times[index]:.2f} s", limits)
-    draw_robot(axes[3], static_frame, "Static / 0.2275 N, 0.1575 N", limits)
-    figure.suptitle(
-        f"Hollow tendon routing: {case} anchors\nTwo 120 mm annular sections; circles mark physical anchors",
-        fontsize=15,
-    )
-    figure.legend(
-        handles=legend, loc="outside lower center", ncol=len(legend), frameon=False
-    )
-    figure.savefig(output / f"{case}_routing.png", dpi=160)
-    plt.close(figure)
-
-    figure = plt.figure(figsize=(8, 8), layout="constrained")
-    axis = figure.add_subplot(111, projection="3d")
-    centers, normals, tendons, _, _ = static_frame
-    azimuth = np.linspace(0, np.pi, 45)
-    for section in range(2):
-        for radius, alpha in ((OUTER_RADIUS, 0.22), (INNER_RADIUS, 0.1)):
-            wall = (
-                centers[section, :, None]
-                + normals[section, :, None] * (radius * np.cos(azimuth))[None, :, None]
-            )
-            depth = np.broadcast_to(radius * np.sin(azimuth), wall.shape[:2])
-            axis.plot_surface(
-                wall[:, :, 0] * 1000,
-                depth * 1000,
-                wall[:, :, 1] * 1000,
-                color=WALL_COLOR,
-                alpha=alpha,
-                linewidth=0,
-                shade=True,
-            )
-        for end in (0, -1):
-            for radius in (INNER_RADIUS, OUTER_RADIUS):
-                rim = (
-                    centers[section, end]
-                    + normals[section, end] * (radius * np.cos(azimuth))[:, None]
+        if backend == "opencv":
+            pixels = pixels[..., ::-1]
+        Image.fromarray(pixels).save(output / f"{case}_{backend}.png")
+        print(f"Saved {backend} snapshot at t={times[peak]:.2f} s", flush=True)
+        if video:
+            kwargs = {
+                "routing": routing,
+                "routing_solution": solutions,
+                "record_path": str(output / f"{case}_{backend}.mp4"),
+            }
+            if backend == "matplotlib":
+                kwargs["interval"] = round(1000 * float(np.mean(np.diff(times))))
+            if backend == "viser":
+                kwargs.update(
+                    loop=False,
+                    autoplay=True,
+                    stop_when_recording_done=True,
+                    plot_configurations=False,
+                    plot_actuator_positions=False,
                 )
-                axis.plot(
-                    rim[:, 0] * 1000,
-                    radius * np.sin(azimuth) * 1000,
-                    rim[:, 1] * 1000,
-                    color=WALL_COLOR,
-                    lw=1,
-                )
-        tendon = tendons[section] * 1000
-        axis.plot(
-            tendon[:, 0],
-            np.zeros(tendon.shape[0]),
-            tendon[:, 1],
-            color=COLORS[section],
-            lw=3,
-        )
-        axis.scatter(
-            tendon[[0, -1], 0],
-            [0, 0],
-            tendon[[0, -1], 1],
-            color=COLORS[section],
-            s=45,
-            depthshade=False,
-        )
-    horizontal = centers[:, :, 0] * 1000
-    axis.set(
-        xlabel="Horizontal [mm]",
-        ylabel="",
-        zlabel="Height [mm]",
-        ylim=(-15, 20),
-        zlim=(-5, 250),
-        xlim=(horizontal.min() - 20, horizontal.max() + 20),
-    )
-    axis.set_box_aspect((np.ptp(horizontal) + 40, 35, 255))
-    axis.set_yticks([])
-    axis.view_init(elev=17, azim=-65)
-    axis.set_title(
-        f"{case.capitalize()} anchors / static equilibrium\nFront half of the tube removed to show tendon routing",
-        pad=20,
-    )
-    figure.savefig(
-        output / f"{case}_cutaway.png", dpi=160, bbox_inches="tight", pad_inches=0.3
-    )
-    plt.close(figure)
-
-    figure, axes = plt.subplots(1, 2, figsize=(10, 4), layout="constrained")
-    peak = frames[np.argmax(np.linalg.norm(states[:, :2], axis=1))]
-    for section, axis in enumerate(axes):
-        local_positions = np.linspace(0, LENGTH * 1000, static_frame[4].shape[-1])
-        axis.plot(
-            local_positions,
-            static_frame[4][section] * 1000,
-            color=COLORS[section],
-            label="Static equilibrium",
-        )
-        axis.plot(
-            local_positions,
-            peak[4][section] * 1000,
-            color=COLORS[section],
-            ls="--",
-            label="Largest dynamic bend",
-        )
-        axis.scatter(
-            local_positions[[0, -1]],
-            static_frame[4][section, [0, -1]] * 1000,
-            color=COLORS[section],
-            s=30,
-            zorder=4,
-        )
-        for side in (-1, 1):
-            axis.axhline(side * INNER_RADIUS * 1000, color=WALL_COLOR, lw=1)
-        axis.set(
-            title=f"Section {section + 1}",
-            xlabel="Position within section [mm]",
-            ylabel="Tendon offset from backbone [mm]",
-            ylim=(-16, 16),
-        )
-        axis.grid(alpha=0.2)
-    figure.legend(
-        handles=[
-            Line2D([0], [0], color="#5b6368", label="Static equilibrium"),
-            Line2D([0], [0], color="#5b6368", ls="--", label="Largest dynamic bend"),
-        ],
-        loc="outside lower center",
-        ncol=2,
-        frameon=False,
-    )
-    figure.suptitle(
-        f"{case.capitalize()} anchors / optimized offsets inside the lumen", fontsize=14
-    )
-    figure.savefig(output / f"{case}_offsets.png", dpi=160)
-    plt.close(figure)
-
-    tensions = np.asarray(
-        jax.vmap(lambda instant: tensions_at(instant, case))(jnp.asarray(times))
-    )
-    figure = plt.figure(figsize=(12, 7), layout="constrained")
-    grid = figure.add_gridspec(2, 2, width_ratios=[1.1, 1])
-    body_axis = figure.add_subplot(grid[:, 0])
-    tension_axis = figure.add_subplot(grid[0, 1])
-    angle_axis = figure.add_subplot(grid[1, 1])
-    for section in range(2):
-        tension_axis.plot(
-            times,
-            tensions[:, section],
-            color=COLORS[section],
-            label=f"Section {section + 1}",
-        )
-        angle_axis.plot(times, np.rad2deg(states[:, section]), color=COLORS[section])
-    tension_axis.set(
-        ylabel="Tendon tension [N]", xlim=(0, times[-1]), title="Applied input"
-    )
-    angle_axis.set(
-        xlabel="Time [s]",
-        ylabel="Section bending angle [deg]",
-        xlim=(0, times[-1]),
-        title="Simulated response",
-    )
-    tension_axis.legend(frameon=False)
-    for axis in (tension_axis, angle_axis):
-        axis.grid(alpha=0.2)
-    cursors = [
-        axis.axvline(0, color="#34404d", alpha=0.6)
-        for axis in (tension_axis, angle_axis)
-    ]
-    figure.suptitle(
-        f"{case.capitalize()} tendon actuation / hollow continuum robot", fontsize=15
-    )
-    figure.legend(handles=legend, loc="outside lower center", ncol=2, frameon=False)
-    writer = FFMpegWriter(
-        fps=25, codec="libx264", extra_args=["-crf", "20", "-pix_fmt", "yuv420p"]
-    )
-    with writer.saving(figure, str(output / f"{case}_dynamics.mp4"), dpi=120):
-        for index, instant in enumerate(times):
-            body_axis.clear()
-            draw_robot(
-                body_axis,
-                frames[index],
-                f"Resolved routing / t = {instant:.2f} s",
-                limits,
-            )
-            for cursor in cursors:
-                cursor.set_xdata([instant, instant])
-            writer.grab_frame()
-    figure.savefig(output / f"{case}_response.png", dpi=160)
-    plt.close(figure)
+            renderer.render_sequence(times, states[:, :2], **kwargs)
+    finally:
+        if backend == "viser":
+            renderer.stop()
 
 
 def main():
@@ -827,6 +633,13 @@ def main():
     parser.add_argument("--elements", type=int, default=6)
     parser.add_argument("--check-refinement", action="store_true")
     parser.add_argument("--render-only", action="store_true")
+    parser.add_argument(
+        "--backend",
+        choices=["none", "matplotlib", "open3d", "viser", "opencv", "all"],
+        default="matplotlib",
+    )
+    parser.add_argument("--snapshot-only", action="store_true")
+    parser.add_argument("--port", type=int, default=8094)
     args = parser.parse_args()
     if args.duration <= 0 or args.dt <= 0 or args.elements < 1:
         parser.error("duration, dt, and elements must be positive")
@@ -847,39 +660,31 @@ def main():
     }
     for case in ["same-side", "opposed"] if args.case == "all" else [args.case]:
         print(f"Preparing {case}", flush=True)
-        robot, routing = build_model(case, args.elements)
+        archive = args.output / f"{case}_trajectory.npz"
         if args.render_only:
-            saved = np.load(args.output / f"{case}_trajectory.npz")
-            states = np.concatenate((saved["configuration"], saved["velocity"]), axis=1)
-            frames, _ = sample_frames(robot, routing, saved["configuration"])
-            equilibrium, _, _ = solve_equilibrium(
-                robot, routing, 0.35 * jnp.array([0.65, 0.45])
+            saved_case, saved_elements, times, states, solutions = load_trajectory(
+                archive
             )
-            static_frames, _ = sample_frames(robot, routing, equilibrium[None])
-            render(case, saved["time"], states, frames, args.output, static_frames[0])
-            continue
-        equilibrium, _, residual = solve_equilibrium(
-            robot, routing, 0.35 * jnp.array([0.65, 0.45])
-        )
-        print(
-            f"Static bending angles: {np.rad2deg(np.asarray(equilibrium))} deg; starting dynamics",
-            flush=True,
-        )
-        times, states, checks = simulate(robot, routing, case, args.duration, args.dt)
-        frames, frame_checks = sample_frames(robot, routing, states[:, :2])
-        static_frames, _ = sample_frames(robot, routing, equilibrium[None])
-        checks.update(
-            {
-                "static_configuration_rad": np.asarray(equilibrium).tolist(),
-                "static_residual_Nm": np.asarray(residual).tolist(),
-                "peak_abs_bending_angle_deg": np.rad2deg(
-                    np.max(np.abs(states[:, :2]), axis=0)
-                ).tolist(),
-                "render_max_dense_wall_violation_m": float(frame_checks[:, 1].max()),
-            }
-        )
-        if args.check_refinement:
-            fine_times, fine_states, _ = simulate(
+            if saved_case != case:
+                raise ValueError(
+                    "Saved anchor layout does not match the requested case."
+                )
+            robot, routing = build_model(case, saved_elements)
+        else:
+            robot, routing = build_model(case, args.elements)
+            times, states, solutions, checks = simulate(
+                robot, routing, case, args.duration, args.dt
+            )
+            save_trajectory(archive, case, args.elements, times, states, solutions)
+            checks["peak_abs_bending_angle_deg"] = np.rad2deg(
+                np.max(np.abs(states[:, :2]), axis=0)
+            ).tolist()
+            checks["render_max_dense_wall_violation_m"] = max(
+                float(jnp.max(span.dense_wall_violation)) for span in solutions.spans
+            )
+            report["cases"][case] = checks
+        if args.check_refinement and not args.render_only:
+            fine_times, fine_states, _, _ = simulate(
                 robot, routing, case, args.duration, args.dt / 2
             )
             if not np.allclose(times, fine_times):
@@ -907,26 +712,30 @@ def main():
             checks["mesh_doubling_max_length_gradient_error_m_per_rad"] = float(
                 jnp.max(jnp.abs(coarse_gradient - fine_gradient))
             )
-        np.savez_compressed(
-            args.output / f"{case}_trajectory.npz",
-            time=times,
-            configuration=states[:, :2],
-            velocity=states[:, 2:4],
-            input_work=states[:, 4],
-            dissipated_energy=states[:, 5],
-            tension=np.asarray(
-                jax.vmap(lambda instant, case=case: tensions_at(instant, case))(
-                    jnp.asarray(times)
-                )
-            ),
-            tendon_world=np.array([frame[2] for frame in frames]),
-            tendon_offsets=np.array([frame[4] for frame in frames]),
-            routing_diagnostics=frame_checks,
+        if not args.render_only:
+            (args.output / "report.json").write_text(
+                json.dumps(report, indent=2) + "\n"
+            )
+            print(json.dumps(checks, indent=2), flush=True)
+        backends = (
+            ["matplotlib", "opencv", "open3d", "viser"]
+            if args.backend == "all"
+            else [args.backend]
         )
-        render(case, times, states, frames, args.output, static_frames[0])
-        report["cases"][case] = checks
-        (args.output / "report.json").write_text(json.dumps(report, indent=2) + "\n")
-        print(json.dumps(checks, indent=2), flush=True)
+        for backend in backends:
+            if backend != "none":
+                render_shared(
+                    robot,
+                    routing,
+                    case,
+                    times,
+                    states,
+                    solutions,
+                    args.output,
+                    backend,
+                    video=not args.snapshot_only,
+                    port=args.port,
+                )
     print(f"Saved outputs to {args.output.resolve()}", flush=True)
 
 

@@ -76,10 +76,13 @@ jobs:
           python -m pip install ./third_party/open3d
           python -m pip install -e ".[rendering,test]"
 
-      - name: Test Open3D configuration adaptation
+      - name: Test Open3D configuration and routing
         run: |
+          python -c "import open3d"
           python -m pytest -q \
-            tests/rendering/test_renderer_config.py::test_open3d_converts_point_flux_and_applies_exposure_without_mutating
+            tests/rendering/test_renderer_config.py::test_open3d_converts_point_flux_and_applies_exposure_without_mutating \
+            tests/rendering/test_routing_visuals.py::test_open3d_scene_reuses_trajectory_solutions \
+            tests/rendering/test_routing_visuals.py::test_standalone_fixed_open3d_trajectory
 
       - name: Test headless frame and MP4 export
         run: |
@@ -133,7 +136,7 @@ jobs:
       - name: Verify patched Open3D package
         run: |
           python -c "import open3d as o3d; assert o3d.__version__.endswith('.soromox3'), o3d.__version__"
-          python -m pytest -q tests/rendering/test_renderer_config.py::test_open3d_converts_point_flux_and_applies_exposure_without_mutating
+          python -m pytest -q tests/rendering/test_renderer_config.py::test_open3d_converts_point_flux_and_applies_exposure_without_mutating tests/rendering/test_routing_visuals.py::test_open3d_scene_reuses_trajectory_solutions tests/rendering/test_routing_visuals.py::test_standalone_fixed_open3d_trajectory
 
   test:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false

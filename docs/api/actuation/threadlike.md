@@ -629,34 +629,6 @@ conservative; refine the routing mesh and wall constraint samples when actual
 penetration is excessive. Configure these through
 `PiecewiseLinearRoutingDiscretization`.
 
-First length Jacobians are analytical. Differentiation through optimized
-coefficients additionally requires a regular solution with a stable set of wall
-contacts. These derivatives can be NaN even when the forward route converges.
-When differentiating forces, retain the solution's dependence on configuration
-through `solve_routing`. The [reference paper](https://doi.org/10.1109/TRO.2026.3714660)
-describes the routing formulation and force derivatives.
-
-### Run the hollow-section example
-
-Install `soromox[examples]` and FFmpeg, then run:
-
-```bash
-OPENBLAS_NUM_THREADS=1 JAX_PLATFORMS=cpu MPLCONFIGDIR=/tmp/soromox-mpl \
-  python examples/simulation/pcs/simulate_hollow_tendon_routing.py --check-refinement
-```
-
-The example actuates two hollow planar sections, with tendons anchored at each
-section's ends. It renders resolved routing, simulates dynamics with routing
-resolved at every RK4 stage, and solves static equilibrium using Optimistix.
-The parameters are illustrative. The included cases remain clear of the wall;
-extended wall contact can still cause rejected SLSQP solves.
-
-Outputs include PNG cutaways, MP4 animations, NPZ trajectories, and a JSON report
-under `examples/simulation/pcs/figures/hollow_tendon_routing/`. Use `--case
-same-side` or `--case opposed` to select a layout, `--output` to choose a directory,
-and `--render-only` to redraw saved trajectories. `--check-refinement` compares
-a smaller time step and a finer routing mesh.
-
 ### Routing interfaces
 
 ::: soromox.actuation.ConfigurationDependentThreadlikeRouting

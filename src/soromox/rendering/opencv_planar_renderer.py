@@ -10,6 +10,11 @@ import cv2
 import numpy as np
 from jax import Array
 
+from soromox.actuation.threadlike import (
+    ConfigurationDependentThreadlikeRouting,
+    RoutingSolution,
+    ThreadlikeRouting,
+)
 from soromox.rendering.actuators import resolve_actuator_rgba
 from soromox.rendering.config import RendererConfig
 from soromox.rendering.config.camera import CameraConfig
@@ -144,6 +149,10 @@ class OpenCVPlanarRenderer(BaseOpenCVRenderer):
         camera_config: CameraConfig | None = None,
         render_actuators: bool = True,
         actuator_inputs: Array | None = None,
+        routing: ThreadlikeRouting
+        | ConfigurationDependentThreadlikeRouting
+        | None = None,
+        routing_solution: RoutingSolution | None = None,
     ) -> np.ndarray:
         """Render single configuration to BGR image array.
 
@@ -155,6 +164,10 @@ class OpenCVPlanarRenderer(BaseOpenCVRenderer):
             camera_config: Camera override; the planar pixel projection is unchanged.
             render_actuators: Whether to render actuator visual layers if available.
             actuator_inputs: Optional actuator inputs for scalar-colored layers.
+            routing: Optional fixed or configuration-dependent threadlike routing.
+            routing_solution: Existing configuration-dependent routing solution, with
+                matching batch/time axes. Omit to solve. Must be ``None`` for
+                fixed routing, which is evaluated directly.
 
         Returns:
             img (np.ndarray): BGR image of shape (height, width, 3), dtype uint8.
@@ -208,7 +221,7 @@ class OpenCVPlanarRenderer(BaseOpenCVRenderer):
                 max(1, int(width)),
             )
 
-        if render_actuators and self._has_actuator_visuals:
+        if render_actuators and (self._has_actuator_visuals or routing is not None):
             actuator_offset = (
                 np.zeros((1, 2), dtype=float)
                 if offset is None
@@ -218,6 +231,8 @@ class OpenCVPlanarRenderer(BaseOpenCVRenderer):
                 np.asarray(q).reshape(1, -1),
                 actuator_offset,
                 actuator_inputs=actuator_inputs,
+                routing=routing,
+                routing_solution=routing_solution,
             )
             for layer in actuator_layers:
                 actuator_colors = resolve_actuator_rgba(
@@ -267,6 +282,10 @@ class OpenCVPlanarRenderer(BaseOpenCVRenderer):
         camera_config: CameraConfig | None = None,
         render_actuators: bool = True,
         actuator_inputs: Array | None = None,
+        routing: ThreadlikeRouting
+        | ConfigurationDependentThreadlikeRouting
+        | None = None,
+        routing_solution: RoutingSolution | None = None,
     ) -> None:
         """Display single frame in OpenCV window.
 
@@ -278,6 +297,10 @@ class OpenCVPlanarRenderer(BaseOpenCVRenderer):
             camera_config: Camera override; the planar pixel projection is unchanged.
             render_actuators: Whether to render actuator visual layers if available.
             actuator_inputs: Optional actuator inputs for scalar-colored layers.
+            routing: Optional fixed or configuration-dependent threadlike routing.
+            routing_solution: Existing configuration-dependent routing solution, with
+                matching batch/time axes. Omit to solve. Must be ``None`` for
+                fixed routing, which is evaluated directly.
         """
         self._warn_simple_appearance(getattr(self, "_rendering_mode", "static"))
         img = self.render_frame(
@@ -287,6 +310,8 @@ class OpenCVPlanarRenderer(BaseOpenCVRenderer):
             camera_config=camera_config,
             render_actuators=render_actuators,
             actuator_inputs=actuator_inputs,
+            routing=routing,
+            routing_solution=routing_solution,
         )
         win = "Planar Renderer"
         cv2.namedWindow(win, cv2.WINDOW_NORMAL)
