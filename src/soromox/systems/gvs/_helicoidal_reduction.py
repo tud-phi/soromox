@@ -252,14 +252,15 @@ def _tip_compliance(params):
             compliance is not positive definite.
     """
     frames, lengths, connections, terminal, tip = _spans(params)
+    properties = params.strand_cross_section_properties
     E, G, area = map(
-        float, (params.young_modulus, params.shear_modulus, params.strand_area)
+        float, (params.young_modulus, params.shear_modulus, properties.area)
     )
     section = np.r_[
-        G * float(params.strand_torsion_constant),
-        E * np.asarray(params.strand_second_moments),
+        G * float(properties.torsion_constant),
+        E * np.asarray(properties.second_moments),
         E * area,
-        G * area * np.asarray(params.strand_shear_factors),
+        G * np.asarray(properties.shear_areas),
     ]
     side = np.sqrt(area)
     fusion = (

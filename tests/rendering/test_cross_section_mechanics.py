@@ -15,7 +15,7 @@ from soromox.systems import (
     LinearProfile,
     LinkSpec,
     StrainBasisSpec,
-    StrandSection,
+    StrandCrossSection,
 )
 from soromox.systems.components import CrossSectionGeometry, section_properties
 
@@ -111,17 +111,21 @@ def test_rendered_taper_matches_gvs_inertia_bending_and_damping(updated):
 
 @pytest.mark.parametrize("wall", [None, 0.001])
 def test_rectangular_strands_share_gvs_axes_and_rendered_moments(wall):
-    section = StrandSection(
+    section = StrandCrossSection(
         CrossSectionGeometry.RECTANGULAR, jnp.array([0.02, 0.06]), wall
     )
-    loops = CrossSection.from_strand_section(section).contours(12)
+    loops = CrossSection.from_strand_cross_section(section).contours(12)
     measured = polygon_properties(loops[0])
     if wall is not None:
         measured -= polygon_properties(loops[1])
     assert_allclose(np.ptp(loops[0][:, 1:], axis=0), [0.02, 0.06])
     assert_allclose(section.radial_extent, 0.01)
     assert_allclose(
-        section.mechanical_properties()["strand_second_moments"],
+        np.asarray(
+            section_properties(
+                section.geometry, section.outer_dimensions, section.inner_dimensions
+            )[1:3]
+        ),
         measured[1:3],
         rtol=1e-6,
     )

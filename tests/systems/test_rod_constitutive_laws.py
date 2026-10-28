@@ -376,3 +376,48 @@ def test_law_geometry_support_matrix_including_jit(geometry, hollow, shear, tors
 def test_torsion_choice_requires_enum():
     with pytest.raises(TypeError, match="torsion"):
         RodConstitutiveLaw(torsion="saint_venant")
+
+
+@pytest.mark.parametrize(
+    "geometry,outer",
+    [
+        (Geometry.CIRCULAR, [[0.02], [0.03]]),
+        (Geometry.RECTANGULAR, [[0.02, 0.04], [0.03, 0.05]]),
+    ],
+)
+def test_shared_properties_batch_and_jit(geometry, outer):
+    outer = jnp.array(outer)
+    inner = outer * 0.5 if geometry == Geometry.CIRCULAR else outer - 0.004
+    properties = eqx.filter_jit(
+        lambda dims: EFFECTIVE.cross_section_properties(
+            geometry, dims, inner, poisson_ratio=0.3
+        )
+    )(outer)
+    _, iy, iz, area = section_properties(geometry, outer, inner)
+    assert_allclose(properties.area, area)
+    assert_allclose(properties.second_moments, jnp.stack((iy, iz), axis=-1))
+    assert_allclose(
+        properties.shear_areas,
+        EFFECTIVE.shear_areas(geometry, outer, inner, poisson_ratio=0.3),
+    )
+    assert_allclose(
+        properties.torsion_constant, EFFECTIVE.torsion_constant(geometry, outer, inner)
+    )
+    calibrated = EFFECTIVE.cross_section_properties(
+        geometry,
+        outer,
+        inner,
+        poisson_ratio=2.0,
+        shear_factors_override=jnp.array([0.7, 0.8]),
+    )
+    assert_allclose(calibrated.shear_areas, area[:, None] * jnp.array([0.7, 0.8]))
+
+
+@pytest.mark.parametrize("factors", [[0.8], [0.8, 0], [np.nan, 0.8], [0.8, -0.2]])
+def test_shared_properties_reject_invalid_calibrated_shear(factors):
+    with pytest.raises(ValueError, match="shear_factors_override"):
+        EFFECTIVE.cross_section_properties(
+            Geometry.CIRCULAR,
+            jnp.array([0.02]),
+            shear_factors_override=jnp.array(factors),
+        )
