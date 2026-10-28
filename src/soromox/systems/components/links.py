@@ -14,8 +14,11 @@ from .cross_sections import (
     CrossSectionParams,
     LinearProfile,
     ProfileType,
+    evaluate_section_dimensions,
+    validate_section_profiles,
 )
 from .materials import shear_modulus_from_poisson_ratio
+from .rod_constitutive_laws import RodConstitutiveLaw
 
 __all__ = ["ContinuumLinkParams", "LinkSpec"]
 
@@ -244,6 +247,8 @@ class LinkSpec:
 
     Attributes:
         cross_section_geometry: Static cross-section family.
+        hollow: Whether a wall-thickness profile follows the outer dimensions.
+        constitutive_law: Static shear and torsion assumptions for GVS links.
         length: Link length.
         density: Volumetric mass density.
         reference_strain: Reference strain vector for this link.
@@ -277,8 +282,40 @@ class LinkSpec:
     material_damping_coefficient: float | None = None
     stiffness: Array | None = None
     damping: Array | None = None
+    hollow: bool = False
+    constitutive_law: RodConstitutiveLaw = RodConstitutiveLaw()
 
     def __post_init__(self) -> None:
+        if not isinstance(self.constitutive_law, RodConstitutiveLaw):
+            raise TypeError("constitutive_law must be a RodConstitutiveLaw.")
+        self.constitutive_law.validate_geometry(
+            self.cross_section_geometry, self.hollow
+        )
+        validate_section_profiles(
+            self.cross_section_geometry,
+            self.cross_section_profile_types,
+            self.cross_section_profile_parameter_counts,
+            hollow=self.hollow,
+        )
+        if len(self.cross_section_coefficients) != sum(
+            self.cross_section_profile_parameter_counts
+        ):
+            raise ValueError(
+                "Cross-section coefficients must match the profile layout."
+            )
+        if self.hollow:
+            _, inner = evaluate_section_dimensions(
+                self.cross_section_geometry,
+                jnp.asarray(self.cross_section_coefficients),
+                self.cross_section_profile_types,
+                self.cross_section_profile_parameter_counts,
+                jnp.array([0.0, 1.0]),
+                hollow=True,
+            )
+            if not bool(jnp.all(inner > 0)):
+                raise ValueError(
+                    "wall_thickness must leave a positive cavity at both link ends."
+                )
         _validate_finite_domain("length", self.length, strictly_positive=True)
         _validate_finite_domain("density", self.density, strictly_positive=True)
         _validate_finite_domain("reference_strain", self.reference_strain)
@@ -382,10 +419,15 @@ class LinkSpec:
         material_damping_coefficient: float | None,
         stiffness: Array | None,
         damping: Array | None,
+        constitutive_law: RodConstitutiveLaw,
+        wall_thickness: float | LinearProfile | None = None,
     ) -> LinkSpec:
+        if wall_thickness is not None:
+            profiles = (*profiles, ("wall_thickness", wall_thickness))
         packed = [_profile(value, name) for name, value in profiles]
         return cls(
             cross_section_geometry=geometry,
+            hollow=wall_thickness is not None,
             length=length,
             density=density,
             reference_strain=reference_strain,
@@ -405,6 +447,7 @@ class LinkSpec:
             material_damping_coefficient=material_damping_coefficient,
             stiffness=stiffness,
             damping=damping,
+            constitutive_law=constitutive_law,
         )
 
     @classmethod
@@ -421,12 +464,16 @@ class LinkSpec:
         material_damping_coefficient: float | None = None,
         stiffness: Array | None = None,
         damping: Array | None = None,
+        constitutive_law: RodConstitutiveLaw = RodConstitutiveLaw(),
+        wall_thickness: float | LinearProfile | None = None,
     ) -> LinkSpec:
-        """Create a solid circular-link specification.
+        """Create a solid or hollow circular-link specification.
 
         Args:
             length: Link length.
             radius: Constant radius or a base-to-tip linear radius profile.
+            wall_thickness: Optional uniform wall, constant or linear along the
+                link. Omit for a solid section. Must leave a positive cavity.
             density: Volumetric mass density.
             reference_strain: Reference strain vector. Spatial systems use six
                 entries and planar PCS uses three entries.
@@ -441,6 +488,10 @@ class LinkSpec:
                 both are omitted, damping is disabled.
             stiffness: Explicit generalized stiffness matrix.
             damping: Explicit generalized damping matrix.
+            constitutive_law: Static shear and torsion assumptions. Defaults
+                select uniform shear and polar-moment torsion. Hollow links
+                require effective shear areas and Saint-Venant torsion, which
+                uses Marshall for rectangles.
 
         Returns:
             A circular :class:`LinkSpec` ready for PCS or GVS construction.
@@ -464,6 +515,8 @@ class LinkSpec:
             material_damping_coefficient=material_damping_coefficient,
             stiffness=stiffness,
             damping=damping,
+            constitutive_law=constitutive_law,
+            wall_thickness=wall_thickness,
         )
 
     @classmethod
@@ -481,13 +534,17 @@ class LinkSpec:
         material_damping_coefficient: float | None = None,
         stiffness: Array | None = None,
         damping: Array | None = None,
+        constitutive_law: RodConstitutiveLaw = RodConstitutiveLaw(),
+        wall_thickness: float | LinearProfile | None = None,
     ) -> LinkSpec:
-        """Create a solid rectangular-link specification.
+        """Create a solid or hollow rectangular-link specification.
 
         Args:
             length: Link length.
-            height: Constant height or base-to-tip linear height profile.
-            width: Constant width or base-to-tip linear width profile.
+            height: Full extent along local material y, constant or linear.
+            width: Full extent along local material z, constant or linear.
+            wall_thickness: Optional uniform wall, constant or linear along the
+                link. Omit for a solid section. Must leave a positive cavity.
             density: Volumetric mass density.
             reference_strain: Reference strain vector for the link.
             young_modulus: Young's modulus used with ``shear_modulus`` to build
@@ -501,6 +558,10 @@ class LinkSpec:
                 both are omitted, damping is disabled.
             stiffness: Explicit generalized stiffness matrix.
             damping: Explicit generalized damping matrix.
+            constitutive_law: Static shear and torsion assumptions. Defaults
+                select uniform shear and polar-moment torsion. Hollow links
+                require effective shear areas and Saint-Venant torsion, which
+                uses Marshall for rectangles.
 
         Returns:
             A rectangular :class:`LinkSpec` ready for GVS construction.
@@ -524,6 +585,8 @@ class LinkSpec:
             material_damping_coefficient=material_damping_coefficient,
             stiffness=stiffness,
             damping=damping,
+            constitutive_law=constitutive_law,
+            wall_thickness=wall_thickness,
         )
 
     @classmethod
@@ -541,6 +604,7 @@ class LinkSpec:
         material_damping_coefficient: float | None = None,
         stiffness: Array | None = None,
         damping: Array | None = None,
+        constitutive_law: RodConstitutiveLaw = RodConstitutiveLaw(),
     ) -> LinkSpec:
         """Create a solid elliptical-link specification.
 
@@ -561,6 +625,10 @@ class LinkSpec:
                 both are omitted, damping is disabled.
             stiffness: Explicit generalized stiffness matrix.
             damping: Explicit generalized damping matrix.
+            constitutive_law: Static shear and torsion assumptions. Defaults
+                select uniform shear and polar-moment torsion. Hollow links
+                require effective shear areas and Saint-Venant torsion, which
+                uses Marshall for rectangles.
 
         Returns:
             An elliptical :class:`LinkSpec` ready for GVS construction.
@@ -584,4 +652,5 @@ class LinkSpec:
             material_damping_coefficient=material_damping_coefficient,
             stiffness=stiffness,
             damping=damping,
+            constitutive_law=constitutive_law,
         )

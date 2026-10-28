@@ -345,13 +345,17 @@ print(gradient.shear_modulus)
 print(gradient.material_damping_coefficient)
 ```
 
-Cached unit-response operators reduce every material evaluation to batched
-scalar-matrix combinations:
+For the default solid-link law, cached unit-response operators reduce material
+evaluation to batched scalar-matrix combinations:
 
 ```text
 K = E K_E + G K_G
 D = eta D_eta
 ```
+
+GVS links using Cowper effective shear reevaluate the operators at the supplied
+Poisson ratio, including its derivatives. Use the same material-update methods
+for all [rod constitutive laws](../api/systems/continuum-components.md#rod-constitutive-laws).
 
 The same immutable pattern applies to other numeric fields. For example,
 canonical stiffness can be differentiated directly:

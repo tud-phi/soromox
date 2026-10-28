@@ -73,7 +73,8 @@ class CrossSectionParams(BaseSystemParams):
         coefficients: Cross-section coefficients with shape
             ``(num_links, max_num_coefficients)``. Each row contains the
             coefficients required by that link's static geometry and profile
-            declarations, followed by zero padding when necessary.
+            declarations: outer dimensions followed by a wall-thickness profile
+            for hollow links, then zero padding when necessary.
     """
 
     coefficients: Array
@@ -311,3 +312,65 @@ def section_shear_factors(
     thickness = (dimensions[..., 0] - jnp.asarray(inner_dimensions)[..., 0]) / 2
     area = section_properties(geometry, dimensions, inner_dimensions)[3]
     return 2 * thickness[..., None] * dimensions / area[..., None]
+
+
+def validate_section_profiles(
+    geometry: CrossSectionGeometry | int,
+    profile_types: tuple[ProfileType, ...],
+    parameter_counts: tuple[int, ...],
+    *,
+    hollow: bool = False,
+) -> None:
+    """Validate the static layout of outer-dimension and optional wall profiles."""
+    geometry = CrossSectionGeometry(geometry)
+    if not isinstance(hollow, bool):
+        raise TypeError("hollow must be a boolean.")
+    if hollow and geometry == CrossSectionGeometry.ELLIPTICAL:
+        raise ValueError("Hollow links support circular or rectangular sections.")
+    expected = (1 if geometry == CrossSectionGeometry.CIRCULAR else 2) + int(hollow)
+    if len(profile_types) != expected or len(parameter_counts) != expected:
+        raise ValueError(f"Cross section requires {expected} dimension/wall profiles.")
+    for kind, count in zip(profile_types, parameter_counts, strict=True):
+        if kind not in ("constant", "linear") or count != (
+            1 if kind == "constant" else 2
+        ):
+            raise ValueError(
+                "Cross-section profile kinds and coefficient counts must agree."
+            )
+
+
+def evaluate_section_dimensions(
+    geometry: CrossSectionGeometry | int,
+    coefficients: Array,
+    profile_types: tuple[ProfileType, ...],
+    parameter_counts: tuple[int, ...],
+    points: Array,
+    *,
+    hollow: bool = False,
+) -> tuple[Array, Array | None]:
+    """Evaluate physical section boundaries from packed dimension profiles.
+
+    Args:
+        geometry: Cross-section family.
+        coefficients: Outer-dimension coefficients, then wall coefficients for
+            hollow sections. Each profile is constant or linear.
+        profile_types: Static profile kinds in coefficient order.
+        parameter_counts: Number of coefficients per profile.
+        points: Normalized reference coordinates in [0, 1], scalar or array.
+        hollow: Whether a wall-thickness profile follows the outer dimensions.
+
+    Returns:
+        Outer and optional inner dimension arrays, with dimensions on the last
+        axis. Solid sections return None for their inner dimensions.
+    """
+    values, start = [], 0
+    for kind, count in zip(profile_types, parameter_counts, strict=True):
+        values.append(
+            evaluate_profile(coefficients[start : start + count], kind, points)
+        )
+        start += count
+    dimensions = jnp.stack(values, axis=-1)
+    if not hollow:
+        return dimensions, None
+    outer, wall = dimensions[..., :-1], dimensions[..., -1]
+    return outer, section_inner_dimensions(geometry, outer, wall)

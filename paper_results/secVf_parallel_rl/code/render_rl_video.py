@@ -18,6 +18,11 @@ from soromox.rendering.config import (
     RenderOutputConfig,
     SceneConfig,
 )
+from soromox.systems import (
+    RodConstitutiveLaw,
+    TorsionRodModel,
+    TransverseShearRodModel,
+)
 
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/soromox_matplotlib")
 
@@ -262,6 +267,10 @@ def build_rl_robot(
     body_params = PCS.params_from_links(
         [
             LinkSpec.circular(
+                constitutive_law=RodConstitutiveLaw(
+                    transverse_shear=TransverseShearRodModel.UNIFORM,
+                    torsion=TorsionRodModel.POLAR_MOMENT,
+                ),
                 length=float(segment_length[index]),
                 radius=float(backbone_radius[index]),
                 density=float(rho[index]),

@@ -42,6 +42,21 @@ Describe the delta from the last release, not intermediate development changes.
   rectangular strands for mechanics and viewer configuration; see
   [Helicoidal](../api/systems/gvs/helicoidal.md) and
   [PR #229](https://github.com/tud-phi/soromox/pull/229).
+- Hollow circular and rectangular GVS links through `LinkSpec`'s optional
+  `wall_thickness`, with constant or linear profiles. Shared section geometry
+  drives inertia, stiffness, damping, and cavity surfaces in Open3D and Viser;
+  discrete markers remain outer proxies. Hollow links require an explicit
+  constitutive law supporting their geometry. See
+  [continuum components](../api/systems/continuum-components.md).
+- Configurable GVS `RodConstitutiveLaw` with independent `TransverseShearRodModel`
+  and `TorsionRodModel` choices. Effective shear uses
+  material-dependent Cowper factors for circles and Jourawski shear energy for
+  rectangles. Saint-Venant torsion uses Marshall for rectangular solids/tubes
+  and exact formulas for circles, annuli, and solid ellipses. Defaults preserve
+  the released uniform shear and polar-moment torsion for solids; hollow links
+  require effective shear and Saint-Venant torsion. Paper configurations select
+  the released models explicitly. See
+  [rod constitutive laws](../api/systems/continuum-components.md#rod-constitutive-laws).
 - Python 3.15 support, with numerical tests and patched Open3D source-build
   and rendering checks in Ubuntu CI.
 

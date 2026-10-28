@@ -28,7 +28,14 @@ from soromox.coordinate_transformations import (
     ActuationSpaceDynamics,
     OperationalSpaceDynamics,
 )
-from soromox.systems import PCS, LinkSpec, SystemState
+from soromox.systems import (
+    PCS,
+    LinkSpec,
+    RodConstitutiveLaw,
+    SystemState,
+    TorsionRodModel,
+    TransverseShearRodModel,
+)
 from soromox.utils.geometry.rotations import rotation_matrix_to_rotation_vector
 
 jax.config.update("jax_enable_x64", True)
@@ -81,6 +88,10 @@ def build_sec_vd_robot() -> tuple[PCS, ThreadlikeRouting, float]:
     segment_lengths = 1e-1 * jnp.ones((num_segments,))
     links = [
         LinkSpec.circular(
+            constitutive_law=RodConstitutiveLaw(
+                transverse_shear=TransverseShearRodModel.UNIFORM,
+                torsion=TorsionRodModel.POLAR_MOMENT,
+            ),
             length=float(segment_lengths[index]),
             radius=radius,
             density=1070.0,
