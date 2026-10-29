@@ -84,6 +84,25 @@ def actuator_visual_layers(
             else jnp.asarray(actuator_inputs)[start:stop]
         )
         if isinstance(actuator, ThreadlikeActuator):
+            if isinstance(
+                actuator.transmission.routing, ConfigurationDependentThreadlikeRouting
+            ):
+                resolved = _routing_visual_layers(
+                    robot, q, actuator.transmission.routing, s_points=s_points
+                )
+                layers.extend(
+                    ActuatorVisualLayer(
+                        name=f"{actuator.name}/path_{index}",
+                        kind=actuator.kind,
+                        points=layer.points,
+                        scalar_fields={}
+                        if inputs is None
+                        else {"input": inputs[index : index + 1]},
+                    )
+                    for index, layer in enumerate(resolved)
+                )
+                start = stop
+                continue
             points = jnp.stack(
                 [actuator.path_poses(robot, q, s) for s in jnp.asarray(s_points)],
                 axis=0,
@@ -119,6 +138,20 @@ def actuator_visual_layers(
 
     for element in robot.passive_elements:
         if isinstance(element, ThreadlikeImpedance):
+            if isinstance(element.routing, ConfigurationDependentThreadlikeRouting):
+                layers.extend(
+                    ActuatorVisualLayer(
+                        name=f"{element.name}/path_{index}",
+                        kind="generic",
+                        points=layer.points,
+                    )
+                    for index, layer in enumerate(
+                        _routing_visual_layers(
+                            robot, q, element.routing, s_points=s_points
+                        )
+                    )
+                )
+                continue
             points = jnp.stack(
                 [
                     robot._threadlike_path_positions(q, s, element.routing)
@@ -204,6 +237,31 @@ def vectorized_actuator_visual_layers_trajectory(
         stop = start + actuator.num_channels
         inputs = None if inputs_ts is None else inputs_ts[..., start:stop]
         if isinstance(actuator, ThreadlikeActuator):
+            if isinstance(
+                actuator.transmission.routing, ConfigurationDependentThreadlikeRouting
+            ):
+                paths = vectorize_q(
+                    lambda q, routing=actuator.transmission.routing: (
+                        _installed_routing_paths(robot, q, routing, s_points.shape[0])
+                    )
+                )
+                for index, points in enumerate(paths):
+                    if not np.all(np.isfinite(points)):
+                        raise ValueError(
+                            "Cannot render an unconverged or nonfinite routing solution."
+                        )
+                    layers.append(
+                        TrajectoryActuatorVisualLayer(
+                            name=f"{actuator.name}/path_{index}",
+                            kind=actuator.kind,
+                            points=points,
+                            scalar_fields={}
+                            if inputs is None
+                            else {"input": inputs[..., index : index + 1]},
+                        )
+                    )
+                start = stop
+                continue
 
             def threadlike_points(q, current_actuator=actuator):
                 return jax.vmap(lambda s: current_actuator.path_poses(robot, q, s))(
@@ -255,6 +313,25 @@ def vectorized_actuator_visual_layers_trajectory(
 
     for element in robot.passive_elements:
         if isinstance(element, ThreadlikeImpedance):
+            if isinstance(element.routing, ConfigurationDependentThreadlikeRouting):
+                paths = vectorize_q(
+                    lambda q, routing=element.routing: _installed_routing_paths(
+                        robot, q, routing, s_points.shape[0]
+                    )
+                )
+                for index, points in enumerate(paths):
+                    if not np.all(np.isfinite(points)):
+                        raise ValueError(
+                            "Cannot render an unconverged or nonfinite routing solution."
+                        )
+                    layers.append(
+                        TrajectoryActuatorVisualLayer(
+                            name=f"{element.name}/path_{index}",
+                            kind="generic",
+                            points=points,
+                        )
+                    )
+                continue
 
             def passive_points(q, current_element=element):
                 return jax.vmap(
@@ -365,6 +442,15 @@ def _sample_routing_paths(robot, q, routing, solution, num_points):
         )[None, ...]
         for path in range(routing.spans.num_paths)
     )
+
+
+def _installed_routing_paths(robot, q, routing, num_points):
+    """Resolve installed paths once per configuration for trajectory sampling."""
+    if num_points < 2:
+        raise ValueError("s_points must have at least two samples.")
+    solution = routing.solve_routing(robot, q)
+    paths = _sample_routing_paths(robot, q, routing, solution, num_points)
+    return tuple(jnp.where(solution.converged, points, jnp.nan) for points in paths)
 
 
 @eqx.filter_jit

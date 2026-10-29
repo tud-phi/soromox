@@ -112,6 +112,11 @@ class ShortestPathRoutingParams(BaseSystemParams):
     spans: RoutingSpanParams
     domain: CircularLumenParams
 
+    @property
+    def num_paths(self) -> int:
+        """Number of physical filaments represented by the shared guides."""
+        return self.spans.num_paths
+
     def __check_init__(self):
         """Validate parameters after construction.
 
@@ -652,7 +657,9 @@ class ShortestPathRouting(ConfigurationDependentThreadlikeRouting):
         )
         return jnp.where((fractions == 0)[:, None], entry, positions)
 
-    def path_length_jacobian(self, robot, configuration, solution: RoutingSolution):
+    def path_length_jacobian(
+        self, robot, configuration, solution: RoutingSolution | None = None
+    ):
         """Evaluate the optimal length gradient at an already solved route.
 
         The envelope identity applies because the material-frame endpoint and
@@ -673,8 +680,8 @@ class ShortestPathRouting(ConfigurationDependentThreadlikeRouting):
                 interface.
             configuration (Array): Generalized coordinates, shape
                 ``(num_coordinates,)``.
-            solution (RoutingSolution): Converged routing for this geometry and
-                configuration.
+            solution (RoutingSolution | None): Converged routing for this geometry
+                and configuration. Omission solves the route once.
 
         Returns:
             result (Array): Length Jacobian, shape ``(num_paths, num_coordinates)``.
@@ -683,6 +690,8 @@ class ShortestPathRouting(ConfigurationDependentThreadlikeRouting):
                 floating systems use quaternion configuration coordinates; to obtain
                 forces in velocity coordinates, use :meth:`path_velocity_jacobian`.
         """
+        if solution is None:
+            solution = self.solve_routing(robot, configuration)
         self.validate_structure_for_robot(robot)
         if (
             not isinstance(solution, RoutingSolution)

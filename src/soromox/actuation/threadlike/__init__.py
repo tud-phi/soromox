@@ -1,6 +1,7 @@
 """Fixed and configuration-dependent routing for threadlike actuation."""
 
 from ._solver import RoutingSolverOptions
+from .base import BaseThreadlikeRouting
 from .fixed_routing import (
     BaseThreadlikeRoutingParams,
     LinearThreadlikeRoutingParams,
@@ -32,6 +33,7 @@ from .shortest_path import (
 from .straight_span import StraightSpanRouting
 
 __all__ = [
+    "BaseThreadlikeRouting",
     "ConfigurationDependentThreadlikeRouting",
     "RoutingGuideSolution",
     "RoutingSolution",

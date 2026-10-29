@@ -1,4 +1,4 @@
-"""Fixed material-frame routing for threadlike continuum actuators."""
+"""Fixed material-frame routing and shared threadlike actuation components."""
 
 from __future__ import annotations
 
@@ -27,6 +27,10 @@ from ..friction import (
     ThreadlikeFriction,
     _validate_friction_model,
 )
+from .base import BaseThreadlikeRouting
+from .routing import RoutingSpanParams
+from .shortest_path import ShortestPathRouting, ShortestPathRoutingParams
+from .straight_span import StraightSpanRouting
 
 ThreadlikeKind = Literal["tendon", "push_rod", "muscle", "pneumatic", "generic"]
 
@@ -340,7 +344,7 @@ def linear_threadlike_routing_second_derivative(
     return jnp.zeros_like(jnp.asarray(params.slope)) * jnp.asarray(s)
 
 
-class ThreadlikeRouting(eqx.Module):
+class ThreadlikeRouting(BaseThreadlikeRouting):
     """Runtime routing object for a batched fixed material-frame path family."""
 
     params: BaseThreadlikeRoutingParams
@@ -488,11 +492,78 @@ class ThreadlikeRouting(eqx.Module):
         """Return a routing with selected parameter leaves replaced."""
         return self.with_params(self.params.replace(**updates))
 
+    def validate_structure_for_robot(self, robot: SoftRobot) -> None:
+        """Validate the fixed path topology and host hooks."""
+        _validate_routing_structure_for_robot(self, robot)
+
+    def validate_values_for_robot(self, robot: SoftRobot) -> None:
+        """Validate material offsets, including the planar restriction."""
+        _validate_routing_values_for_robot(self, robot)
+
+    def validate_friction(self, friction: ThreadlikeFriction) -> None:
+        """Validate the derivatives required by a fixed-path friction model."""
+        _validate_friction_model(friction, self)
+
+    def path_lengths(self, robot: SoftRobot, q: Array) -> Array:
+        """Return physical path lengths, independent of rigid base motion."""
+        _, internal = robot.split_configuration(q)
+        return robot._threadlike_path_lengths(internal, self)
+
+    def path_velocity_jacobian(self, robot: SoftRobot, q: Array) -> Array:
+        """Return length-rate derivatives with zero floating-base columns."""
+        _, internal = robot.split_configuration(q)
+        jacobian = robot._threadlike_path_length_jacobian(internal, self)
+        return jnp.pad(jacobian, ((0, 0), (robot.num_base_velocities, 0)))
+
+    def path_force_matrix(
+        self, robot: SoftRobot, q: Array, *, friction: ThreadlikeFriction
+    ) -> Array:
+        """Integrate length-conjugate efforts with optional fixed-path friction."""
+        self.validate_friction(friction)
+        _, internal = robot.split_configuration(q)
+        matrix = robot._threadlike_actuation_matrix(internal, self, friction=friction)
+        return jnp.pad(matrix, ((robot.num_base_velocities, 0), (0, 0)))
+
+    def path_positions(self, robot: SoftRobot, q: Array, s: Array) -> Array:
+        """Return world positions with stations clamped to each path's ends."""
+        if robot.floating_base:
+            base, q = robot.split_configuration(q)
+            robot = robot._fixed_base_robot_at_pose(base)
+        return robot._threadlike_path_positions(q, s, self)
+
+
+# Numerical parameter types supported by the built-in strategy constructors.
+ThreadlikeRoutingParameters = (
+    BaseThreadlikeRoutingParams | RoutingSpanParams | ShortestPathRoutingParams
+)
+
+
+def _normalize_routing(
+    routing: BaseThreadlikeRouting | ThreadlikeRoutingParameters,
+) -> BaseThreadlikeRouting:
+    """Keep runtime strategies or construct a built-in strategy from parameters."""
+    if isinstance(routing, BaseThreadlikeRouting):
+        return routing
+    if isinstance(routing, LinearThreadlikeRoutingParams):
+        return ThreadlikeRouting(params=routing)
+    if isinstance(routing, RoutingSpanParams):
+        return StraightSpanRouting(routing)
+    if isinstance(routing, ShortestPathRoutingParams):
+        return ShortestPathRouting(routing)
+    if isinstance(routing, BaseThreadlikeRoutingParams):
+        raise TypeError(
+            "custom routing params must be wrapped in ThreadlikeRouting with "
+            "offset_fn and derivative_fn."
+        )
+    raise TypeError(
+        "routing must be a BaseThreadlikeRouting or built-in routing parameters."
+    )
+
 
 class ThreadlikeTransmissionParams(BaseSystemParams):
     """Routing, work-coordinate scale, and friction parameters per path."""
 
-    routing: BaseThreadlikeRoutingParams
+    routing: ThreadlikeRoutingParameters
     coordinate_scale: Array
     friction: BaseThreadlikeFrictionParams = eqx.field(
         default_factory=FrictionlessParams
@@ -529,22 +600,23 @@ class ThreadlikeTransmission(Transmission):
     """Map scaled path lengths and anchor efforts to robot coordinates."""
 
     params: ThreadlikeTransmissionParams
-    routing: ThreadlikeRouting
+    routing: BaseThreadlikeRouting
     friction: ThreadlikeFriction
 
     def __init__(
         self,
         params: ThreadlikeTransmissionParams,
         *,
-        routing: ThreadlikeRouting | None = None,
+        routing: BaseThreadlikeRouting | None = None,
         friction: ThreadlikeFriction | None = None,
     ) -> None:
         """Construct a runtime transmission from matching parameter objects.
 
         Args:
             params: Nested routing, coordinate-scale, and friction parameters.
-            routing: Runtime routing functions. Linear routing is reconstructed
-                automatically when this argument is omitted.
+            routing: Runtime strategy, including any custom callbacks or solver
+                settings. Omission reconstructs the built-in strategy from its
+                parameter type using default settings.
             friction: Runtime effort-ratio law. Frictionless behavior is
                 reconstructed automatically when this argument is omitted.
         """
@@ -553,14 +625,9 @@ class ThreadlikeTransmission(Transmission):
         params.validate_for_update()
         self.params = params
         if routing is None:
-            if not isinstance(params.routing, LinearThreadlikeRoutingParams):
-                raise TypeError(
-                    "custom routing params require their matching "
-                    "ThreadlikeRouting runtime object."
-                )
-            routing = ThreadlikeRouting(params=params.routing)
+            routing = _normalize_routing(params.routing)
         else:
-            routing = routing.with_params(params.routing)
+            routing = _normalize_routing(routing).with_params(params.routing)
         self.routing = routing
         if friction is None:
             if not isinstance(params.friction, FrictionlessParams):
@@ -590,9 +657,7 @@ class ThreadlikeTransmission(Transmission):
             y_a: Work-conjugate coordinates with shape
                 ``(self.num_channels,)``.
         """
-        return self.params.coordinate_scale * robot._threadlike_path_lengths(
-            q, self.routing
-        )
+        return self.params.coordinate_scale * self.path_lengths(robot, q)
 
     def coordinate_jacobian(self, robot: SoftRobot, q: Array) -> Array:
         """Return the scaled path-coordinate Jacobian.
@@ -609,7 +674,7 @@ class ThreadlikeTransmission(Transmission):
             J_a: Coordinate Jacobian with shape
                 ``(self.num_channels, robot.num_velocities)``.
         """
-        raw_jacobian = robot._threadlike_path_length_jacobian(q, self.routing)
+        raw_jacobian = self.routing.path_velocity_jacobian(robot, q)
         return self.params.coordinate_scale[:, None] * raw_jacobian
 
     def actuation_matrix(self, robot: SoftRobot, q: Array) -> Array:
@@ -627,9 +692,7 @@ class ThreadlikeTransmission(Transmission):
             A: Actuation matrix with shape
                 ``(robot.num_velocities, self.num_channels)``.
         """
-        raw_matrix = robot._threadlike_actuation_matrix(
-            q, self.routing, friction=self.friction
-        )
+        raw_matrix = self.routing.path_force_matrix(robot, q, friction=self.friction)
         return raw_matrix * self.params.coordinate_scale[None, :]
 
     def path_lengths(self, robot: SoftRobot, q: Array) -> Array:
@@ -643,7 +706,7 @@ class ThreadlikeTransmission(Transmission):
         Returns:
             Path lengths with shape ``(self.num_channels,)``.
         """
-        return robot._threadlike_path_lengths(q, self.routing)
+        return self.routing.path_lengths(robot, q)
 
     def path_length_jacobian(self, robot: SoftRobot, q: Array) -> Array:
         """Return the unscaled physical path-length Jacobian.
@@ -659,7 +722,7 @@ class ThreadlikeTransmission(Transmission):
             J_l: Path-length Jacobian with shape
                 ``(self.num_channels, robot.num_velocities)``.
         """
-        return robot._threadlike_path_length_jacobian(q, self.routing)
+        return self.routing.path_velocity_jacobian(robot, q)
 
     def path_velocities(self, robot: SoftRobot, q: Array, qd: Array) -> Array:
         """Return unscaled physical path-length rates.
@@ -688,7 +751,7 @@ class ThreadlikeTransmission(Transmission):
             Path positions with shape ``(self.num_channels, 2)`` for planar
             hosts or ``(self.num_channels, 3)`` for spatial hosts.
         """
-        return robot._threadlike_path_positions(q, s, self.routing)
+        return self.routing.path_positions(robot, q, s)
 
     def with_params(
         self, params: ThreadlikeTransmissionParams
@@ -748,7 +811,7 @@ class ThreadlikeActuator(Actuator):
         self,
         *,
         params: ThreadlikeActuatorParams,
-        routing: ThreadlikeRouting | None = None,
+        routing: BaseThreadlikeRouting | None = None,
         friction: ThreadlikeFriction | None = None,
         labels: tuple[str, ...],
         units: str | tuple[str, ...],
@@ -781,26 +844,15 @@ class ThreadlikeActuator(Actuator):
 
     @staticmethod
     def _normalize_routing(
-        routings: ThreadlikeRouting | BaseThreadlikeRoutingParams,
-    ) -> ThreadlikeRouting:
-        """Normalize routing parameters to their runtime routing object."""
-        if isinstance(routings, ThreadlikeRouting):
-            return routings
-        if isinstance(routings, LinearThreadlikeRoutingParams):
-            return ThreadlikeRouting(params=routings)
-        if isinstance(routings, BaseThreadlikeRoutingParams):
-            raise TypeError(
-                "custom routing params must be wrapped in ThreadlikeRouting with "
-                "offset_fn and derivative_fn."
-            )
-        raise TypeError(
-            "routings must be ThreadlikeRouting or LinearThreadlikeRoutingParams."
-        )
+        routings: BaseThreadlikeRouting | ThreadlikeRoutingParameters,
+    ) -> BaseThreadlikeRouting:
+        """Normalize a routing strategy or its built-in parameters."""
+        return _normalize_routing(routings)
 
     @classmethod
     def _preset(
         cls,
-        routings: ThreadlikeRouting | BaseThreadlikeRoutingParams,
+        routings: BaseThreadlikeRouting | ThreadlikeRoutingParameters,
         *,
         coordinate_scale: Array,
         kind: ThreadlikeKind,
@@ -844,7 +896,7 @@ class ThreadlikeActuator(Actuator):
     @classmethod
     def tendons(
         cls,
-        routings: ThreadlikeRouting | BaseThreadlikeRoutingParams,
+        routings: BaseThreadlikeRouting | ThreadlikeRoutingParameters,
         *,
         labels: tuple[str, ...] | None = None,
         friction: ThreadlikeFriction | None = None,
@@ -852,7 +904,7 @@ class ThreadlikeActuator(Actuator):
         """Construct tension-only tendons with shortening-positive coordinates.
 
         Args:
-            routings: Fixed material-frame routing geometry.
+            routings: Fixed, straight-span, or shortest-path routing geometry.
             labels: Optional label for each routed path.
             friction: Optional active effort-loss model.
 
@@ -874,7 +926,7 @@ class ThreadlikeActuator(Actuator):
     @classmethod
     def push_rods(
         cls,
-        routings: ThreadlikeRouting | BaseThreadlikeRoutingParams,
+        routings: BaseThreadlikeRouting | ThreadlikeRoutingParameters,
         *,
         labels: tuple[str, ...] | None = None,
         friction: ThreadlikeFriction | None = None,
@@ -882,7 +934,7 @@ class ThreadlikeActuator(Actuator):
         """Construct compression push rods with lengthening-positive coordinates.
 
         Args:
-            routings: Fixed material-frame routing geometry.
+            routings: Fixed, straight-span, or shortest-path routing geometry.
             labels: Optional label for each routed path.
             friction: Optional active effort-loss model.
 
@@ -904,7 +956,7 @@ class ThreadlikeActuator(Actuator):
     @classmethod
     def muscles(
         cls,
-        routings: ThreadlikeRouting | BaseThreadlikeRoutingParams,
+        routings: BaseThreadlikeRouting | ThreadlikeRoutingParameters,
         *,
         labels: tuple[str, ...] | None = None,
         friction: ThreadlikeFriction | None = None,
@@ -912,7 +964,7 @@ class ThreadlikeActuator(Actuator):
         """Construct tensile muscles with shortening-positive coordinates.
 
         Args:
-            routings: Fixed material-frame routing geometry.
+            routings: Fixed, straight-span, or shortest-path routing geometry.
             labels: Optional label for each routed path.
             friction: Optional active effort-loss model.
 
@@ -934,7 +986,7 @@ class ThreadlikeActuator(Actuator):
     @classmethod
     def pressure_chambers(
         cls,
-        routings: ThreadlikeRouting | BaseThreadlikeRoutingParams,
+        routings: BaseThreadlikeRouting | ThreadlikeRoutingParameters,
         *,
         effective_areas: Array,
         labels: tuple[str, ...] | None = None,
@@ -943,7 +995,7 @@ class ThreadlikeActuator(Actuator):
         """Construct pressure chambers scaled by their effective areas.
 
         Args:
-            routings: Fixed material-frame routing geometry.
+            routings: Fixed, straight-span, or shortest-path routing geometry.
             effective_areas: Effective area of each chamber with shape
                 ``(num_paths,)``.
             labels: Optional label for each routed path.
@@ -1017,12 +1069,12 @@ class ThreadlikeActuator(Actuator):
 
     def validate_structure_for_robot(self, robot: SoftRobot) -> None:
         """Validate routing and friction structure for the host robot."""
-        _validate_routing_structure_for_robot(self.transmission.routing, robot)
-        _validate_friction_model(self.transmission.friction, self.transmission.routing)
+        self.transmission.routing.validate_structure_for_robot(robot)
+        self.transmission.routing.validate_friction(self.transmission.friction)
 
     def validate_values_for_robot(self, robot: SoftRobot) -> None:
         """Validate concrete routing and friction values for the host robot."""
-        _validate_routing_values_for_robot(self.transmission.routing, robot)
+        self.transmission.routing.validate_values_for_robot(robot)
 
     def _robot_value_validation_tree(self):
         """Return routing and friction leaves for robot-specific validation."""
@@ -1077,7 +1129,7 @@ class ThreadlikeActuator(Actuator):
 class ThreadlikeImpedanceParams(BaseSystemParams):
     """Spring-damper parameters for passive routed paths."""
 
-    routing: BaseThreadlikeRoutingParams
+    routing: ThreadlikeRoutingParameters
     stiffness: Array
     damping: Array
     rest_length: Array
@@ -1103,16 +1155,16 @@ class ThreadlikeImpedanceParams(BaseSystemParams):
 
 
 class ThreadlikeImpedance(PassiveElement):
-    """Passive spring-damper mechanics along fixed threadlike paths."""
+    """Passive spring-damper mechanics along threadlike paths."""
 
     _params: ThreadlikeImpedanceParams
-    routing: ThreadlikeRouting
+    routing: BaseThreadlikeRouting
     name: str = eqx.field(static=True)
 
     def __init__(
         self,
         *,
-        routing: ThreadlikeRouting | BaseThreadlikeRoutingParams,
+        routing: BaseThreadlikeRouting | ThreadlikeRoutingParameters,
         stiffness: Array,
         damping: Array,
         rest_length: Array,
@@ -1121,7 +1173,7 @@ class ThreadlikeImpedance(PassiveElement):
         """Construct passive spring-damper paths.
 
         Args:
-            routing: Fixed material-frame routing geometry.
+            routing: Fixed, straight-span, or shortest-path routing geometry.
             stiffness: One axial stiffness per path.
             damping: One axial damping coefficient per path.
             rest_length: One undeformed length per path.
@@ -1144,7 +1196,7 @@ class ThreadlikeImpedance(PassiveElement):
         params: ThreadlikeImpedanceParams,
         *,
         name: str,
-        routing: ThreadlikeRouting,
+        routing: BaseThreadlikeRouting,
     ) -> ThreadlikeImpedance:
         """Reconstruct an impedance while preserving its runtime routing law."""
         return cls(
@@ -1181,11 +1233,11 @@ class ThreadlikeImpedance(PassiveElement):
 
     def validate_structure_for_robot(self, robot: SoftRobot) -> None:
         """Validate routing structure for the host robot."""
-        _validate_routing_structure_for_robot(self.routing, robot)
+        self.routing.validate_structure_for_robot(robot)
 
     def validate_values_for_robot(self, robot: SoftRobot) -> None:
         """Validate concrete routing values for the host robot."""
-        _validate_routing_values_for_robot(self.routing, robot)
+        self.routing.validate_values_for_robot(robot)
 
     def _robot_value_validation_tree(self):
         """Return routing leaves used by robot-specific eager validation."""
@@ -1202,7 +1254,7 @@ class ThreadlikeImpedance(PassiveElement):
         Returns:
             Path lengths with shape ``(self.routing.num_paths,)``.
         """
-        return robot._threadlike_path_lengths(q, self.routing)
+        return self.routing.path_lengths(robot, q)
 
     def path_length_jacobian(self, robot: SoftRobot, q: Array) -> Array:
         """Return the Jacobian of passive physical path lengths.
@@ -1218,7 +1270,7 @@ class ThreadlikeImpedance(PassiveElement):
             J_l: Path-length Jacobian with shape
                 ``(self.routing.num_paths, robot.num_velocities)``.
         """
-        return robot._threadlike_path_length_jacobian(q, self.routing)
+        return self.routing.path_velocity_jacobian(robot, q)
 
     def path_velocities(self, robot: SoftRobot, q: Array, qd: Array) -> Array:
         """Return the raw length rates of the passive routed paths.
@@ -1247,7 +1299,7 @@ class ThreadlikeImpedance(PassiveElement):
             Path positions with shape ``(self.routing.num_paths, 2)`` for
             planar hosts or ``(self.routing.num_paths, 3)`` for spatial hosts.
         """
-        return robot._threadlike_path_positions(q, s, self.routing)
+        return self.routing.path_positions(robot, q, s)
 
     def elastic_force(self, robot: SoftRobot, q: Array) -> Array:
         """Return conservative generalized spring force from the paths."""

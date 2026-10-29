@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from numbers import Integral
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import equinox as eqx
 import jax
@@ -14,6 +14,10 @@ from jax import Array
 from soromox.systems.params import BaseSystemParams
 
 from ._geometry import guide_kinematics
+from .base import BaseThreadlikeRouting
+
+if TYPE_CHECKING:
+    from soromox.systems.soft_robot import SoftRobot
 
 
 def _indices(values):
@@ -396,7 +400,7 @@ def _guide_length_jvp(primals, tangents):
     return length, jnp.dot(direction, displacement_tangent)
 
 
-class ConfigurationDependentThreadlikeRouting(eqx.Module):
+class ConfigurationDependentThreadlikeRouting(BaseThreadlikeRouting):
     """Interface for configuration-dependent filament routing.
 
     A path represents one physical filament; a span is a portion between
@@ -411,6 +415,37 @@ class ConfigurationDependentThreadlikeRouting(eqx.Module):
     params: BaseSystemParams
 
     @property
+    def num_paths(self) -> int:
+        """Return the number of physical paths rather than guided spans."""
+        return self.spans.num_paths
+
+    def path_lengths(
+        self,
+        robot: SoftRobot,
+        configuration: Array,
+        solution: RoutingSolution | None = None,
+    ) -> Array:
+        """Return physical lengths, solving once if no solution is supplied.
+
+        Args:
+            robot: Host defining the route geometry.
+            configuration: Configuration with shape ``(num_coordinates,)``.
+            solution: Optional resolved route for these exact inputs. Keep its
+                configuration dependence when differentiating this call.
+
+        Returns:
+            result (Array): Lengths in metres with shape ``(num_paths,)``. Paths
+                containing failed spans return NaN. Use ``solve_routing`` to
+                inspect diagnostics and provide explicit warm starts.
+        """
+        if solution is None:
+            solution = self.solve_routing(robot, configuration)
+        accepted = jnp.ones(self.num_paths, dtype=bool)
+        for path, span in zip(self.spans.span_path_index, solution.spans):
+            accepted = accepted.at[path].set(accepted[path] & span.converged)
+        return jnp.where(accepted, solution.path_lengths, jnp.nan)
+
+    @property
     @abstractmethod
     def spans(self) -> RoutingSpanParams:
         """Return shared endpoints and connectivity.
@@ -422,26 +457,28 @@ class ConfigurationDependentThreadlikeRouting(eqx.Module):
         ...
 
     @abstractmethod
-    def path_length_jacobian(self, robot, configuration, solution):
+    def path_length_jacobian(self, robot, configuration, solution=None):
         """Evaluate the analytical length derivative at a resolved route.
 
         Args:
             robot (SoftRobot): Host supplying guide and material kinematics.
             configuration (Array): Host configuration, shape ``(num_coordinates,)``.
-            solution (RoutingSolution): Solution for this routing and configuration.
+            solution (RoutingSolution | None): Solution for this routing and configuration;
+                omission resolves the route once.
 
         Returns:
             result (Array): Length Jacobian, shape ``(num_paths, num_coordinates)``.
         """
         ...
 
-    def path_velocity_jacobian(self, robot, configuration, solution):
+    def path_velocity_jacobian(self, robot, configuration, solution=None):
         """Map host velocities to path length rates.
 
         Args:
             robot (SoftRobot): Host supplying base coordinate and velocity dimensions.
             configuration (Array): Configuration, shape ``(num_coordinates,)``.
-            solution (RoutingSolution): Solution at this configuration.
+            solution (RoutingSolution | None): Solution at this configuration;
+                omitted solutions are computed once for this call.
 
         Returns:
             result (Array): Jacobian, shape ``(num_paths, num_velocities)``. Positive
@@ -452,6 +489,53 @@ class ConfigurationDependentThreadlikeRouting(eqx.Module):
             jacobian[:, robot.num_base_coordinates :],
             ((0, 0), (robot.num_base_velocities, 0)),
         )
+
+    def path_positions(
+        self,
+        robot: SoftRobot,
+        q: Array,
+        s: Array,
+        solution: RoutingSolution | None = None,
+    ) -> Array:
+        """Return one world position per path at a reference backbone station.
+
+        Args:
+            robot: Host supplying kinematics and segment lengths.
+            q: Configuration with shape ``(num_coordinates,)``.
+            s: Scalar reference backbone station in metres.
+            solution: Optional solution for these exact inputs.
+
+        Returns:
+            result (Array): Positions with shape ``(num_paths, 2 or 3)`` in
+                metres. Stations clamp to path endpoints. Within a straight
+                span they interpolate along its chord; optimized spans use
+                their material offsets. At shared boundaries the upstream span
+                is selected. Explicit span sampling includes both sides of a
+                moving joint's guide connection.
+        """
+        if solution is None:
+            solution = self.solve_routing(robot, q)
+        dimension = 2 if robot.is_planar else 3
+        if not self.num_paths:
+            return jnp.zeros((0, dimension), dtype=jnp.asarray(q).dtype)
+        boundaries = jnp.concatenate((jnp.zeros(1), jnp.cumsum(robot.segment_length)))
+        paths = []
+        for path in range(self.num_paths):
+            indices = tuple(
+                index
+                for index, item in enumerate(self.spans.span_path_index)
+                if item == path
+            )
+            point = jnp.zeros(3)
+            # Earlier spans overwrite later ones at their shared boundary.
+            for index in reversed(indices):
+                start = boundaries[self.spans.start_segment_index[index]]
+                end = boundaries[self.spans.end_segment_index[index] + 1]
+                fraction = jnp.clip((s - start) / (end - start), 0.0, 1.0)
+                candidate = self.span_positions(robot, q, solution, index, fraction)[0]
+                point = jnp.where((s <= end) | (index == indices[-1]), candidate, point)
+            paths.append(point[:dimension])
+        return jnp.stack(paths)
 
     @abstractmethod
     def span_positions(self, robot, configuration, solution, span_index, fractions):

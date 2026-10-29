@@ -137,19 +137,22 @@ class StraightSpanRouting(ConfigurationDependentThreadlikeRouting):
             ),
         )
 
-    def path_length_jacobian(self, robot, configuration, solution):
+    def path_length_jacobian(self, robot, configuration, solution=None):
         """Return the analytical derivative of a resolved path family.
 
         Args:
             robot (SoftRobot): Host supplying joint guide kinematics.
             configuration (Array): Configuration matching the solution.
-            solution (RoutingSolution): Result returned by this strategy.
+            solution (RoutingSolution | None): Result returned by this strategy.
+                Omission solves the route once.
 
         Returns:
             result (Array): Jacobian, shape ``(num_paths, num_coordinates)``, with
                 zero base columns. Invalid spans or collapsed moving connections
                 yield NaNs.
         """
+        if solution is None:
+            solution = self.solve_routing(robot, configuration)
         self.validate_structure_for_robot(robot)
         if (
             not isinstance(solution, RoutingSolution)
@@ -220,6 +223,11 @@ class StraightSpanRouting(ConfigurationDependentThreadlikeRouting):
             )
         solution = self.solve_routing(robot, configuration, backend="jax")
         return -self.path_velocity_jacobian(robot, configuration, solution).T
+
+    def path_force_matrix(self, robot, q, *, friction):
+        """Return the unsigned effort map using the selected straight-span backend."""
+        self.validate_friction(friction)
+        return -self.actuation_matrix(robot, q)
 
     def actuation_force(self, robot, configuration, tensions, *, backend=None):
         """Evaluate tendon forces directly without reconstructing world geometry.
