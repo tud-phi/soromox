@@ -44,7 +44,6 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python }}
-          allow-prereleases: ${{ matrix.python == '3.15' }}
           cache: pip
 
       - name: Install Open3D build, graphics, display, and video dependencies
@@ -80,6 +79,7 @@ jobs:
         run: |
           python -c "import open3d"
           python -m pytest -q \
+            tests/third_party/test_open3d_build_backend.py \
             tests/rendering/test_renderer_config.py::test_open3d_converts_point_flux_and_applies_exposure_without_mutating \
             tests/rendering/test_routing_visuals.py::test_open3d_scene_reuses_trajectory_solutions \
             tests/rendering/test_routing_visuals.py::test_standalone_fixed_open3d_trajectory
@@ -100,6 +100,19 @@ jobs:
             tests/rendering/test_open3d_linux_integration.py::test_open3d_show_opens_and_closes_real_xvfb_window \
             tests/rendering/test_open3d_linux_integration.py::test_open3d_unavailable_display_raises_with_native_log \
             tests/rendering/test_open3d_linux_integration.py::test_open3d_interactive_sequence_advances_in_real_xvfb_window
+
+      # Open3D has no Python 3.15 wheels; reuse the patched source build here.
+      - name: Install Python 3.15 paper-results dependencies
+        if: matrix.python == '3.15'
+        run: |
+          python -m pip install -e ".[paper_results]"
+          python -m pip check
+
+      - name: Run Python 3.15 paper-results tests
+        if: matrix.python == '3.15'
+        env:
+          MPLBACKEND: Agg
+        run: python -m pytest tests/paper_results -m "not memory_intensive"
 
   rendering-windows:
     name: Native rendering build (Windows, Python 3.12)
@@ -157,7 +170,6 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python }}
-          allow-prereleases: ${{ matrix.python == '3.15' }}
           cache: pip
 
       - name: Install graphics and video runtimes for paper-results tests
@@ -173,7 +185,7 @@ jobs:
       - name: Run non-system tests
         run: python -m pytest --ignore=tests/systems --ignore=tests/paper_results -m "not memory_intensive"
 
-      # The full paper_results extra requires PyTorch, which has no Python 3.15 wheels.
+      # Python 3.15 paper-results tests run in rendering-ubuntu, reusing built Open3D.
       - name: Install paper-results dependencies
         if: matrix.python != '3.15'
         run: |

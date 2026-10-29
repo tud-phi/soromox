@@ -53,7 +53,8 @@ Describe the delta from the last release, not intermediate development changes.
 - Shared PCS/GVS dynamics support full sectional and tip inertia in JAX and Warp;
   see [PR #229](https://github.com/tud-phi/soromox/pull/229).
 - Refreshed the numerical and rendering dependency lock for Python 3.15,
-  including compatible Viser and `rpds-py` releases.
+  including compatible Viser, `rpds-py`, Matplotlib, `msgspec`, Numba, and
+  llvmlite releases.
 
 ### Performance
 
