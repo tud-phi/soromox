@@ -38,6 +38,7 @@ from .mckibben import (
     ArticulatedMcKibbenTransmissionParams,
 )
 from .threadlike import (
+    BaseThreadlikeRouting,
     BaseThreadlikeRoutingParams,
     CircularLumenParams,
     ConfigurationDependentThreadlikeRouting,
@@ -65,6 +66,7 @@ from .threadlike import (
 )
 
 __all__ = [
+    "BaseThreadlikeRouting",
     "CircularLumenParams",
     "ConfigurationDependentThreadlikeRouting",
     "PiecewiseLinearRoutingDiscretization",

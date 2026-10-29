@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -28,6 +30,9 @@ from .routing import (
     RoutingSpanParams,
     RoutingSpanSolution,
 )
+
+if TYPE_CHECKING:
+    from soromox.systems.soft_robot import SoftRobot
 
 
 class CircularLumenParams(BaseSystemParams):
@@ -111,6 +116,15 @@ class ShortestPathRoutingParams(BaseSystemParams):
 
     spans: RoutingSpanParams
     domain: CircularLumenParams
+
+    @property
+    def num_paths(self) -> int:
+        """Return the number of physical filaments represented by the guides.
+
+        Returns:
+            Number of paths, each corresponding to one actuator channel.
+        """
+        return self.spans.num_paths
 
     def __check_init__(self):
         """Validate parameters after construction.
@@ -612,6 +626,78 @@ class ShortestPathRouting(ConfigurationDependentThreadlikeRouting):
             "pin,n->pi", basis, span.coefficients.ravel()
         )
 
+    def _selected_span_positions(
+        self,
+        robot: SoftRobot,
+        q: Array,
+        solution: RoutingSolution,
+        span_indices: Array,
+        fractions: Array,
+    ) -> Array:
+        """Evaluate gathered span offsets and batch only the selected kinematics.
+
+        Args:
+            robot (SoftRobot): Continuum host supplying batched kinematics.
+            q (Array): Configuration with shape ``(robot.num_coordinates,)``.
+            solution (RoutingSolution): Resolved spans, possibly with unequal meshes.
+            span_indices (Array): Selected span per path, shape ``(num_paths,)``.
+            fractions (Array): Backbone fractions with shape ``(num_paths,)``.
+
+        Returns:
+            result (Array): World positions in metres, shape ``(num_paths, 3)``.
+                Entry samples use the downstream side of their prescribed joint.
+        """
+        nodes = max(span.knots.size for span in solution.spans)
+        # Pack heterogeneous meshes, then gather before evaluating any offsets
+        # or world kinematics. Repeated final knots give zero-width padding.
+        knots = jnp.stack(
+            [
+                jnp.pad(span.knots, (0, nodes - span.knots.size), mode="edge")
+                for span in solution.spans
+            ]
+        )[span_indices]
+        slopes = jnp.stack(
+            [
+                jnp.pad(span.coefficients, ((0, nodes - span.knots.size), (0, 0)))
+                for span in solution.spans
+            ]
+        )[span_indices]
+        points = knots[:, 0] + fractions * (knots[:, -1] - knots[:, 0])
+        widths = jnp.diff(knots, axis=1)
+        local = jnp.clip(
+            (points[:, None] - knots[:, :-1]) / jnp.where(widths > 0, widths, 1.0),
+            0.0,
+            1.0,
+        )
+        # Exact integral of the piecewise linear transverse slope on each cell.
+        transverse = jnp.sum(
+            widths[..., None]
+            * (
+                local[..., None] * slopes[:, :-1]
+                + 0.5 * local[..., None] ** 2 * jnp.diff(slopes, axis=1)
+            ),
+            axis=1,
+        )
+        start_offsets = self.spans.start_offset[span_indices]
+        offsets = start_offsets + jnp.pad(
+            transverse, ((0, 0), (1, 2 - slopes.shape[-1]))
+        )
+        # Joint transforms use static segment indices. Reuse each transform
+        # across guides; link kinematics are evaluated once for the selected batch.
+        joints = {
+            segment: robot.joint_kinematics(q, segment)[0]
+            if segment > 0
+            else jnp.eye(4)
+            for segment in dict.fromkeys(self.spans.start_segment_index)
+        }
+        entry_joints = jnp.stack(
+            [joints[segment] for segment in self.spans.start_segment_index]
+        )[span_indices]
+        entry_offsets = jax.vmap(transform_point)(entry_joints, start_offsets)
+        offsets = jnp.where((fractions == 0)[:, None], entry_offsets, offsets)
+        poses = robot.forward_kinematics_abscissa_batched(q, points)
+        return jax.vmap(transform_point)(poses, offsets)
+
     def span_positions(self, robot, configuration, solution, span_index, fractions):
         """Sample an optimized span in world coordinates.
 
@@ -652,7 +738,9 @@ class ShortestPathRouting(ConfigurationDependentThreadlikeRouting):
         )
         return jnp.where((fractions == 0)[:, None], entry, positions)
 
-    def path_length_jacobian(self, robot, configuration, solution: RoutingSolution):
+    def path_length_jacobian(
+        self, robot, configuration, solution: RoutingSolution | None = None
+    ):
         """Evaluate the optimal length gradient at an already solved route.
 
         The envelope identity applies because the material-frame endpoint and
@@ -673,8 +761,8 @@ class ShortestPathRouting(ConfigurationDependentThreadlikeRouting):
                 interface.
             configuration (Array): Generalized coordinates, shape
                 ``(num_coordinates,)``.
-            solution (RoutingSolution): Converged routing for this geometry and
-                configuration.
+            solution (RoutingSolution | None): Converged routing for this geometry
+                and configuration. Omission solves the route once.
 
         Returns:
             result (Array): Length Jacobian, shape ``(num_paths, num_coordinates)``.
@@ -683,6 +771,8 @@ class ShortestPathRouting(ConfigurationDependentThreadlikeRouting):
                 floating systems use quaternion configuration coordinates; to obtain
                 forces in velocity coordinates, use :meth:`path_velocity_jacobian`.
         """
+        if solution is None:
+            solution = self.solve_routing(robot, configuration)
         self.validate_structure_for_robot(robot)
         if (
             not isinstance(solution, RoutingSolution)

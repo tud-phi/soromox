@@ -744,3 +744,42 @@ def test_standalone_fixed_open3d_trajectory(robot, monkeypatch):
     )
 
     assert_allclose(scene.actuator_layers[0].points[..., 2], 0.0)
+
+
+def test_installed_resolved_paths_keep_guides_inputs_and_trajectory_axes(
+    robot, case, monkeypatch
+):
+    routing, q, solution = case
+    actuator = ThreadlikeActuator.tendons(routing)
+    robot = PlanarPCS(
+        robot.params,
+        PlanarPCSStructure(num_gauss_points=5),
+        base_pose=robot.fixed_base_pose,
+        actuators=actuator,
+        backend="jax",
+    )
+    stations = jnp.linspace(0, robot.length, 5)
+    inputs = jnp.array([0.2, 0.4])
+    solve = Mock(return_value=solution)
+    monkeypatch.setattr(visual_adapter, "_solve_visual_routing", solve)
+    layers = actuator_visual_layers(robot, q, stations, actuator_inputs=inputs)
+    solve.assert_called_once_with(robot, q, actuator.transmission.routing)
+    assert [layer.name for layer in layers] == ["tendons/path_0", "tendons/path_1"]
+    assert [layer.points.shape for layer in layers] == [(1, 10, 3), (1, 5, 3)]
+    for index, layer in enumerate(layers):
+        assert layer.kind == "tendon"
+        assert_allclose(layer.scalar_fields["input"], inputs[index : index + 1])
+    paths = visual_adapter.vectorized_actuator_visual_layers_trajectory(
+        robot,
+        jnp.stack([q, q / 2])[None],
+        stations,
+        actuator_inputs=jnp.stack([inputs, inputs / 2]),
+    )
+    for index, (path, layer) in enumerate(zip(paths, layers, strict=True)):
+        assert path.points.shape == (1, 2, *layer.points.shape)
+        assert_allclose(path.points[0, 0], layer.points, atol=1e-10)
+        assert_allclose(
+            path.scalar_fields["input"][0, :, 0], [inputs[index], inputs[index] / 2]
+        )
+        expected = actuator.path_poses(robot, q, jnp.array(0.05))[index]
+        assert_allclose(expected, layer.points[0, 2, :2], atol=1e-10)

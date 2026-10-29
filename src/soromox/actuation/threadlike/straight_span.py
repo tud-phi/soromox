@@ -1,7 +1,12 @@
 """Closed-form routing between prescribed guides without wall contact."""
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 import jax
 import jax.numpy as jnp
+from jax import Array
 
 from soromox.systems.params import _contains_tracer
 from soromox.utils.geometry.poses import segment_boundary_poses
@@ -14,6 +19,10 @@ from .routing import (
     StraightSpanSolution,
     _guide_length,
 )
+
+if TYPE_CHECKING:
+    from soromox.actuation.friction import ThreadlikeFriction
+    from soromox.systems.soft_robot import SoftRobot
 
 
 class StraightSpanRouting(ConfigurationDependentThreadlikeRouting):
@@ -137,19 +146,22 @@ class StraightSpanRouting(ConfigurationDependentThreadlikeRouting):
             ),
         )
 
-    def path_length_jacobian(self, robot, configuration, solution):
+    def path_length_jacobian(self, robot, configuration, solution=None):
         """Return the analytical derivative of a resolved path family.
 
         Args:
             robot (SoftRobot): Host supplying joint guide kinematics.
             configuration (Array): Configuration matching the solution.
-            solution (RoutingSolution): Result returned by this strategy.
+            solution (RoutingSolution | None): Result returned by this strategy.
+                Omission solves the route once.
 
         Returns:
             result (Array): Jacobian, shape ``(num_paths, num_coordinates)``, with
                 zero base columns. Invalid spans or collapsed moving connections
                 yield NaNs.
         """
+        if solution is None:
+            solution = self.solve_routing(robot, configuration)
         self.validate_structure_for_robot(robot)
         if (
             not isinstance(solution, RoutingSolution)
@@ -221,6 +233,26 @@ class StraightSpanRouting(ConfigurationDependentThreadlikeRouting):
         solution = self.solve_routing(robot, configuration, backend="jax")
         return -self.path_velocity_jacobian(robot, configuration, solution).T
 
+    def path_force_matrix(
+        self, robot: SoftRobot, q: Array, *, friction: ThreadlikeFriction
+    ) -> Array:
+        """Return the length-conjugate effort map using the selected backend.
+
+        Args:
+            robot (SoftRobot): Continuum host receiving generalized forces.
+            q (Array): Configuration with shape ``(robot.num_coordinates,)``.
+            friction (ThreadlikeFriction): Frictionless runtime transmission model.
+
+        Returns:
+            result (Array): Force map with shape ``(robot.num_velocities, num_paths)``
+                before applying actuator signs and scales.
+
+        Raises:
+            ValueError: The supplied friction model is not frictionless.
+        """
+        self.validate_friction(friction)
+        return -self.actuation_matrix(robot, q)
+
     def actuation_force(self, robot, configuration, tensions, *, backend=None):
         """Evaluate tendon forces directly without reconstructing world geometry.
 
@@ -249,6 +281,33 @@ class StraightSpanRouting(ConfigurationDependentThreadlikeRouting):
                 self, robot, configuration, tensions, "force"
             )
         return self.actuation_matrix(robot, configuration, backend="jax") @ tensions
+
+    def _selected_span_positions(
+        self,
+        robot: SoftRobot,
+        q: Array,
+        solution: RoutingSolution,
+        span_indices: Array,
+        fractions: Array,
+    ) -> Array:
+        """Interpolate the gathered endpoints of one selected span per path.
+
+        Args:
+            robot (SoftRobot): Unused host associated with the solution.
+            q (Array): Unused configuration associated with the solution.
+            solution (RoutingSolution): Resolved world endpoints for all spans.
+            span_indices (Array): Selected span per path, shape ``(num_paths,)``.
+            fractions (Array): Interpolation fractions with shape ``(num_paths,)``.
+
+        Returns:
+            result (Array): World positions in metres, shape ``(num_paths, 3)``.
+        """
+        del robot, q
+        starts = jnp.stack([span.start_position for span in solution.spans])[
+            span_indices
+        ]
+        ends = jnp.stack([span.end_position for span in solution.spans])[span_indices]
+        return starts + fractions[:, None] * (ends - starts)
 
     def span_positions(self, robot, configuration, solution, span_index, fractions):
         """Interpolate a straight span in world coordinates.
