@@ -89,7 +89,7 @@ class _AnimatingSpatialRobot:
 
     def cross_section_geometry(self, q, s):
         del q, s
-        return CrossSectionGeometry.CIRCULAR, jnp.array([0.05])
+        return (CrossSectionGeometry.CIRCULAR, jnp.array([0.05]), None)
 
 
 class _DiscontinuousTwoLinkRobot(_AnimatingSpatialRobot):
@@ -108,7 +108,7 @@ class _DiscontinuousTwoLinkRobot(_AnimatingSpatialRobot):
             jnp.array([0.2, 0.4]),
             jnp.array([0.05, 0.05]),
         )
-        return geometry, dimensions
+        return (geometry, dimensions, None)
 
 
 class FakeOpen3DVisualizer:
@@ -188,8 +188,8 @@ def test_swept_circular_contours_follow_material_frame_not_curve_chord():
             CrossSectionGeometry.RECTANGULAR,
             [0.4, 0.2],
             [0.2, 0.1],
-            [0.2, 0.4],
-            [0.1, 0.2],
+            [0.4, 0.2],
+            [0.2, 0.1],
         ),
     ],
 )
@@ -212,7 +212,8 @@ def test_open3d_swept_segment_uses_varying_endpoint_contours(
     assert_allclose(np.ptp(vertices[8:16, 1:], axis=0), tip_spans)
 
 
-def test_open3d_cached_swept_geometry_preserves_tapered_endpoint_sections():
+@pytest.mark.parametrize("hollow", [False, True])
+def test_open3d_cached_swept_geometry_preserves_tapered_endpoint_sections(hollow):
     renderer = Open3DRenderer(
         _AnimatingSpatialRobot(),
         config=RendererConfig(
@@ -223,8 +224,16 @@ def test_open3d_cached_swept_geometry_preserves_tapered_endpoint_sections():
     curve = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
     material_frames = np.broadcast_to(np.eye(3), (2, 3, 3)).copy()
     sections = (
-        CrossSection(CrossSectionGeometry.ELLIPTICAL, np.array([0.3, 0.1])),
-        CrossSection(CrossSectionGeometry.ELLIPTICAL, np.array([0.15, 0.05])),
+        CrossSection(
+            CrossSectionGeometry.ELLIPTICAL,
+            np.array([0.3, 0.1]),
+            [0.2, 0.06] if hollow else None,
+        ),
+        CrossSection(
+            CrossSectionGeometry.ELLIPTICAL,
+            np.array([0.15, 0.05]),
+            [0.1, 0.03] if hollow else None,
+        ),
     )
 
     _, mesh_groups = renderer._build_robot_geometry(
@@ -239,6 +248,8 @@ def test_open3d_cached_swept_geometry_preserves_tapered_endpoint_sections():
 
     cached = mesh_groups[0][0]
     vertices = np.asarray(cached.mesh.vertices)
+    before = vertices.copy()
+    assert cached.swept_contours[0].shape == (2 if hollow else 1, 8, 3)
     assert_allclose(np.ptp(vertices[:8, 1:], axis=0), [0.6, 0.2])
     assert_allclose(np.ptp(vertices[8:16, 1:], axis=0), [0.3, 0.1])
 
@@ -251,6 +262,7 @@ def test_open3d_cached_swept_geometry_preserves_tapered_endpoint_sections():
         material_frames[1],
     )
     updated_vertices = np.asarray(cached.mesh.vertices)
+    assert_allclose(updated_vertices, before + [0, 1, 0])
     assert_allclose(np.ptp(updated_vertices[:8, 1:], axis=0), [0.6, 0.2])
     assert_allclose(np.ptp(updated_vertices[8:16, 1:], axis=0), [0.3, 0.1])
 
@@ -269,7 +281,7 @@ def test_open3d_discrete_marker_uses_shared_rectangular_box_specification():
     )
 
     assert primitive == "box"
-    assert_allclose(scale, [0.6, 0.2, 0.6])
+    assert_allclose(scale, [0.2, 0.6, 0.6])
     assert not dynamic_length
     assert aligned
 
@@ -399,6 +411,129 @@ def test_modern_swept_normals_only_join_matching_contours(continuous):
     assert_allclose(np.asarray(right.vertex_colors)[0], (0, 0, 1))
 
 
+@pytest.mark.parametrize("inner_right", [0.07, 0.06, None])
+def test_hollow_normals_and_caps_require_matching_cavities(inner_right):
+    resolution = 12
+    first = CrossSection(CrossSectionGeometry.CIRCULAR, [0.1], [0.07])
+    second = CrossSection(
+        CrossSectionGeometry.CIRCULAR,
+        [0.1],
+        None if inner_right is None else [inner_right],
+    )
+    meshes = [
+        _make_swept_cross_section_segment(
+            np.array([i * 0.5, 0, 0]),
+            np.array([(i + 1) * 0.5, 0, 0]),
+            np.eye(3),
+            np.eye(3),
+            section,
+            section,
+            (1, 0, 0),
+            resolution,
+            cap_start=True,
+            cap_end=True,
+        )
+        for i, section in enumerate((first, second))
+    ]
+    old_faces = [np.asarray(m.triangles).copy() for m in meshes]
+    _smooth_swept_meshes(meshes, resolution, 1e-7, [2, 1 if inner_right is None else 2])
+    if inner_right != 0.07:
+        for mesh, faces in zip(meshes, old_faces):
+            assert_array_equal(mesh.triangles, faces)
+        return
+    for mesh in meshes:
+        assert len(mesh.triangles) == 6 * resolution
+    assert_allclose(
+        np.asarray(meshes[0].vertex_normals)[3 * resolution : 4 * resolution],
+        np.asarray(meshes[1].vertex_normals)[2 * resolution : 3 * resolution],
+    )
+    normals = np.asarray(meshes[0].vertex_normals)
+    vertices = np.asarray(meshes[0].vertices)
+    assert np.all(
+        np.sum(
+            normals[3 * resolution : 4 * resolution, 1:]
+            * vertices[3 * resolution : 4 * resolution, 1:],
+            axis=1,
+        )
+        < 0
+    )
+
+
+def test_general_open3d_scene_keeps_cavity_walls_through_smoothing():
+    class HollowRobot(_AnimatingSpatialRobot):
+        def cross_section_geometry(self, q, s):
+            geometry, outer, _ = super().cross_section_geometry(q, s)
+            return geometry, outer, jnp.array([0.03])
+
+    renderer = Open3DRenderer(
+        HollowRobot(),
+        config=RendererConfig(
+            geometry=GeometryConfig(num_points=4, cross_section_resolution=8),
+            scene=SceneConfig(ground=GroundPlaneConfig(visible=False)),
+        ),
+    )
+    curves, frames = renderer.compute_backbone_curves_and_frames_batched(
+        jnp.zeros((1, 3)), jnp.zeros((1, 3))
+    )
+    data = open3d_renderer_module.SceneData(
+        curves=np.asarray(curves)[:, None],
+        material_frames=np.asarray(frames)[:, None],
+        q_ts=np.zeros((1, 1, 3)),
+        ts=np.zeros(1),
+        layout=renderer._compute_segment_layout(4),
+        segment_colors_rgba=np.ones((1, 1, 4)),
+    )
+    scene = Mock()
+    renderer._populate_rendering_scene(scene, data, frame_idx=0)
+    body = next(
+        call.args[1]
+        for call in scene.add_geometry.call_args_list
+        if call.args[0].startswith("body_")
+    )
+    assert len(body.triangles) == 3 * 4 * 8 + 2 * 8
+    assert len(body.vertices) == 3 * 4 * 8
+    radial = np.linalg.norm(np.asarray(body.vertices)[:, 1:], axis=1)
+    assert_allclose(radial.min(), 0.03)
+    assert_allclose(radial.max(), 0.05)
+
+
+def test_modern_scene_initializes_missing_texture_coordinates():
+    renderer = Open3DRenderer(
+        _AnimatingSpatialRobot(),
+        config=RendererConfig(
+            geometry=GeometryConfig(num_points=4, cross_section_resolution=8),
+            scene=SceneConfig(ground=GroundPlaneConfig(visible=False)),
+        ),
+    )
+    curves, frames = renderer.compute_backbone_curves_and_frames_batched(
+        jnp.zeros((1, 3)), jnp.zeros((1, 3))
+    )
+    data = open3d_renderer_module.SceneData(
+        curves=np.asarray(curves)[:, None],
+        material_frames=np.asarray(frames)[:, None],
+        q_ts=np.zeros((1, 1, 3)),
+        ts=np.zeros(1),
+        layout=renderer._compute_segment_layout(4),
+        segment_colors_rgba=np.ones((1, 1, 4)),
+    )
+    scene = Mock()
+    renderer._populate_rendering_scene(scene, data, frame_idx=0)
+    assert scene.add_geometry.call_count > 0
+    for call in scene.add_geometry.call_args_list:
+        mesh = call.args[1]
+        assert mesh.has_triangle_uvs()
+        assert_array_equal(np.asarray(mesh.triangle_uvs), 0.0)
+
+
+def test_modern_mesh_preparation_preserves_existing_texture_coordinates():
+    o3d = open3d_renderer_module.o3d
+    mesh = o3d.geometry.TriangleMesh.create_box()
+    uvs = np.linspace(0, 1, 6 * len(mesh.triangles)).reshape(-1, 2)
+    mesh.triangle_uvs = o3d.utility.Vector2dVector(uvs)
+    open3d_renderer_module._initialize_missing_triangle_uvs(mesh)
+    assert_array_equal(np.asarray(mesh.triangle_uvs), uvs)
+
+
 @pytest.mark.parametrize("count", [0, 1, 3])
 def test_swept_normal_batch_preserves_exterior_caps(count):
     """Join a chain in one batch without removing its two exterior caps."""
@@ -449,8 +584,8 @@ def test_swept_segment_applies_each_endpoint_material_frame():
         p0, p1, frame0, frame1, section0, section1, resolution=8
     )
 
-    assert_allclose(vertices[:8], p0 + section0.contour(8) @ frame0.T, atol=1e-12)
-    assert_allclose(vertices[8:], p1 + section1.contour(8) @ frame1.T, atol=1e-12)
+    assert_allclose(vertices[:8], p0 + section0.contours(8)[0] @ frame0.T, atol=1e-12)
+    assert_allclose(vertices[8:], p1 + section1.contours(8)[0] @ frame1.T, atol=1e-12)
 
 
 def test_swept_segment_terminal_cap_closes_tip_with_outward_faces():

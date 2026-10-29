@@ -401,11 +401,13 @@ class ArticulatedSoftRobot(SoftRobot):
         s_local = s - L_cum[link_idx]
         return link_idx, s_local
 
-    def cross_section_geometry(self, q: Array, s: Array) -> tuple[Array, Array]:
+    def cross_section_geometry(
+        self, q: Array, s: Array
+    ) -> tuple[Array, Array, Array | None]:
         """Return circular cross-section metadata for visualization."""
         link_idx, _ = self.classify_segment(s)
         tag = jnp.asarray(CrossSectionGeometry.CIRCULAR, dtype=jnp.int32)
-        return tag, jnp.array([self.r[link_idx]])
+        return (tag, jnp.array([self.r[link_idx]]), None)
 
     @eqx.filter_jit
     def forward_kinematics_joints(self, q: Array) -> Array:

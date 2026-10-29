@@ -62,34 +62,64 @@ def _select_backend(
             device or model instance.
     """
 
-    configured = model.backend if requested is None else requested
+    return select_execution_backend(
+        model.backend if requested is None else requested,
+        family_name=capabilities.family_name,
+        warp_cpu_supported=capabilities.warp_cpu_supported,
+        warp_supported=warp_supported,
+        num_velocities=model.num_velocities,
+    )
+
+
+def select_execution_backend(
+    configured: ExecutionBackend,
+    *,
+    family_name: str,
+    warp_cpu_supported: bool,
+    warp_supported: bool,
+    num_velocities: int,
+) -> ExecutionBackend:
+    """Resolve an execution preference using the shared device policy.
+
+    Args:
+        configured: Effective preference after applying any per-call override.
+        family_name: Operation name used in error messages.
+        warp_cpu_supported: Whether the implementation supports Warp on CPU.
+        warp_supported: Whether the concrete operation is eligible for Warp.
+        num_velocities: Number of generalized velocities; zero uses JAX.
+
+    Returns:
+        The concrete backend, ``"jax"`` or ``"warp"``. Automatic selection uses
+        Warp on GPU when supported, and JAX otherwise.
+
+    Raises:
+        ValueError: If the preference is invalid.
+        NotImplementedError: If explicit Warp execution is unsupported.
+    """
     if configured not in ("auto", "jax", "warp"):
         raise ValueError(
-            f"backend must be one of 'auto', 'jax', or 'warp', got {requested!r}."
+            f"backend must be one of 'auto', 'jax', or 'warp', got {configured!r}."
         )
 
     device = jax.default_backend()
     selected: ExecutionBackend = configured
     if selected == "auto":
         selected = "warp" if device == "gpu" else "jax"
-    warp_device_supported = device == "gpu" or (
-        device == "cpu" and capabilities.warp_cpu_supported
-    )
+    warp_device_supported = device == "gpu" or (device == "cpu" and warp_cpu_supported)
     if selected == "warp" and not warp_device_supported:
         if configured == "warp":
             raise NotImplementedError(
-                f"The Warp {capabilities.family_name} executor is not supported "
+                f"The Warp {family_name} executor is not supported "
                 f"on the active {device.upper()} device."
             )
         selected = "jax"
-    if model.num_velocities == 0:
+    if num_velocities == 0:
         selected = "jax"
 
     if selected == "warp" and not warp_supported:
         if configured == "warp":
             raise NotImplementedError(
-                f"The Warp {capabilities.family_name} executor is "
-                "not enabled for this system."
+                f"The Warp {family_name} executor is not enabled for this system."
             )
         selected = "jax"
     return selected
@@ -122,7 +152,7 @@ def dispatch_actuation_matrix(
     if configured == "warp" and not eligible:
         raise NotImplementedError(
             f"Warp {capabilities.family_name} actuation_matrix requires only "
-            "built-in linear ThreadlikeActuator transmissions."
+            "built-in frictionless linear ThreadlikeActuator transmissions."
         )
     if configured == "warp" and eligible and not capabilities.matrix_enabled:
         raise NotImplementedError(
@@ -174,7 +204,8 @@ def dispatch_actuation_force(
     if configured == "warp" and not eligible:
         raise NotImplementedError(
             f"Warp {capabilities.family_name} actuation_force requires only "
-            "built-in linear ThreadlikeActuator transmissions with DirectEffort."
+            "built-in frictionless linear ThreadlikeActuator transmissions with "
+            "DirectEffort."
         )
     if configured == "warp" and eligible and not capabilities.force_enabled:
         raise NotImplementedError(
@@ -457,6 +488,7 @@ def dispatch_kinematics_abscissa_batched(
 
 
 __all__ = [
+    "select_execution_backend",
     "dispatch_actuation_force",
     "dispatch_actuation_matrix",
     "dispatch_dynamics_terms",

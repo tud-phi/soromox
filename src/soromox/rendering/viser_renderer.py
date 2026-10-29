@@ -44,6 +44,12 @@ except ImportError:
     VISER_AVAILABLE = False
     go = None
 
+from soromox.actuation.threadlike import (
+    ConfigurationDependentThreadlikeRouting,
+    RoutingSolution,
+    ThreadlikeRouting,
+)
+from soromox.rendering.actuation import _reshape_routing_solution, _routing_solution_at
 from soromox.rendering.actuators import resolve_actuator_rgba
 from soromox.rendering.base import BaseSoftRobotRenderer
 from soromox.rendering.base_geometry import base_plate_mesh
@@ -296,8 +302,9 @@ class ViserRenderer(BaseSoftRobotRenderer):
         """
         if not VISER_AVAILABLE:
             raise ImportError(
-                "viser is required for ViserRenderer. "
-                "Install it with: pip install viser"
+                "viser, plotly and trimesh are required for ViserRenderer. "
+                "Install them with: pip install viser plotly trimesh"
+                "(or: pip install soromox[rendering])"
             )
 
         super().__init__(robot, config=config)
@@ -367,7 +374,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
             self.robot, q_reference, s_points
         )
         self._cross_section_contours = tuple(
-            section.contour(self._cross_section_resolution)
+            section.contours(self._cross_section_resolution)
             for section in self._cross_sections
         )
         self._discrete_cross_section_markers = tuple(
@@ -375,7 +382,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
         )
         self._backbone_marker_scales = np.asarray(
             [
-                np.max(np.linalg.norm(contour[:, 1:], axis=1))
+                np.max(np.linalg.norm(contour[0, :, 1:], axis=1))
                 for contour in self._cross_section_contours
             ],
             dtype=np.float32,
@@ -694,6 +701,11 @@ class ViserRenderer(BaseSoftRobotRenderer):
         self._add_ground_plane(curves[:, 0])
 
         # Clear existing robot geometry
+        for handles in self._scene_handles.backbone_points:
+            for handle in handles:
+                handle.remove()
+        for handle in self._scene_handles.base_plates:
+            handle.remove()
         self._scene_handles.backbone_points = []
         self._scene_handles.discrete_backbone_batches = []
         self._scene_handles.swept_backbone_batches = []
@@ -874,7 +886,9 @@ class ViserRenderer(BaseSoftRobotRenderer):
             incoming = (
                 curve[right] + self._cross_section_contours[right] @ frames[right].T
             )
-            if np.all(np.abs(outgoing - incoming) <= tolerance):
+            if outgoing.shape == incoming.shape and np.all(
+                np.abs(outgoing - incoming) <= tolerance
+            ):
                 caps[left] = (caps[left][0], False)
                 caps[right] = (False, caps[right][1])
         return caps
@@ -928,6 +942,10 @@ class ViserRenderer(BaseSoftRobotRenderer):
         *,
         color_config: RendererColorConfig | None = None,
         actuator_inputs: Array | None = None,
+        routing: ThreadlikeRouting
+        | ConfigurationDependentThreadlikeRouting
+        | None = None,
+        routing_solution: RoutingSolution | None = None,
     ) -> None:
         """Build semantic actuator geometry in the scene.
 
@@ -937,9 +955,13 @@ class ViserRenderer(BaseSoftRobotRenderer):
             num_robots: Number of robots
             color_config: Shared renderer color configuration.
             actuator_inputs: Optional actuator inputs for scalar-colored layers.
+            routing: Optional fixed or configuration-dependent threadlike routing.
+            routing_solution: Existing configuration-dependent routing solution, with
+                matching batch/time axes. Omit to solve. Must be ``None`` for
+                fixed routing, which is evaluated directly.
         """
         if (
-            not self._has_actuator_visuals
+            (not self._has_actuator_visuals and routing is None)
             or self._server is None
             or self._scene_handles is None
         ):
@@ -949,6 +971,8 @@ class ViserRenderer(BaseSoftRobotRenderer):
             q,
             jnp.asarray(base_offsets),
             actuator_inputs=actuator_inputs,
+            routing=routing,
+            routing_solution=routing_solution,
         )
         cfg = color_config or self.color_config
         self._active_color_config = cfg
@@ -1487,6 +1511,10 @@ class ViserRenderer(BaseSoftRobotRenderer):
         camera_config: CameraConfig | None = None,
         render_actuators: bool = True,
         actuator_inputs: Array | None = None,
+        routing: ThreadlikeRouting
+        | ConfigurationDependentThreadlikeRouting
+        | None = None,
+        routing_solution: RoutingSolution | None = None,
         static_spheres_positions: Array | None = None,
         static_spheres_radii: Array | None = None,
         static_spheres_colors: Array | None = None,
@@ -1503,6 +1531,10 @@ class ViserRenderer(BaseSoftRobotRenderer):
             camera_config: Camera configuration (fov, position, look_at, etc.)
             render_actuators: If True, render actuator visual layers.
             actuator_inputs: Optional actuator inputs for scalar-colored layers.
+            routing: Optional fixed or configuration-dependent threadlike routing.
+            routing_solution: Existing configuration-dependent routing solution, with
+                matching batch/time axes. Omit to solve. Must be ``None`` for
+                fixed routing, which is evaluated directly.
             static_spheres_positions: Static sphere positions (M, 3)
             static_spheres_radii: Static sphere radii (M,)
             static_spheres_colors: Static sphere colors (M, 3)
@@ -1562,13 +1594,15 @@ class ViserRenderer(BaseSoftRobotRenderer):
             base_plate_color=cfg.base_plate_color,
         )
 
-        if render_actuators and self._has_actuator_visuals:
+        if render_actuators and (self._has_actuator_visuals or routing is not None):
             self._build_actuator_geometry(
                 q,
                 np.asarray(base_offsets),
                 num_robots,
                 color_config=cfg,
                 actuator_inputs=actuator_inputs,
+                routing=routing,
+                routing_solution=routing_solution,
             )
 
         # Add static spheres if provided
@@ -1652,6 +1686,10 @@ class ViserRenderer(BaseSoftRobotRenderer):
         camera_config: CameraConfig | None = None,
         render_actuators: bool = True,
         actuator_inputs: Array | None = None,
+        routing: ThreadlikeRouting
+        | ConfigurationDependentThreadlikeRouting
+        | None = None,
+        routing_solution: RoutingSolution | None = None,
         static_spheres_positions: Array | None = None,
         static_spheres_radii: Array | None = None,
         static_spheres_colors: Array | None = None,
@@ -1668,6 +1706,10 @@ class ViserRenderer(BaseSoftRobotRenderer):
             camera_config: Camera configuration (fov, position, look_at, etc.)
             render_actuators: If True, render actuator visual layers.
             actuator_inputs: Optional actuator inputs for scalar-colored layers.
+            routing: Optional fixed or configuration-dependent threadlike routing.
+            routing_solution: Existing configuration-dependent routing solution, with
+                matching batch/time axes. Omit to solve. Must be ``None`` for
+                fixed routing, which is evaluated directly.
             static_spheres_positions: Static sphere positions (M, 3)
             static_spheres_radii: Static sphere radii (M,)
             static_spheres_colors: Static sphere colors (M, 3)
@@ -1724,13 +1766,15 @@ class ViserRenderer(BaseSoftRobotRenderer):
             base_plate_color=cfg.base_plate_color,
         )
 
-        if render_actuators and self._has_actuator_visuals:
+        if render_actuators and (self._has_actuator_visuals or routing is not None):
             self._build_actuator_geometry(
                 q,
                 np.asarray(base_offsets),
                 num_robots,
                 color_config=cfg,
                 actuator_inputs=actuator_inputs,
+                routing=routing,
+                routing_solution=routing_solution,
             )
 
         # Add static spheres if provided
@@ -1792,6 +1836,10 @@ class ViserRenderer(BaseSoftRobotRenderer):
         color_config: RendererColorConfig | None = None,
         render_actuators: bool = True,
         actuator_inputs: Array | None = None,
+        routing: ThreadlikeRouting
+        | ConfigurationDependentThreadlikeRouting
+        | None = None,
+        routing_solution: RoutingSolution | None = None,
         multi_robot_layout: Literal["grid", "overlay"] = "grid",
         static_spheres_positions: Array | None = None,
         static_spheres_radii: Array | None = None,
@@ -1829,6 +1877,10 @@ class ViserRenderer(BaseSoftRobotRenderer):
             color_config: Shared renderer color configuration
             render_actuators: If True, render actuator visual layers.
             actuator_inputs: Optional actuator inputs for scalar-colored layers.
+            routing: Optional fixed or configuration-dependent threadlike routing.
+            routing_solution: Existing configuration-dependent routing solution, with
+                matching batch/time axes. Omit to solve. Must be ``None`` for
+                fixed routing, which is evaluated directly.
             multi_robot_layout: "grid" for side-by-side, "overlay" for same position
             static_spheres_positions: Static sphere positions
             static_spheres_radii: Static sphere radii
@@ -1862,6 +1914,13 @@ class ViserRenderer(BaseSoftRobotRenderer):
             q_ts = q_ts[None, :, :]  # (1, T, DOF)
 
         num_robots, num_frames, num_dofs = q_ts.shape
+        if isinstance(routing, ThreadlikeRouting) and routing_solution is not None:
+            raise ValueError(
+                "routing_solution must be None for fixed ThreadlikeRouting."
+            )
+        routing_solution = _reshape_routing_solution(
+            routing_solution, (num_robots, num_frames)
+        )
         del num_dofs
 
         normalized_snapshot_paths: dict[int, Path] = {}
@@ -1957,7 +2016,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
             base_plate_color=cfg.base_plate_color,
         )
 
-        if render_actuators and self._has_actuator_visuals:
+        if render_actuators and (self._has_actuator_visuals or routing is not None):
             self._build_actuator_geometry(
                 q_ts[:, 0, :],
                 np.asarray(base_offsets),
@@ -1968,6 +2027,10 @@ class ViserRenderer(BaseSoftRobotRenderer):
                     num_robots=int(num_robots),
                     num_steps=int(num_frames),
                     frame_idx=0,
+                ),
+                routing=routing,
+                routing_solution=_routing_solution_at(
+                    routing_solution, (slice(None), 0)
                 ),
             )
 
@@ -2032,6 +2095,10 @@ class ViserRenderer(BaseSoftRobotRenderer):
                     num_robots=int(num_robots),
                     num_steps=int(num_frames),
                     frame_idx=frame_idx,
+                ),
+                routing=routing,
+                routing_solution=_routing_solution_at(
+                    routing_solution, (slice(None), frame_idx)
                 ),
                 color_config=cfg,
             )
@@ -2190,6 +2257,10 @@ class ViserRenderer(BaseSoftRobotRenderer):
         base_plate_color: tuple[float, float, float],
         render_actuators: bool = True,
         actuator_inputs: Array | None = None,
+        routing: ThreadlikeRouting
+        | ConfigurationDependentThreadlikeRouting
+        | None = None,
+        routing_solution: RoutingSolution | None = None,
         color_config: RendererColorConfig | None = None,
     ) -> None:
         """Update scene for given frame index.
@@ -2233,13 +2304,15 @@ class ViserRenderer(BaseSoftRobotRenderer):
                     base_plate_color=base_plate_color,
                 )
 
-            if render_actuators and self._has_actuator_visuals:
+            if render_actuators and (self._has_actuator_visuals or routing is not None):
                 self._build_actuator_geometry(
                     q_frame,
                     np.asarray(base_offsets),
                     num_robots,
                     color_config=color_config,
                     actuator_inputs=actuator_inputs,
+                    routing=routing,
+                    routing_solution=routing_solution,
                 )
 
             # Update dynamic spheres in the same atomic frame transaction.
@@ -2555,7 +2628,6 @@ class ViserRenderer(BaseSoftRobotRenderer):
         Returns:
             LiveModeController for managing the live session
         """
-        self._static_scene = False
         if self._server is None:
             self.start()
 
@@ -2760,6 +2832,11 @@ class LiveModeController:
         if self._running:
             return
 
+        if self._renderer._static_scene and self._renderer._scene_handles is not None:
+            # Static GLB handles cannot receive vertex updates. Rebuild them as
+            # editable meshes when the first live state arrives.
+            self._renderer._scene_handles.geometry_initialized = False
+        self._renderer._static_scene = False
         self._running = True
         self._renderer._live_mode_active = True
         self._start_time = time.time()
@@ -2782,11 +2859,22 @@ class LiveModeController:
 
         print("[ViserRenderer] Live mode stopped")
 
-    def push_state(self, q: np.ndarray) -> None:
+    def push_state(
+        self,
+        q: np.ndarray,
+        *,
+        routing: ThreadlikeRouting
+        | ConfigurationDependentThreadlikeRouting
+        | None = None,
+        routing_solution: RoutingSolution | None = None,
+    ) -> None:
         """Push a new configuration to the renderer.
 
         Args:
             q: Configuration array (DOF,) or batched (N, DOF)
+            routing: Optional threadlike routing overlay for this state.
+            routing_solution: Matching configuration-dependent solution; omit to solve.
+                Must be ``None`` for fixed routing.
         """
         if not self._running:
             return
@@ -2795,7 +2883,7 @@ class LiveModeController:
             self._state_queue.append(np.asarray(q))
 
         # Process immediately
-        self._process_state(q)
+        self._process_state(q, routing=routing, routing_solution=routing_solution)
 
     def push_state_with_extras(
         self,
@@ -2848,7 +2936,15 @@ class LiveModeController:
 
             time.sleep(self._dt)
 
-    def _process_state(self, q: np.ndarray) -> None:
+    def _process_state(
+        self,
+        q: np.ndarray,
+        *,
+        routing: ThreadlikeRouting
+        | ConfigurationDependentThreadlikeRouting
+        | None = None,
+        routing_solution: RoutingSolution | None = None,
+    ) -> None:
         """Process and render a state.
 
         Uses efficient position/orientation updates when geometry is already
@@ -2902,4 +2998,14 @@ class LiveModeController:
                 self._resolved_colors.per_robot_point_rgba,
                 material_frames=material_frames,
                 base_plate_color=self._renderer.color_config.base_plate_color,
+            )
+            self._renderer._setup_camera(curves, self._renderer._active_camera)
+
+        if self._renderer._has_actuator_visuals or routing is not None:
+            self._renderer._build_actuator_geometry(
+                q,
+                np.asarray(base_offsets),
+                num_robots,
+                routing=routing,
+                routing_solution=routing_solution,
             )

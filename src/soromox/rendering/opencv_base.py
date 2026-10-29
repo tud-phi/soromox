@@ -8,6 +8,12 @@ import cv2
 import numpy as np
 from jax import Array
 
+from soromox.actuation.threadlike import (
+    ConfigurationDependentThreadlikeRouting,
+    RoutingSolution,
+    ThreadlikeRouting,
+)
+from soromox.rendering.actuation import _reshape_routing_solution, _routing_solution_at
 from soromox.rendering.base import BaseSoftRobotRenderer
 from soromox.rendering.config.camera import CameraConfig
 from soromox.rendering.config.colors import RendererColorConfig
@@ -58,6 +64,10 @@ class BaseOpenCVRenderer(BaseSoftRobotRenderer):
         base_offsets: Array | None = None,
         camera_config: CameraConfig | None = None,
         color_config: RendererColorConfig | None = None,
+        routing: ThreadlikeRouting
+        | ConfigurationDependentThreadlikeRouting
+        | None = None,
+        routing_solution: RoutingSolution | None = None,
     ) -> None:
         """Render animated sequence to video file using ffmpeg.
 
@@ -72,6 +82,8 @@ class BaseOpenCVRenderer(BaseSoftRobotRenderer):
             base_offsets: Optional positional offset for every exported frame.
             camera_config: Camera override, approximated by the planar projection.
             color_config: Complete sRGB robot color override.
+            routing: Optional configuration-dependent routing (generic planar renderer).
+            routing_solution: Existing solutions with a leading time axis matching q_ts.
         """
         if record_path is None:
             raise ValueError("record_path is required for render_sequence")
@@ -82,6 +94,7 @@ class BaseOpenCVRenderer(BaseSoftRobotRenderer):
 
         ts_np = np.array(ts)
         q_np = np.array(q_ts)
+        routing_solution = _reshape_routing_solution(routing_solution, q_np.shape[:-1])
 
         video_dt = np.mean(np.diff(ts_np))
         actual_fps = float(playback_speed) * (1.0 / video_dt)
@@ -139,6 +152,16 @@ class BaseOpenCVRenderer(BaseSoftRobotRenderer):
                     color_config=color_config,
                     camera_config=camera_config,
                     base_offsets=base_offsets,
+                    **(
+                        {
+                            "routing": routing,
+                            "routing_solution": _routing_solution_at(
+                                routing_solution, frame_idx
+                            ),
+                        }
+                        if routing is not None or routing_solution is not None
+                        else {}
+                    ),
                 )
                 if video_writer is not None:
                     video_writer.write(img)

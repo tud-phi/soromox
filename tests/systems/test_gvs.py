@@ -1078,7 +1078,8 @@ def test_public_gvs_accessors_geometry_and_actuation_matrix() -> None:
     assert int(segment_idx) == 1
     assert_allclose(s_local, 0.25 * robot.segment_length[1], rtol=RTOL, atol=ATOL)
 
-    tag, geom = robot.cross_section_geometry(q, 0.5 * robot.segment_length[0])
+    tag, geom, inner = robot.cross_section_geometry(q, 0.5 * robot.segment_length[0])
+    assert inner is None
     expected_radius = robot.radius_params[0, 0] + 0.5 * (
         robot.radius_params[0, 1] - robot.radius_params[0, 0]
     )
@@ -1087,7 +1088,8 @@ def test_public_gvs_accessors_geometry_and_actuation_matrix() -> None:
         geom, jnp.array([expected_radius, expected_radius]), rtol=RTOL, atol=ATOL
     )
 
-    tag, geom = robot.cross_section_geometry(q, s_second)
+    tag, geom, inner = robot.cross_section_geometry(q, s_second)
+    assert inner is None
     expected_width = robot.width_params[1, 0] + 0.25 * (
         robot.width_params[1, 1] - robot.width_params[1, 0]
     )
@@ -1104,7 +1106,8 @@ def test_public_gvs_accessors_geometry_and_actuation_matrix() -> None:
         + robot.segment_length[1]
         + 0.75 * robot.segment_length[2]
     )
-    tag, geom = robot.cross_section_geometry(q, s_third)
+    tag, geom, inner = robot.cross_section_geometry(q, s_third)
+    assert inner is None
     expected_a = robot.semi_major_params[2, 0] + 0.75 * (
         robot.semi_major_params[2, 1] - robot.semi_major_params[2, 0]
     )

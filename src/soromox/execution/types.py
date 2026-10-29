@@ -294,7 +294,7 @@ class ActuationModel(Protocol):
     num_actuators: int
 
     def _actuation_matrix(self, q: Array) -> Array:
-        """Return the differentiable scalar JAX transmission matrix."""
+        """Return the differentiable scalar JAX actuation matrix."""
 
         ...
 
@@ -308,7 +308,7 @@ class ActuationMatrixEvaluator(Protocol):
     """Scalar matrix evaluator backed by one canonical batched executor."""
 
     def __call__(self, model: ActuationModel, q: Array) -> Array:
-        """Return one transmission matrix with shape ``(D, A)``."""
+        """Return one actuation matrix with shape ``(D, A)``."""
 
         ...
 

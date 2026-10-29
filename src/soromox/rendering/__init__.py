@@ -50,6 +50,7 @@ from soromox.rendering.cross_sections import (
     loft_cross_section_contours,
     loft_cross_sections,
     register_cross_section_contour,
+    sweep_cross_sections,
 )
 from soromox.rendering.matplotlib_renderer import MatplotlibRenderer
 
@@ -78,6 +79,17 @@ try:
 except ImportError:
     ISupportViserRenderer = None
     ISupportVisualConfig = None
+
+try:
+    from soromox.rendering.helicoidal import (
+        HelicoidalModuleVisual,
+        HelicoidalViserRenderer,
+        HelicoidalVisualConfig,
+    )
+except ImportError:
+    HelicoidalModuleVisual = None
+    HelicoidalViserRenderer = None
+    HelicoidalVisualConfig = None
 
 # Specialized OpenCV renderers are optional (require opencv-python)
 try:
@@ -121,6 +133,7 @@ __all__ = [
     "loft_cross_section_contours",
     "loft_cross_sections",
     "register_cross_section_contour",
+    "sweep_cross_sections",
     "ActuatorVisualLayer",
     "BatchedActuatorVisualLayer",
     "TrajectoryActuatorVisualLayer",
@@ -129,6 +142,9 @@ __all__ = [
     "MatplotlibRenderer",
     "Open3DRenderer",
     "ViserRenderer",
+    "HelicoidalModuleVisual",
+    "HelicoidalViserRenderer",
+    "HelicoidalVisualConfig",
     "ISupportViserRenderer",
     "ISupportVisualConfig",
     "UMArmViserRenderer",

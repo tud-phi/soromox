@@ -62,9 +62,7 @@ def _planar_dynamics_terms(
         qd,
         operands.inertia_upper_rows,
         operands.inertia_upper_columns,
-        operands.weighted_mass_diagonals.reshape(
-            num_segments * operands.num_gauss_points, 3
-        ),
+        operands.weighted_inertias.reshape(-1, operands.weighted_inertias.shape[-1]),
         operands.gravity_base,
         operands.block_dim,
         output_dims=shapes.chain_outputs(),
@@ -121,9 +119,7 @@ def execute_dynamics_terms(
         qd,
         operands.inertia_upper_rows,
         operands.inertia_upper_columns,
-        operands.weighted_mass_diagonals.reshape(
-            num_segments * operands.num_gauss_points, 6
-        ),
+        operands.weighted_inertias.reshape(-1, operands.weighted_inertias.shape[-1]),
         operands.gravity_base,
         operands.block_dim,
         output_dims=shapes.chain_outputs(),
@@ -175,8 +171,8 @@ def execute_floating_dynamics_terms(
             velocity,
             operands.inertia_upper_rows,
             operands.inertia_upper_columns,
-            operands.weighted_mass_diagonals.reshape(
-                num_segments * operands.num_gauss_points, 3
+            operands.weighted_inertias.reshape(
+                -1, operands.weighted_inertias.shape[-1]
             ),
             operands.gravity_world,
             operands.block_dim,
@@ -206,9 +202,7 @@ def execute_floating_dynamics_terms(
         velocity,
         operands.inertia_upper_rows,
         operands.inertia_upper_columns,
-        operands.weighted_mass_diagonals.reshape(
-            num_segments * operands.num_gauss_points, 6
-        ),
+        operands.weighted_inertias.reshape(-1, operands.weighted_inertias.shape[-1]),
         operands.gravity_world,
         operands.block_dim,
         output_dims=shapes.chain_outputs(),

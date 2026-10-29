@@ -58,7 +58,7 @@ y_{\mathrm{a},i}
 = \frac{(B_i^2-\ell_i^2)\ell_i}{4\pi N_i^2},
 \]
 
-so pressure is the direct work-conjugate effort. The analytic moment matrix is
+so pressure is the direct work-conjugate effort. The analytic actuation matrix is
 the transpose of the coordinate Jacobian and retains the cache's group and
 channel ordering.
 

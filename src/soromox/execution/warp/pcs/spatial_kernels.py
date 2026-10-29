@@ -17,7 +17,14 @@ from soromox.execution.warp.common.se3 import (
     _left_total_derivative_action,
     _translation,
 )
-from soromox.execution.warp.common.spatial import _coadjoint_wrench
+from soromox.execution.warp.common.spatial import (
+    _coadjoint_wrench,
+    _diagonal_coadjoint_wrench,
+)
+from soromox.execution.warp.common.spatial_inertia import (
+    _mass_jacobian_action,
+    _mass_vector_action,
+)
 from soromox.execution.warp.common.storage import (
     _matrix_value,
     _vector_value,
@@ -227,326 +234,397 @@ def launch_spatial_local_operators(
 spatial_local_operators = wp.jax_callable(launch_spatial_local_operators, num_outputs=4)
 
 
-@wp.kernel(enable_backward=False)
-def spatial_persistent_chain_kernel(
-    adjoint_inverse: wp.array2d[wp.float64],
-    transported_tangent: wp.array2d[wp.float64],
-    local_velocity: wp.array2d[wp.float64],
-    transported_tangent_dot_velocity: wp.array2d[wp.float64],
-    active_indices: wp.array2d[wp.int32],
-    active_scales: wp.array2d[wp.float64],
-    active_dof_ends: wp.array[wp.int32],
-    qd: wp.array2d[wp.float64],
-    inertia_upper_rows: wp.array[wp.int32],
-    inertia_upper_columns: wp.array[wp.int32],
-    weighted_masses: wp.array2d[wp.float64],
-    gravity_base: wp.array[wp.float64],
-    block_dim: wp.int32,
-    jacobian_first: wp.array2d[wp.float64],
-    derivative_first: wp.array2d[wp.float64],
-    velocity_first: wp.array2d[wp.float64],
-    gravity_first: wp.array2d[wp.float64],
-    jacobian_second: wp.array2d[wp.float64],
-    derivative_second: wp.array2d[wp.float64],
-    velocity_second: wp.array2d[wp.float64],
-    gravity_second: wp.array2d[wp.float64],
-    inertia: wp.array3d[wp.float64],
-    coriolis_qd: wp.array2d[wp.float64],
-    gravity_force: wp.array2d[wp.float64],
-):
-    """Traverse one spatial PCS chain per persistent cooperative block.
+def _make_spatial_persistent_chain_kernel(diagonal: bool) -> wp.Kernel:
+    """Specialize inertia arithmetic while sharing the complete chain traversal.
+
+    The diagonal variant excludes full-matrix branches from generated CUDA code.
+    The generic variant remains available to direct callers for either layout.
 
     Args:
-        adjoint_inverse: Flattened inverse-adjoint operators.
-        transported_tangent: Flattened transported local tangents.
-        local_velocity: Flattened local spatial velocities.
-        transported_tangent_dot_velocity: Flattened derivative actions.
-        active_indices: Active-coordinate index of each strain component.
-        active_scales: Scale applied to each active strain component.
-        active_dof_ends: Cumulative active coordinate count by segment.
-        qd: Batched generalized velocities.
-        inertia_upper_rows: Packed upper-inertia row indices.
-        inertia_upper_columns: Packed upper-inertia column indices.
-        weighted_masses: Quadrature-weighted diagonal spatial inertias.
-        gravity_base: Base-frame spatial gravity.
-        block_dim: Number of active cooperative lanes.
-        jacobian_first: First caller-owned Jacobian workspace.
-        derivative_first: First derivative-action workspace.
-        velocity_first: First spatial-velocity workspace.
-        gravity_first: First local-gravity workspace.
-        jacobian_second: Second Jacobian workspace.
-        derivative_second: Second derivative-action workspace.
-        velocity_second: Second spatial-velocity workspace.
-        gravity_second: Second local-gravity workspace.
-        inertia: Batched inertia output.
-        coriolis_qd: Batched convective-force output.
-        gravity_force: Batched generalized-gravity output.
+        diagonal: Whether to require six-column diagonal inertia. If false,
+            the kernel accepts either six-column or 36-column inertia.
 
     Returns:
-        None. Workspaces and outputs are updated in place.
+        A Warp kernel with the shared spatial chain signature and the selected
+        inertia arithmetic, registered in its own module.
     """
-    environment, lane = wp.tid()
-    num_dofs = qd.shape[1]
-    num_segments = active_indices.shape[0]
-    num_quadrature = weighted_masses.shape[0] // num_segments
-    points_per_segment = num_quadrature + 1
-    lane_stride = block_dim
-    state_base_row = environment * SPATIAL_DIM
-    barrier = wp.tile_zeros(shape=(1,), dtype=wp.int32, storage="shared")
-    transported_velocity_shared = wp.tile_zeros(
-        shape=(SPATIAL_DIM,), dtype=wp.float64, storage="shared"
-    )
 
-    entry = lane
-    while entry < SPATIAL_DIM * num_dofs:
-        row = entry // num_dofs
-        column = entry - row * num_dofs
-        jacobian_first[state_base_row + row, column] = wp.float64(0.0)
-        jacobian_second[state_base_row + row, column] = wp.float64(0.0)
-        entry += lane_stride
-    row = lane
-    while row < SPATIAL_DIM:
-        derivative_first[state_base_row + row, 0] = wp.float64(0.0)
-        derivative_second[state_base_row + row, 0] = wp.float64(0.0)
-        velocity_first[state_base_row + row, 0] = wp.float64(0.0)
-        velocity_second[state_base_row + row, 0] = wp.float64(0.0)
-        gravity_first[state_base_row + row, 0] = gravity_base[row]
-        gravity_second[state_base_row + row, 0] = wp.float64(0.0)
-        row += lane_stride
-    entry = lane
-    while entry < num_dofs * num_dofs:
-        output_row = entry // num_dofs
-        output_column = entry - output_row * num_dofs
-        inertia[environment, output_row, output_column] = wp.float64(0.0)
-        entry += lane_stride
-    column = lane
-    while column < num_dofs:
-        coriolis_qd[environment, column] = wp.float64(0.0)
-        gravity_force[environment, column] = wp.float64(0.0)
-        column += lane_stride
-    wp.tile_scatter_masked(barrier, 0, int(0), lane == 0)
+    @wp.kernel(enable_backward=False, module="unique")
+    def spatial_persistent_chain_kernel(
+        adjoint_inverse: wp.array2d[wp.float64],
+        transported_tangent: wp.array2d[wp.float64],
+        local_velocity: wp.array2d[wp.float64],
+        transported_tangent_dot_velocity: wp.array2d[wp.float64],
+        active_indices: wp.array2d[wp.int32],
+        active_scales: wp.array2d[wp.float64],
+        active_dof_ends: wp.array[wp.int32],
+        qd: wp.array2d[wp.float64],
+        inertia_upper_rows: wp.array[wp.int32],
+        inertia_upper_columns: wp.array[wp.int32],
+        weighted_masses: wp.array2d[wp.float64],
+        gravity_base: wp.array[wp.float64],
+        block_dim: wp.int32,
+        jacobian_first: wp.array2d[wp.float64],
+        derivative_first: wp.array2d[wp.float64],
+        velocity_first: wp.array2d[wp.float64],
+        gravity_first: wp.array2d[wp.float64],
+        jacobian_second: wp.array2d[wp.float64],
+        derivative_second: wp.array2d[wp.float64],
+        velocity_second: wp.array2d[wp.float64],
+        gravity_second: wp.array2d[wp.float64],
+        inertia: wp.array3d[wp.float64],
+        coriolis_qd: wp.array2d[wp.float64],
+        gravity_force: wp.array2d[wp.float64],
+    ):
+        """Traverse one spatial PCS chain per persistent cooperative block.
 
-    current_is_first = bool(True)
-    segment = int(0)
-    while segment < num_segments:
-        active_end = active_dof_ends[segment]
-        point = int(0)
-        while point < points_per_segment:
-            destination_is_first = not current_is_first
-            operator_item = (
-                environment * num_segments + segment
-            ) * points_per_segment + point
-            operator_base_row = operator_item * SPATIAL_DIM
+        Args:
+            adjoint_inverse: Flattened inverse-adjoint operators.
+            transported_tangent: Flattened transported local tangents.
+            local_velocity: Flattened local spatial velocities.
+            transported_tangent_dot_velocity: Flattened derivative actions.
+            active_indices: Active-coordinate index of each strain component.
+            active_scales: Scale applied to each active strain component.
+            active_dof_ends: Cumulative active coordinate count by segment.
+            qd: Batched generalized velocities.
+            inertia_upper_rows: Packed upper-inertia row indices.
+            inertia_upper_columns: Packed upper-inertia column indices.
+            weighted_masses: Packed diagonal or full spatial inertias.
+            gravity_base: Base-frame spatial gravity.
+            block_dim: Number of active cooperative lanes.
+            jacobian_first: First caller-owned Jacobian workspace.
+            derivative_first: First derivative-action workspace.
+            velocity_first: First spatial-velocity workspace.
+            gravity_first: First local-gravity workspace.
+            jacobian_second: Second Jacobian workspace.
+            derivative_second: Second derivative-action workspace.
+            velocity_second: Second spatial-velocity workspace.
+            gravity_second: Second local-gravity workspace.
+            inertia: Batched inertia output.
+            coriolis_qd: Batched convective-force output.
+            gravity_force: Batched generalized-gravity output.
 
-            entry = lane
-            while entry < SPATIAL_DIM * active_end:
-                output_row = entry // active_end
-                output_column = entry - output_row * active_end
-                value = wp.float64(0.0)
-                k = int(0)
-                while k < SPATIAL_DIM:
-                    value += adjoint_inverse[operator_base_row + output_row, k] * (
-                        _matrix_value(
-                            jacobian_first,
-                            jacobian_second,
+        Returns:
+            None. Workspaces and outputs are updated in place.
+        """
+        environment, lane = wp.tid()
+        num_dofs = qd.shape[1]
+        num_segments = active_indices.shape[0]
+        num_quadrature = weighted_masses.shape[0] // num_segments
+        points_per_segment = adjoint_inverse.shape[0] // (
+            qd.shape[0] * num_segments * SPATIAL_DIM
+        )
+        lane_stride = block_dim
+        state_base_row = environment * SPATIAL_DIM
+        barrier = wp.tile_zeros(shape=(1,), dtype=wp.int32, storage="shared")
+        transported_velocity_shared = wp.tile_zeros(
+            shape=(SPATIAL_DIM,), dtype=wp.float64, storage="shared"
+        )
+
+        entry = lane
+        while entry < SPATIAL_DIM * num_dofs:
+            row = entry // num_dofs
+            column = entry - row * num_dofs
+            jacobian_first[state_base_row + row, column] = wp.float64(0.0)
+            jacobian_second[state_base_row + row, column] = wp.float64(0.0)
+            entry += lane_stride
+        row = lane
+        while row < SPATIAL_DIM:
+            derivative_first[state_base_row + row, 0] = wp.float64(0.0)
+            derivative_second[state_base_row + row, 0] = wp.float64(0.0)
+            velocity_first[state_base_row + row, 0] = wp.float64(0.0)
+            velocity_second[state_base_row + row, 0] = wp.float64(0.0)
+            gravity_first[state_base_row + row, 0] = gravity_base[row]
+            gravity_second[state_base_row + row, 0] = wp.float64(0.0)
+            row += lane_stride
+        entry = lane
+        while entry < num_dofs * num_dofs:
+            output_row = entry // num_dofs
+            output_column = entry - output_row * num_dofs
+            inertia[environment, output_row, output_column] = wp.float64(0.0)
+            entry += lane_stride
+        column = lane
+        while column < num_dofs:
+            coriolis_qd[environment, column] = wp.float64(0.0)
+            gravity_force[environment, column] = wp.float64(0.0)
+            column += lane_stride
+        wp.tile_scatter_masked(barrier, 0, int(0), lane == 0)
+
+        current_is_first = bool(True)
+        segment = int(0)
+        while segment < num_segments:
+            active_end = active_dof_ends[segment]
+            point = int(0)
+            while point < points_per_segment:
+                destination_is_first = not current_is_first
+                operator_item = (
+                    environment * num_segments + segment
+                ) * points_per_segment + point
+                operator_base_row = operator_item * SPATIAL_DIM
+
+                entry = lane
+                while entry < SPATIAL_DIM * active_end:
+                    output_row = entry // active_end
+                    output_column = entry - output_row * active_end
+                    value = wp.float64(0.0)
+                    k = int(0)
+                    while k < SPATIAL_DIM:
+                        value += adjoint_inverse[operator_base_row + output_row, k] * (
+                            _matrix_value(
+                                jacobian_first,
+                                jacobian_second,
+                                current_is_first,
+                                state_base_row,
+                                k,
+                                output_column,
+                            )
+                        )
+                        k += 1
+                    local = int(0)
+                    while local < SPATIAL_DIM:
+                        if active_indices[segment, local] == output_column:
+                            value += (
+                                transported_tangent[
+                                    operator_base_row + output_row, local
+                                ]
+                                * active_scales[segment, local]
+                            )
+                        local += 1
+                    _write_matrix_value(
+                        jacobian_first,
+                        jacobian_second,
+                        destination_is_first,
+                        state_base_row,
+                        output_row,
+                        output_column,
+                        value,
+                    )
+                    entry += lane_stride
+                wp.tile_scatter_masked(barrier, 0, int(0), lane == 0)
+
+                row = lane
+                transported_velocity = wp.float64(0.0)
+                gravity_value = wp.float64(0.0)
+                if row < SPATIAL_DIM:
+                    k = int(0)
+                    while k < SPATIAL_DIM:
+                        adjoint_value = adjoint_inverse[operator_base_row + row, k]
+                        transported_velocity += adjoint_value * _vector_value(
+                            velocity_first,
+                            velocity_second,
                             current_is_first,
                             state_base_row,
                             k,
-                            output_column,
                         )
-                    )
-                    k += 1
-                local = int(0)
-                while local < SPATIAL_DIM:
-                    if active_indices[segment, local] == output_column:
-                        value += (
-                            transported_tangent[operator_base_row + output_row, local]
-                            * active_scales[segment, local]
+                        gravity_value += adjoint_value * _vector_value(
+                            gravity_first,
+                            gravity_second,
+                            current_is_first,
+                            state_base_row,
+                            k,
                         )
-                    local += 1
-                _write_matrix_value(
-                    jacobian_first,
-                    jacobian_second,
-                    destination_is_first,
-                    state_base_row,
-                    output_row,
-                    output_column,
-                    value,
-                )
-                entry += lane_stride
-            wp.tile_scatter_masked(barrier, 0, int(0), lane == 0)
-
-            row = lane
-            transported_velocity = wp.float64(0.0)
-            gravity_value = wp.float64(0.0)
-            if row < SPATIAL_DIM:
-                k = int(0)
-                while k < SPATIAL_DIM:
-                    adjoint_value = adjoint_inverse[operator_base_row + row, k]
-                    transported_velocity += adjoint_value * _vector_value(
+                        k += 1
+                    _write_vector_value(
                         velocity_first,
                         velocity_second,
-                        current_is_first,
+                        destination_is_first,
                         state_base_row,
-                        k,
+                        row,
+                        transported_velocity
+                        + local_velocity[operator_base_row + row, 0],
                     )
-                    gravity_value += adjoint_value * _vector_value(
+                    _write_vector_value(
                         gravity_first,
                         gravity_second,
-                        current_is_first,
+                        destination_is_first,
                         state_base_row,
-                        k,
+                        row,
+                        gravity_value,
                     )
-                    k += 1
-                _write_vector_value(
-                    velocity_first,
-                    velocity_second,
-                    destination_is_first,
-                    state_base_row,
+                wp.tile_scatter_masked(
+                    transported_velocity_shared,
                     row,
-                    transported_velocity + local_velocity[operator_base_row + row, 0],
+                    transported_velocity,
+                    row < SPATIAL_DIM,
                 )
-                _write_vector_value(
-                    gravity_first,
-                    gravity_second,
-                    destination_is_first,
-                    state_base_row,
-                    row,
-                    gravity_value,
-                )
-            wp.tile_scatter_masked(
-                transported_velocity_shared,
-                row,
-                transported_velocity,
-                row < SPATIAL_DIM,
-            )
 
-            if row < SPATIAL_DIM:
-                derivative_value = wp.float64(0.0)
-                k = int(0)
-                while k < SPATIAL_DIM:
-                    derivative_value += adjoint_inverse[
-                        operator_base_row + row, k
-                    ] * _vector_value(
-                        derivative_first,
-                        derivative_second,
-                        current_is_first,
-                        state_base_row,
-                        k,
+                if row < SPATIAL_DIM:
+                    derivative_value = wp.float64(0.0)
+                    k = int(0)
+                    while k < SPATIAL_DIM:
+                        derivative_value += adjoint_inverse[
+                            operator_base_row + row, k
+                        ] * _vector_value(
+                            derivative_first,
+                            derivative_second,
+                            current_is_first,
+                            state_base_row,
+                            k,
+                        )
+                        k += 1
+                    local_eta = Vec6d(
+                        local_velocity[operator_base_row + 0, 0],
+                        local_velocity[operator_base_row + 1, 0],
+                        local_velocity[operator_base_row + 2, 0],
+                        local_velocity[operator_base_row + 3, 0],
+                        local_velocity[operator_base_row + 4, 0],
+                        local_velocity[operator_base_row + 5, 0],
                     )
-                    k += 1
-                local_eta = Vec6d(
-                    local_velocity[operator_base_row + 0, 0],
-                    local_velocity[operator_base_row + 1, 0],
-                    local_velocity[operator_base_row + 2, 0],
-                    local_velocity[operator_base_row + 3, 0],
-                    local_velocity[operator_base_row + 4, 0],
-                    local_velocity[operator_base_row + 5, 0],
-                )
-                transported_source = Vec6d(
-                    transported_velocity_shared[0],
-                    transported_velocity_shared[1],
-                    transported_velocity_shared[2],
-                    transported_velocity_shared[3],
-                    transported_velocity_shared[4],
-                    transported_velocity_shared[5],
-                )
-                correction = _ad_action(local_eta, transported_source)
-                derivative_value += (
-                    transported_tangent_dot_velocity[operator_base_row + row, 0]
-                    - correction[row]
-                )
-                _write_vector_value(
-                    derivative_first,
-                    derivative_second,
-                    destination_is_first,
-                    state_base_row,
-                    row,
-                    derivative_value,
-                )
-            wp.tile_scatter_masked(barrier, 0, int(0), lane == 0)
-
-            if point < num_quadrature:
-                pair = lane
-                while pair < inertia_upper_rows.shape[0]:
-                    output_row = inertia_upper_rows[pair]
-                    output_column = inertia_upper_columns[pair]
-                    if output_column < active_end:
-                        value = wp.float64(0.0)
-                        spatial = int(0)
-                        mass_item = segment * num_quadrature + point
-                        while spatial < SPATIAL_DIM:
-                            value += (
-                                _matrix_value(
-                                    jacobian_first,
-                                    jacobian_second,
-                                    destination_is_first,
-                                    state_base_row,
-                                    spatial,
-                                    output_row,
-                                )
-                                * weighted_masses[mass_item, spatial]
-                                * _matrix_value(
-                                    jacobian_first,
-                                    jacobian_second,
-                                    destination_is_first,
-                                    state_base_row,
-                                    spatial,
-                                    output_column,
-                                )
-                            )
-                            spatial += 1
-                        inertia[environment, output_row, output_column] += value
-                        if output_row != output_column:
-                            inertia[environment, output_column, output_row] += value
-                    pair += lane_stride
-
-                column = lane
-                while column < active_end:
-                    mass_item = segment * num_quadrature + point
-                    wrench = _coadjoint_wrench(
-                        velocity_first,
-                        velocity_second,
+                    transported_source = Vec6d(
+                        transported_velocity_shared[0],
+                        transported_velocity_shared[1],
+                        transported_velocity_shared[2],
+                        transported_velocity_shared[3],
+                        transported_velocity_shared[4],
+                        transported_velocity_shared[5],
+                    )
+                    correction = _ad_action(local_eta, transported_source)
+                    derivative_value += (
+                        transported_tangent_dot_velocity[operator_base_row + row, 0]
+                        - correction[row]
+                    )
+                    _write_vector_value(
                         derivative_first,
                         derivative_second,
                         destination_is_first,
                         state_base_row,
-                        weighted_masses,
-                        mass_item,
+                        row,
+                        derivative_value,
                     )
-                    coriolis_value = wp.float64(0.0)
-                    gravity_force_value = wp.float64(0.0)
-                    spatial = int(0)
-                    while spatial < SPATIAL_DIM:
-                        jacobian_value = _matrix_value(
-                            jacobian_first,
-                            jacobian_second,
-                            destination_is_first,
-                            state_base_row,
-                            spatial,
-                            column,
-                        )
-                        coriolis_value += jacobian_value * wrench[spatial]
-                        gravity_force_value -= (
-                            jacobian_value
-                            * weighted_masses[mass_item, spatial]
-                            * _vector_value(
-                                gravity_first,
-                                gravity_second,
+                wp.tile_scatter_masked(barrier, 0, int(0), lane == 0)
+
+                if point < num_quadrature:
+                    pair = lane
+                    while pair < inertia_upper_rows.shape[0]:
+                        output_row = inertia_upper_rows[pair]
+                        output_column = inertia_upper_columns[pair]
+                        if output_column < active_end:
+                            value = wp.float64(0.0)
+                            spatial = int(0)
+                            mass_item = segment * num_quadrature + point
+                            while spatial < SPATIAL_DIM:
+                                if wp.static(diagonal):
+                                    value += (
+                                        _matrix_value(
+                                            jacobian_first,
+                                            jacobian_second,
+                                            destination_is_first,
+                                            state_base_row,
+                                            spatial,
+                                            output_row,
+                                        )
+                                        * weighted_masses[mass_item, spatial]
+                                        * _matrix_value(
+                                            jacobian_first,
+                                            jacobian_second,
+                                            destination_is_first,
+                                            state_base_row,
+                                            spatial,
+                                            output_column,
+                                        )
+                                    )
+                                else:
+                                    value += _matrix_value(
+                                        jacobian_first,
+                                        jacobian_second,
+                                        destination_is_first,
+                                        state_base_row,
+                                        spatial,
+                                        output_row,
+                                    ) * _mass_jacobian_action(
+                                        weighted_masses,
+                                        mass_item,
+                                        spatial,
+                                        jacobian_first,
+                                        jacobian_second,
+                                        destination_is_first,
+                                        state_base_row,
+                                        output_column,
+                                    )
+                                spatial += 1
+                            inertia[environment, output_row, output_column] += value
+                            if output_row != output_column:
+                                inertia[environment, output_column, output_row] += value
+                        pair += lane_stride
+
+                    column = lane
+                    while column < active_end:
+                        mass_item = segment * num_quadrature + point
+                        if wp.static(diagonal):
+                            wrench = _diagonal_coadjoint_wrench(
+                                velocity_first,
+                                velocity_second,
+                                derivative_first,
+                                derivative_second,
+                                destination_is_first,
+                                state_base_row,
+                                weighted_masses,
+                                mass_item,
+                            )
+                        else:
+                            wrench = _coadjoint_wrench(
+                                velocity_first,
+                                velocity_second,
+                                derivative_first,
+                                derivative_second,
+                                destination_is_first,
+                                state_base_row,
+                                weighted_masses,
+                                mass_item,
+                            )
+                        coriolis_value = wp.float64(0.0)
+                        gravity_force_value = wp.float64(0.0)
+                        spatial = int(0)
+                        while spatial < SPATIAL_DIM:
+                            jacobian_value = _matrix_value(
+                                jacobian_first,
+                                jacobian_second,
                                 destination_is_first,
                                 state_base_row,
                                 spatial,
+                                column,
                             )
-                        )
-                        spatial += 1
-                    coriolis_qd[environment, column] += coriolis_value
-                    gravity_force[environment, column] += gravity_force_value
-                    column += lane_stride
-                wp.tile_scatter_masked(barrier, 0, int(0), lane == 0)
-            else:
-                current_is_first = destination_is_first
-            point += 1
-        segment += 1
+                            coriolis_value += jacobian_value * wrench[spatial]
+                            if wp.static(diagonal):
+                                gravity_force_value -= (
+                                    jacobian_value
+                                    * weighted_masses[mass_item, spatial]
+                                    * _vector_value(
+                                        gravity_first,
+                                        gravity_second,
+                                        destination_is_first,
+                                        state_base_row,
+                                        spatial,
+                                    )
+                                )
+                            else:
+                                gravity_force_value -= (
+                                    jacobian_value
+                                    * _mass_vector_action(
+                                        weighted_masses,
+                                        mass_item,
+                                        spatial,
+                                        gravity_first,
+                                        gravity_second,
+                                        destination_is_first,
+                                        state_base_row,
+                                    )
+                                )
+                            spatial += 1
+                        coriolis_qd[environment, column] += coriolis_value
+                        gravity_force[environment, column] += gravity_force_value
+                        column += lane_stride
+                    wp.tile_scatter_masked(barrier, 0, int(0), lane == 0)
+                if point == points_per_segment - 1:
+                    current_is_first = destination_is_first
+                point += 1
+            segment += 1
+
+    return spatial_persistent_chain_kernel
+
+
+spatial_persistent_chain_kernel = _make_spatial_persistent_chain_kernel(False)
+_diagonal_spatial_persistent_chain_kernel = _make_spatial_persistent_chain_kernel(True)
 
 
 def launch_spatial_persistent_chain(
@@ -589,7 +667,7 @@ def launch_spatial_persistent_chain(
         qd: FP64 active velocities with shape ``(batch_size, num_dofs)``.
         inertia_upper_rows: Packed upper-inertia row indices.
         inertia_upper_columns: Packed upper-inertia column indices.
-        weighted_masses: Quadrature-weighted spatial mass diagonals.
+        weighted_masses: Packed diagonal or full weighted spatial inertias.
         gravity_base: Spatial gravity expressed in the base frame.
         block_dim: Cooperative CUDA lanes per environment.
         jacobian_first: First caller-owned ping-pong Jacobian buffer.
@@ -608,8 +686,15 @@ def launch_spatial_persistent_chain(
         None. Workspaces and outputs are updated in place.
     """
 
+    # Layout is structural, so selection never reads device inertia values and
+    # remains valid when parameters change during CUDA graph replay.
+    kernel = (
+        _diagonal_spatial_persistent_chain_kernel
+        if weighted_masses.shape[1] == SPATIAL_DIM
+        else spatial_persistent_chain_kernel
+    )
     wp.launch_tiled(
-        spatial_persistent_chain_kernel,
+        kernel,
         dim=qd.shape[0],
         inputs=[
             adjoint_inverse,

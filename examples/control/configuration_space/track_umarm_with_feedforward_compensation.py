@@ -156,7 +156,7 @@ class DifferentialPressureUMArmModel(McKibbenActuatedUMArm):
 
     def _physical_actuation_matrix(self, q: Array) -> Array:
         """Return the retained McKibben transmission's 24-channel matrix."""
-        return self.actuators[0].transmission.moment_matrix(self, q)
+        return self.actuators[0].transmission.actuation_matrix(self, q)
 
     def _actuation_matrix(self, q: Array) -> Array:
         """Map virtual differential pressures to generalized joint forces."""
@@ -167,9 +167,14 @@ class DifferentialPressureUMArmModel(McKibbenActuatedUMArm):
         physical_coordinates = self.actuators[0].coordinates(self, q)
         return self.pressure_map.T @ physical_coordinates
 
+    def actuator_coordinate_jacobian(self, q: Array) -> Array:
+        """Map joint velocities to differential-pressure coordinate velocities."""
+        physical_jacobian = self.actuators[0].transmission.coordinate_jacobian(self, q)
+        return self.pressure_map.T @ physical_jacobian
+
     def actuator_velocities(self, q: Array, qd: Array) -> Array:
         """Return differential-pressure coordinate velocities."""
-        return self._actuation_matrix(q).T @ qd
+        return self.actuator_coordinate_jacobian(q) @ qd
 
     def actuator_efforts(
         self,
@@ -177,7 +182,7 @@ class DifferentialPressureUMArmModel(McKibbenActuatedUMArm):
         u: Array,
         qd: Array | None = None,
         *,
-        actuation_matrix: Array | None = None,
+        coordinate_jacobian: Array | None = None,
     ) -> Array:
         """Treat each virtual control directly as a pressure effort."""
         del q, qd
@@ -186,14 +191,14 @@ class DifferentialPressureUMArmModel(McKibbenActuatedUMArm):
             raise ValueError(
                 f"u must have shape ({self.num_actuators},), got {u.shape}."
             )
-        if actuation_matrix is not None and actuation_matrix.shape != (
-            self.num_velocities,
+        if coordinate_jacobian is not None and coordinate_jacobian.shape != (
             self.num_actuators,
+            self.num_velocities,
         ):
             raise ValueError(
-                "actuation_matrix must have shape "
-                f"({self.num_velocities}, {self.num_actuators}), got "
-                f"{actuation_matrix.shape}."
+                "coordinate_jacobian must have shape "
+                f"({self.num_actuators}, {self.num_velocities}), got "
+                f"{coordinate_jacobian.shape}."
             )
         return u
 

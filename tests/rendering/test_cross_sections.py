@@ -10,6 +10,7 @@ from soromox.rendering.cross_sections import (
     evaluate_cross_sections,
     loft_cross_sections,
     register_cross_section_contour,
+    sweep_cross_sections,
 )
 from soromox.systems import (
     GVS,
@@ -18,8 +19,68 @@ from soromox.systems import (
     LinearProfile,
     LinkSpec,
     StrainBasisSpec,
+    StrandSection,
 )
 from soromox.systems.components import CrossSectionGeometry
+
+
+@pytest.mark.parametrize("resolution", [4, 10, 12])
+def test_hollow_sweep_has_outward_walls_and_open_cavity(resolution):
+    section = CrossSection.from_strand_section(
+        StrandSection.rectangular_hollow(
+            width=0.010,
+            height=0.002,
+            wall_thickness=0.0001,
+        )
+    )
+    centers = np.column_stack((np.linspace(0, 0.1, 5), np.zeros((5, 2))))
+    frames = np.broadcast_to(np.eye(3), (5, 3, 3))
+    vertices, faces = sweep_cross_sections(centers, frames, section, resolution)
+    triangles = vertices[faces]
+    normals = np.cross(
+        triangles[:, 1] - triangles[:, 0], triangles[:, 2] - triangles[:, 0]
+    )
+    assert np.all(np.linalg.norm(normals, axis=1) > 0)
+    volume = np.einsum("ij,ij->i", triangles[:, 0], normals).sum() / 6
+    assert_allclose(volume, 0.1 * (0.010 * 0.002 - 0.0098 * 0.0018))
+    edges = np.concatenate((faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]))
+    _, counts = np.unique(np.sort(edges, axis=1), axis=0, return_counts=True)
+    assert_array_equal(counts, 2)
+    # Each directed edge is paired with the opposite direction.
+    directed = {tuple(edge) for edge in edges}
+    assert all((b, a) in directed for a, b in directed)
+    wall_count = 2 * 4 * resolution
+    centroids = triangles.mean(axis=1)
+    dot = np.einsum("ij,ij->i", normals[:, 1:], centroids[:, 1:])
+    assert np.all(dot[:wall_count] > 0)
+    assert np.all(dot[wall_count : 2 * wall_count] < 0)
+    # Cap triangles form an annulus; none covers the cavity centre.
+    caps = triangles[2 * wall_count :]
+    for triangle in caps:
+        yz = triangle[:, 1:]
+        following = np.roll(yz, -1, axis=0)
+        signs = yz[:, 0] * following[:, 1] - yz[:, 1] * following[:, 0]
+        assert not (np.all(signs >= 0) or np.all(signs <= 0))
+    assert np.all(normals[2 * wall_count : 2 * wall_count + 2 * resolution, 0] < 0)
+    assert np.all(normals[-2 * resolution :, 0] > 0)
+
+
+def test_hollow_loft_preserves_taper_and_rejects_topology_changes():
+    first = CrossSection(
+        CrossSectionGeometry.RECTANGULAR, [0.002, 0.01], [0.0018, 0.0098]
+    )
+    second = CrossSection(
+        CrossSectionGeometry.RECTANGULAR, [0.004, 0.02], [0.0036, 0.0196]
+    )
+    args = (np.zeros(3), np.array([0.1, 0, 0]), np.eye(3), np.eye(3))
+    vertices, _ = loft_cross_sections(
+        *args, first, second, 8, cap_start=True, cap_end=True
+    )
+    assert_allclose(vertices[:8], first.contours(8)[0])
+    assert_allclose(vertices[8:16], second.contours(8)[0] + [0.1, 0, 0])
+    solid = CrossSection(CrossSectionGeometry.RECTANGULAR, [0.004, 0.02])
+    with pytest.raises(ValueError, match="topology"):
+        loft_cross_sections(*args, first, solid, 8)
 
 
 def test_sweep_layout_duplicates_link_boundaries_without_cross_link_edges():
@@ -69,13 +130,13 @@ def test_sweep_layout_rejects_invalid_segment_lengths(lengths):
     [
         (CrossSectionGeometry.CIRCULAR, [0.2], 0.4, 0.4),
         (CrossSectionGeometry.ELLIPTICAL, [0.3, 0.1], 0.6, 0.2),
-        (CrossSectionGeometry.RECTANGULAR, [0.2, 0.6], 0.6, 0.2),
+        (CrossSectionGeometry.RECTANGULAR, [0.2, 0.6], 0.2, 0.6),
     ],
 )
 def test_builtin_cross_section_contours_preserve_geometry(
     geometry, dimensions, expected_y_span, expected_z_span
 ):
-    contour = CrossSection(geometry, np.asarray(dimensions)).contour(12)
+    contour = CrossSection(geometry, np.asarray(dimensions)).contours(12)[0]
 
     assert contour.shape == (12, 3)
     assert_allclose(contour[:, 0], 0.0, atol=0.0)
@@ -98,7 +159,7 @@ def test_builtin_cross_section_contours_preserve_geometry(
             CrossSectionGeometry.RECTANGULAR,
             [0.2, 0.6],
             "box",
-            [0.6, 0.2, 0.6],
+            [0.2, 0.6, 0.6],
             True,
         ),
     ],
@@ -116,13 +177,13 @@ def test_builtin_discrete_markers_are_backend_neutral(
 def test_rectangular_contour_contains_corners_and_straight_edges():
     contour = CrossSection(
         CrossSectionGeometry.RECTANGULAR, np.array([0.2, 0.6])
-    ).contour(10)
+    ).contours(10)[0]
     yz = contour[:, 1:]
-    expected_corners = np.array([[-0.3, -0.1], [0.3, -0.1], [0.3, 0.1], [-0.3, 0.1]])
+    expected_corners = np.array([[-0.1, -0.3], [0.1, -0.3], [0.1, 0.3], [-0.1, 0.3]])
 
     for corner in expected_corners:
         assert np.any(np.all(np.isclose(yz, corner), axis=1))
-    assert np.all(np.isclose(np.abs(yz[:, 0]), 0.3) | np.isclose(np.abs(yz[:, 1]), 0.1))
+    assert np.all(np.isclose(np.abs(yz[:, 0]), 0.1) | np.isclose(np.abs(yz[:, 1]), 0.3))
 
 
 @pytest.mark.parametrize(
@@ -154,8 +215,8 @@ def test_loft_uses_independent_endpoint_contours(
         cap_end=True,
     )
 
-    assert_allclose(vertices[:8], p0 + section0.contour(8) @ frame0.T)
-    assert_allclose(vertices[8:16], p1 + section1.contour(8) @ frame1.T)
+    assert_allclose(vertices[:8], p0 + section0.contours(8)[0] @ frame0.T)
+    assert_allclose(vertices[8:16], p1 + section1.contours(8)[0] @ frame1.T)
     assert_allclose(vertices[-1], p1)
     assert faces.shape == (24, 3)
     assert_array_equal(faces[-8:, 0], np.full(8, 16))
@@ -242,9 +303,9 @@ def test_soft_robot_cross_sections_use_vectorized_mixed_profile_evaluation():
         CrossSectionGeometry.ELLIPTICAL,
         CrossSectionGeometry.CIRCULAR,
     ]
-    assert_allclose(sections[0].dimensions, [0.15, 0.3], rtol=1e-6)
-    assert_allclose(sections[1].dimensions, [0.15, 0.075], rtol=1e-6)
-    assert_allclose(sections[2].dimensions, [0.06, 0.06], rtol=1e-6)
+    assert_allclose(sections[0].outer_dimensions, [0.15, 0.3], rtol=1e-6)
+    assert_allclose(sections[1].outer_dimensions, [0.15, 0.075], rtol=1e-6)
+    assert_allclose(sections[2].outer_dimensions, [0.06, 0.06], rtol=1e-6)
 
 
 def test_additional_geometry_can_register_a_contour_without_renderer_changes():
@@ -263,7 +324,7 @@ def test_additional_geometry_can_register_a_contour_without_renderer_changes():
         )
 
     register_cross_section_contour(geometry, diamond_contour)
-    contour = CrossSection(geometry, np.array([0.3, 0.2])).contour(4)
+    contour = CrossSection(geometry, np.array([0.3, 0.2])).contours(4)[0]
 
     assert_allclose(
         contour,

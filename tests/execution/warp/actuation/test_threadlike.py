@@ -8,8 +8,16 @@ import numpy as np
 import pytest
 from numpy.testing import assert_allclose
 
-from soromox.actuation import ThreadlikeActuator, ThreadlikeRouting
+from soromox.actuation import (
+    ThreadlikeActuator,
+    ThreadlikeFriction,
+    ThreadlikeRouting,
+)
 from soromox.execution.warp import loader
+from soromox.execution.warp.actuation.threadlike import (
+    supports_linear_threadlike_force,
+    supports_linear_threadlike_matrix,
+)
 from soromox.execution.warp.gvs.actuation.operands import (
     GVSThreadlikeOperands,
     GVSThreadlikeShapes,
@@ -338,8 +346,8 @@ def test_caller_owned_launchers_match_jax(
     with wp.ScopedDevice(device):
         if family == "gvs":
             from soromox.execution.warp.gvs import (
-                launch_gvs_threadlike_actuation_force,
-                launch_gvs_threadlike_actuation_matrix,
+                launch_homogeneous_gvs_threadlike_actuation_force,
+                launch_homogeneous_gvs_threadlike_actuation_matrix,
             )
 
             operands = GVSThreadlikeOperands.from_model(model)
@@ -378,10 +386,10 @@ def test_caller_owned_launchers_match_jax(
                 dtype=wp.float64,
                 device=device,
             )
-            launch_gvs_threadlike_actuation_matrix(
+            launch_homogeneous_gvs_threadlike_actuation_matrix(
                 *common, strain_workspace, matrix_output
             )
-            launch_gvs_threadlike_actuation_force(
+            launch_homogeneous_gvs_threadlike_actuation_force(
                 common[0],
                 warp_array(controls, wp.float64),
                 *common[1:],
@@ -692,6 +700,26 @@ def test_public_gate_uses_only_benchmark_qualified_warp_paths(family: str) -> No
         with pytest.raises(NotImplementedError, match="low-level Warp-native"):
             model.actuation_matrix(q, backend="warp")
     with pytest.raises(NotImplementedError, match="low-level Warp-native"):
+        model.actuation_force(q, controls, backend="warp")
+
+
+def test_warp_gate_rejects_unimplemented_active_friction() -> None:
+    """Keep frictional matrices and forces on the differentiable JAX path."""
+
+    base = _build_system("pcs", 2, 4)
+    actuator = ThreadlikeActuator.tendons(
+        _routing(2, 4, planar=False),
+        friction=ThreadlikeFriction.capstan(coefficient=0.2),
+    )
+    model = _rebuild_with_actuators(base, actuator)
+    q = jnp.zeros((model.num_coordinates,))
+    controls = jnp.ones((model.num_actuators,))
+
+    assert not supports_linear_threadlike_matrix(model)
+    assert not supports_linear_threadlike_force(model)
+    with pytest.raises(NotImplementedError, match="frictionless"):
+        model.actuation_matrix(q, backend="warp")
+    with pytest.raises(NotImplementedError, match="frictionless"):
         model.actuation_force(q, controls, backend="warp")
 
 

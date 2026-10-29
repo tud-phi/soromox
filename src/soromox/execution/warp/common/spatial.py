@@ -1,11 +1,12 @@
 # ruff: noqa: I001, UP018
-"""Spatial inertia and force helpers shared by SE(3) Warp kernels."""
+"""Spatial vector and force helpers shared by SE(3) Warp kernels."""
 
 from __future__ import annotations
 
 import warp as wp
 
 from soromox.execution.warp.common.se3 import Vec6d
+from soromox.execution.warp.common.spatial_inertia import _mass_vector_action
 from soromox.execution.warp.common.storage import _vector_value
 
 wp.set_module_options({"enable_backward": False})
@@ -61,9 +62,7 @@ def _load_spatial_vector3d(
 
 
 @wp.func
-def _store_spatial_vector(
-    values: wp.array2d[wp.float64], item: int, value: Vec6d
-):
+def _store_spatial_vector(values: wp.array2d[wp.float64], item: int, value: Vec6d):
     """Store one six-vector in item-major storage.
 
     Args:
@@ -167,6 +166,72 @@ def _rotate_spatial_from_inertial(pose: wp.mat44d, value: Vec6d) -> Vec6d:
 
 @wp.func
 def _coadjoint_wrench(
+    velocity_first: wp.array2d[wp.float64],
+    velocity_second: wp.array2d[wp.float64],
+    derivative_first: wp.array2d[wp.float64],
+    derivative_second: wp.array2d[wp.float64],
+    use_first: bool,
+    base_row: int,
+    masses: wp.array2d[wp.float64],
+    quadrature: int,
+) -> Vec6d:
+    """Combine inertial acceleration and coadjoint momentum terms.
+
+    Args:
+        velocity_first: First flattened spatial-velocity buffer.
+        velocity_second: Second flattened spatial-velocity buffer.
+        derivative_first: First flattened velocity-derivative buffer.
+        derivative_second: Second flattened velocity-derivative buffer.
+        use_first: Whether the first pair of buffers is active.
+        base_row: First flattened row of the current spatial vector.
+        masses: Packed diagonal or full weighted spatial inertias.
+        quadrature: Row of ``masses`` used by the current item.
+
+    Returns:
+        Spatial wrench ``M @ eta_dot + ad(eta).T @ M @ eta``.
+    """
+    omega = wp.vec3d(
+        _vector_value(velocity_first, velocity_second, use_first, base_row, 0),
+        _vector_value(velocity_first, velocity_second, use_first, base_row, 1),
+        _vector_value(velocity_first, velocity_second, use_first, base_row, 2),
+    )
+    linear_velocity = wp.vec3d(
+        _vector_value(velocity_first, velocity_second, use_first, base_row, 3),
+        _vector_value(velocity_first, velocity_second, use_first, base_row, 4),
+        _vector_value(velocity_first, velocity_second, use_first, base_row, 5),
+    )
+    momentum = Vec6d()
+    acceleration = Vec6d()
+    for row in range(SPATIAL_DIM):
+        momentum[row] = _mass_vector_action(
+            masses,
+            quadrature,
+            row,
+            velocity_first,
+            velocity_second,
+            use_first,
+            base_row,
+        )
+        acceleration[row] = _mass_vector_action(
+            masses,
+            quadrature,
+            row,
+            derivative_first,
+            derivative_second,
+            use_first,
+            base_row,
+        )
+    moment = wp.vec3d(momentum[0], momentum[1], momentum[2])
+    force = wp.vec3d(momentum[3], momentum[4], momentum[5])
+    angular = wp.cross(omega, moment) + wp.cross(linear_velocity, force)
+    linear = wp.cross(omega, force)
+    return acceleration + Vec6d(
+        angular[0], angular[1], angular[2], linear[0], linear[1], linear[2]
+    )
+
+
+@wp.func
+def _diagonal_coadjoint_wrench(
     velocity_first: wp.array2d[wp.float64],
     velocity_second: wp.array2d[wp.float64],
     derivative_first: wp.array2d[wp.float64],

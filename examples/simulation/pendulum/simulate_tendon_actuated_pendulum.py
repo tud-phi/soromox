@@ -116,7 +116,7 @@ def draw_robot(
     # Passive tendons
     try:
         A_pt = onp.asarray(
-            robot.passive_elements[0].transmission.moment_matrix(robot, q)
+            robot.passive_elements[0].transmission.actuation_matrix(robot, q)
         )
         Np = A_pt.shape[1]
     except AttributeError:
@@ -225,7 +225,7 @@ if __name__ == "__main__":
     print("R_at =", active_tendons.params.transmission.routing_matrix)
     print("A_at =", robot.actuation_matrix(q0))
     print("R_pt =", passive_tendons.params.transmission.routing_matrix)
-    print("A_pt =", passive_tendons.transmission.moment_matrix(robot, q0))
+    print("A_pt =", passive_tendons.transmission.actuation_matrix(robot, q0))
     print("k_pt =", passive_tendons.params.stiffness)
     print("d_pt =", passive_tendons.params.damping)
     print("active coordinates at q0 =", robot.actuator_coordinates(q0))

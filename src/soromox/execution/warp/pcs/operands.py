@@ -35,7 +35,7 @@ class PCSOperandSource(Protocol):
     active_dof_ends: Array
     inertia_upper_rows: Array
     inertia_upper_columns: Array
-    weighted_mass_diagonals: Array
+    weighted_inertias: Array
     gravity_base: Array
     g: Array
     global_eps: float
@@ -74,7 +74,8 @@ class PCSOperands(eqx.Module):
         active_dof_ends: Cumulative active coordinate count after each segment.
         inertia_upper_rows: Row indices for packed upper inertia assembly.
         inertia_upper_columns: Columns matching ``inertia_upper_rows``.
-        weighted_mass_diagonals: Quadrature-weighted diagonal spatial inertias.
+        weighted_inertias: Weighted diagonal inertia, or row-major full
+            matrices with an additional unit-weight link-tip slot.
         gravity_base: Gravity acceleration expressed in the base frame.
         global_eps: Small-angle threshold used by planar exponential operators.
         tangent_eps: Small-angle derivative threshold used by planar operators.
@@ -92,7 +93,7 @@ class PCSOperands(eqx.Module):
     active_dof_ends: Array
     inertia_upper_rows: Array
     inertia_upper_columns: Array
-    weighted_mass_diagonals: Array
+    weighted_inertias: Array
     gravity_base: Array
     global_eps: float
     tangent_eps: float
@@ -125,7 +126,7 @@ class PCSOperands(eqx.Module):
             active_dof_ends=model.active_dof_ends,
             inertia_upper_rows=model.inertia_upper_rows,
             inertia_upper_columns=model.inertia_upper_columns,
-            weighted_mass_diagonals=model.weighted_mass_diagonals,
+            weighted_inertias=model.weighted_inertias,
             gravity_base=model.gravity_base,
             global_eps=model.global_eps,
             tangent_eps=model.tangent_eps,
@@ -154,7 +155,7 @@ class PCSFloatingOperands(eqx.Module):
         active_dof_ends: Cumulative internal-coordinate count by segment.
         inertia_upper_rows: Row indices for augmented upper-inertia assembly.
         inertia_upper_columns: Columns matching ``inertia_upper_rows``.
-        weighted_mass_diagonals: Quadrature-weighted local inertia diagonals.
+        weighted_inertias: Quadrature-weighted local inertia diagonals.
         gravity_world: Spatial gravity acceleration in the inertial frame.
         global_eps: Small-angle threshold for planar exponential operators.
         tangent_eps: Small-angle derivative threshold for planar operators.
@@ -173,7 +174,7 @@ class PCSFloatingOperands(eqx.Module):
     active_dof_ends: Array
     inertia_upper_rows: Array
     inertia_upper_columns: Array
-    weighted_mass_diagonals: Array
+    weighted_inertias: Array
     gravity_world: Array
     global_eps: float
     tangent_eps: float
@@ -209,7 +210,7 @@ class PCSFloatingOperands(eqx.Module):
             active_dof_ends=model.active_dof_ends,
             inertia_upper_rows=model.inertia_upper_rows,
             inertia_upper_columns=model.inertia_upper_columns,
-            weighted_mass_diagonals=model.weighted_mass_diagonals,
+            weighted_inertias=model.weighted_inertias,
             gravity_world=model.g,
             global_eps=model.global_eps,
             tangent_eps=model.tangent_eps,

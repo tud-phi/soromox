@@ -8,17 +8,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Write user-facing notes under the section that best describes the change. Keep
 entries concise, link to relevant pull requests or documentation when useful,
 and include benchmark baseline and measurement context for performance claims.
+Describe the delta from the last release, not intermediate development changes.
 
 ## [Unreleased]
 
 ### Added
 
+- Shared rendering of standalone fixed, free-space, and implicit threadlike paths
+  in Matplotlib, Open3D, Viser (including Helicoidal), and planar OpenCV, with reuse
+  of routing solutions for frames, batches, and playback. The hollow-tendon
+  example saves complete routing solutions for replay with all four backends.
+
+- Configuration-dependent threadlike routing for PlanarPCS, PCS, and GVS:
+  straight spans between prescribed guides, or differentiable shortest paths
+  inside circular lumens using `slsqp-jax`. Both provide path lengths and force
+  maps, including moving joints and floating bases; see
+  [PR #238](https://github.com/tud-phi/soromox/pull/238).
+- Native FP64 Warp kernels for free-space threadlike routing and actuation,
+  with batched execution, reusable buffers, and CUDA graph support.
+
+- Added optional continuum Capstan friction for active threadlike actuation in
+  PCS, PlanarPCS, and GVS, with analytical routed-path turn and custom friction
+  laws; see [threadlike actuation](../api/actuation/threadlike.md#continuum-capstan-friction).
+
+- Native Warp GVS kernels for heterogeneous worlds, with FP64 dynamics,
+  kinematics and actuation across different joints and strain bases; see
+  [PR #227](https://github.com/tud-phi/soromox/pull/227).
+
+- GVS-based `Helicoidal` models for trimmed-helicoid robots, with analytic
+  sectional mechanics, per-strain damping, helix-domain material inputs,
+  strand-derived inertia, a simulation example, and a dedicated Viser renderer.
+  Shared `StrandSection` geometry supports solid and hollow circular and
+  rectangular strands for mechanics and viewer configuration; see
+  [Helicoidal](../api/systems/gvs/helicoidal.md) and
+  [PR #229](https://github.com/tud-phi/soromox/pull/229).
 - Python 3.15 support, with numerical tests and patched Open3D source-build
   and rendering checks in Ubuntu CI. The Python 3.15 native-rendering job also
   runs the complete paper-results test suite.
 
 ### Changed
 
+- `ActuationSpaceDynamics` now uses the actuator-coordinate Jacobian for its
+  coordinate map and explicitly transforms potentially lossy actuation matrices.
+
+- Shared PCS/GVS dynamics support full sectional and tip inertia in JAX and Warp;
+  see [PR #229](https://github.com/tud-phi/soromox/pull/229).
 - Refreshed the numerical and rendering dependency lock for Python 3.15,
   including compatible Viser, `rpds-py`, Matplotlib, `msgspec`, Numba, and
   llvmlite releases.
@@ -32,11 +66,42 @@ and include benchmark baseline and measurement context for performance claims.
 
 ### Breaking changes
 
+- Replaced `Transmission.moment_matrix(...)` with `coordinate_jacobian(...)`
+  and `actuation_matrix(...)`, and added `SoftRobot.actuator_coordinate_jacobian(...)`.
+  The matrices are transposes for ideal transmissions; lossy transmissions may
+  differ. No compatibility alias is retained.
+
+- Renamed direct GVS Warp kernels and launchers to `homogeneous_*_kernel`
+  and `launch_homogeneous_*`; homogeneous kernels take the shared `*Data`
+  structs, while host launchers retain array arguments. Integration callers
+  must use the explicit names and updated kernel signatures.
+  See the [batch layout contracts](../api/execution/warp/gvs.md#batch-layouts-and-naming)
+  and [PR #227](https://github.com/tud-phi/soromox/pull/227).
+- `SoftRobot.cross_section_geometry(q, s)` now returns
+  `(geometry, outer_dimensions, inner_dimensions)` instead of a pair.
+  Update custom implementations to return `None` as the third value for solid
+  models, and update callers to unpack all three values.
+- Rendering `CrossSection.dimensions` is now `outer_dimensions`.
+  `contour(resolution)` is replaced by `contours(resolution)`, returning all
+  boundary loops with shape `(1 or 2, resolution, 3)`. Select `[0]` explicitly
+  when only the outer boundary is needed. `loft_cross_section_contours()` now
+  accepts that same loop-array shape at each endpoint.
+
 ### Fixed
 
 - Matched the Open3D adapter's static dependency metadata to the pinned native
   wheel so building it does not change the lockfile's dependency metadata.
 
+- Viser live mode initializes the camera and lighting on its first state and
+  rebuilds static meshes as editable surfaces when switching from a static
+  view, so subsequent geometry updates reach the browser. Resizing a live
+  robot batch removes obsolete meshes.
+- Open3D scene meshes explicitly initialize missing texture coordinates,
+  preventing white surface artifacts with unpatched Open3D wheels.
+- Corrected rectangular cross-section orientation in Open3D and Viser: height
+  now spans local material y and width spans z, matching the existing GVS
+  bending stiffness and inertia. Both swept surfaces and discrete boxes use
+  this convention.
 - Restored the Section IVa PyElastica benchmarks using COOMM, with
   PyElastica 1.0 support and short rollout tests in CI; see
   [PR #220](https://github.com/tud-phi/soromox/pull/220).
@@ -44,6 +109,13 @@ and include benchmark baseline and measurement context for performance claims.
   rendering guard, allowing image/video export and modern windows.
 
 ### Documentation
+
+- Added a [configuration-dependent routing guide](../api/actuation/threadlike.md#configuration-dependent-routing)
+  and a hollow-tendon example with static equilibrium, dynamic simulation, and
+  rendering of the resolved paths through guides at segment transitions.
+
+- Documented the continuum Capstan derivation, actuator-coordinate scales,
+  local length-gradient notation, and distinction from discrete spacer disks.
 
 - Updated the [sequential CPU rollout results](../research.md#sequential-cpu-rollouts)
   to match the latest paper version, reporting up to 27.0× speedup over SoRoSim for

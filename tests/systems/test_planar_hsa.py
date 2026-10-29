@@ -72,6 +72,24 @@ def test_planar_hsa_parameter_updates_are_immutable_and_refresh_eager_caches():
     assert not jnp.allclose(_parameter_runtime_summary(updated), before)
 
 
+def test_velocity_bias_matches_euler_lagrange_kinetic_energy():
+    """Verify the complete bias vector with the HSA's offset mass distribution."""
+    robot = _create_robot()
+    q = jnp.linspace(-0.15, 0.2, robot.num_coordinates)
+    velocity = jnp.linspace(0.3, -0.2, robot.num_velocities)
+    mass_dot = jax.jvp(robot.inertia_matrix, (q,), (velocity,))[1]
+    kinetic_gradient = jax.grad(
+        lambda coordinates: (
+            0.5 * velocity @ robot.inertia_matrix(coordinates) @ velocity
+        )
+    )(q)
+    expected = mass_dot @ velocity - kinetic_gradient
+
+    _, bias, _ = robot.dynamics_terms(q, velocity)
+
+    assert_allclose(bias, expected, rtol=1e-9, atol=1e-11)
+
+
 def test_planar_hsa_same_structure_parameter_updates_compile_once():
     robot = _create_robot()
     updated_params = _updated_typed_params()

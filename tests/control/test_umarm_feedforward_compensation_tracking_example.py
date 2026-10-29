@@ -1,3 +1,4 @@
+import jax
 import jax.numpy as jnp
 import pytest
 from numpy.testing import assert_allclose
@@ -88,6 +89,22 @@ def test_reduced_model_includes_map_and_nominal_pressure_force(robot):
     _, control_model, nominal_pressures = create_controller(robot, reference)
     q = jnp.linspace(-0.18, 0.18, robot.num_internal_dofs)
     physical_actuation = robot.actuation_matrix(q)
+
+    coordinate_jacobian = control_model.actuator_coordinate_jacobian(q)
+    assert coordinate_jacobian.shape == (12, 12)
+    assert_allclose(
+        coordinate_jacobian,
+        jax.jacfwd(control_model.actuator_coordinates)(q),
+        rtol=1.0e-12,
+        atol=1.0e-12,
+    )
+    qd = jnp.linspace(-0.1, 0.1, robot.num_internal_dofs)
+    assert_allclose(
+        control_model.actuator_velocities(q, qd),
+        coordinate_jacobian @ qd,
+        rtol=1.0e-12,
+        atol=1.0e-12,
+    )
 
     assert isinstance(control_model, McKibbenActuatedUMArm)
     assert control_model.num_actuators == robot.num_internal_dofs

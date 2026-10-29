@@ -61,9 +61,10 @@ Reproduce these images with `examples/rendering/backend_gallery.py --backend`
 followed by `matplotlib`, `open3d`, `viser` or `opencv`.
 
 System-specific renderer designs are documented alongside their robots: the
-[Planar HSA OpenCV renderer](../systems/pcs/planar-hsa.md),
-[I-SUPPORT Viser renderer](../systems/pcs/isupport.md), and
-[UMArm Viser renderer](../systems/articulated/mckibben-umarm.md).
+[Planar HSA OpenCV renderer](../systems/pcs/planar-hsa.md#specialized-opencv-rendering),
+[I-Support Viser renderer](../systems/pcs/isupport.md#specialized-viser-rendering),
+[UMArm Viser renderer](../systems/articulated/mckibben-umarm.md), and
+[Helicoidal Viser renderer](../systems/gvs/helicoidal.md#specialized-viser-rendering).
 
 ## Choosing a Renderer
 
@@ -73,20 +74,18 @@ System-specific renderer designs are documented alongside their robots: the
 | `Open3DRenderer` | Interactive 3D inspection | Rich camera controls, headless capture | Requires Open3D, 3D only |
 | `ViserRenderer` | Live demos, web-based visualization | Browser UI, live streaming, multi-robot | Requires web server, 3D only |
 | `OpenCVPlanarRenderer` | Fast 2D animations, video export | Lightweight, fast output | Planar robots only |
-| `OpenCVPlanarHSARenderer` | PlanarHSA-specific visuals | HSA-specific geometry | PlanarHSA only |
 
 ## Documentation
 
 ### [Renderer API](renderers.md)
 
-Complete API reference for all renderer classes:
+API reference for the shared base class and general-purpose backends:
 
 - `BaseSoftRobotRenderer` - Abstract base class
 - `MatplotlibRenderer` - Matplotlib-based visualization
 - `Open3DRenderer` - Open3D-based 3D visualization
 - `ViserRenderer` - Web-based visualization
 - `OpenCVPlanarRenderer` - OpenCV-based 2D visualization
-- `OpenCVPlanarHSARenderer` - HSA-specific visualization
 
 ### [Shared Configuration](configuration.md)
 

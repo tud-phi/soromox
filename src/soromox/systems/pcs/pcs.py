@@ -8,6 +8,13 @@ from jax import Array, jvp, lax, vmap
 from jax import numpy as jnp
 
 from soromox.actuation.core import Actuator, PassiveElement
+from soromox.actuation.friction import (
+    ThreadlikeFriction,
+    integrate_accumulated_turn,
+    threadlike_constant_strain_turn_rate,
+    threadlike_tangent,
+    threadlike_turning_angle,
+)
 from soromox.actuation.threadlike import (
     BaseThreadlikeRoutingParams,
     ThreadlikeRouting,
@@ -33,6 +40,13 @@ from soromox.systems.components import (
     IsotropicMaterialParams,
     LinkSpec,
 )
+from soromox.systems.components.inertia import (
+    has_custom_inertia,
+    mass_first_moment,
+    spatial_mass_action,
+    weighted_inertias,
+)
+from soromox.systems.pcs.kinematics import constant_strain_segment_kinematics
 from soromox.systems.pcs.params import PCSParams
 from soromox.systems.pcs.structures import PCSStructure
 from soromox.systems.soft_robot import SoftRobot
@@ -141,6 +155,7 @@ class PCS(SoftRobot):
     active_strain_scales: Array
     active_dof_ends: Array
     dynamics_local_points: Array
+    weighted_inertias: Array
     weighted_mass_diagonals: Array
     inertia_upper_rows: Array
     inertia_upper_columns: Array
@@ -474,7 +489,9 @@ class PCS(SoftRobot):
             return self._strain_basis_scaling_vector()[:, None] * B_xi
         return B_xi
 
-    def cross_section_geometry(self, q: Array, s: Array) -> tuple[Array, Array]:
+    def cross_section_geometry(
+        self, q: Array, s: Array
+    ) -> tuple[Array, Array, Array | None]:
         """Evaluate the circular cross-section at a backbone coordinate.
 
         Args:
@@ -484,8 +501,9 @@ class PCS(SoftRobot):
             s: Scalar global backbone coordinate.
 
         Returns:
-            A tuple containing the circular :class:`CrossSectionGeometry` tag
-            and a one-element array holding the selected segment radius.
+            Tuple containing the circular :class:`CrossSectionGeometry` tag,
+            a one-element array with the segment radius, and ``None`` for the
+            solid section's inner dimensions.
 
         Raises:
             ValueError: If ``s`` cannot be assigned to a segment.
@@ -493,7 +511,7 @@ class PCS(SoftRobot):
         segment_idx, _ = self.classify_segment(s)
         radius = jnp.asarray(self.r)[segment_idx]
         tag = jnp.asarray(CrossSectionGeometry.CIRCULAR, dtype=jnp.int32)
-        return tag, jnp.array([radius])
+        return (tag, jnp.array([radius]), None)
 
     def _set_params(self, params: PCSParams) -> None:
         """Set cached runtime arrays from typed parameters."""
@@ -744,13 +762,17 @@ class PCS(SoftRobot):
         D_active = self.B_xi.T @ D_full @ self.B_xi
         return M_segments, K_full, K_active, D_full, D_active
 
+    @property
+    def _has_custom_inertia(self) -> bool:
+        return has_custom_inertia(self._current_body_params().link)
+
     def _dynamics_runtime_arrays(
         self, M_segments: Array
-    ) -> tuple[Array, Array, Array, Array, Array, Array, Array, Array]:
+    ) -> tuple[Array, Array, Array, Array, Array, Array, Array, Array, Array]:
         """Build compact state-independent spatial dynamics operands.
 
         The arrays encode the active strain selection, quadrature grid,
-        diagonal mass action, packed inertia layout, and base-frame gravity.
+        diagonal or full mass action, packed inertia layout, and base-frame gravity.
         They are cached on the model and shared by the JAX and Warp dynamics
         implementations, so backend execution does not repeat this structural
         preprocessing.
@@ -770,8 +792,9 @@ class PCS(SoftRobot):
             - quadrature-weighted mass diagonals, shape
               ``(num_segments, num_gauss_points, 6)``;
             - packed upper-inertia row indices;
-            - matching packed upper-inertia column indices; and
-            - gravity expressed in the base frame, shape ``(6,)``.
+            - matching packed upper-inertia column indices;
+            - gravity expressed in the base frame, shape ``(6,)``; and
+            - packed weighted inertias, with a tip slot for full matrices.
         """
 
         if self.num_internal_dofs == 0:
@@ -821,6 +844,11 @@ class PCS(SoftRobot):
             upper_rows,
             upper_columns,
             gravity_base,
+            weighted_inertias(
+                self._current_body_params().link,
+                jnp.broadcast_to(M_segments[:, None], (*weights.shape, 6, 6)),
+                weights,
+            ),
         )
 
     def precompute(self) -> None:
@@ -858,6 +886,7 @@ class PCS(SoftRobot):
                 "inertia_upper_rows",
                 "inertia_upper_columns",
                 "gravity_base",
+                "weighted_inertias",
             ),
             runtime_arrays,
             strict=True,
@@ -903,6 +932,7 @@ class PCS(SoftRobot):
                 m.inertia_upper_rows,
                 m.inertia_upper_columns,
                 m.gravity_base,
+                m.weighted_inertias,
             ),
             updated_self,
             runtime_arrays,
@@ -948,6 +978,41 @@ class PCS(SoftRobot):
         xi = self.B_xi @ q + self.xi_ref
 
         return xi
+
+    def relative_segment_kinematics(self, configuration):
+        """Evaluate each constant-strain segment's relative transform and Jacobian.
+
+        Args:
+            configuration (Array): Configuration, shape ``(num_coordinates,)``.
+
+        Returns:
+            result (tuple[Array, Array, Array]): Local link transforms, body
+                Jacobians, and identity joints; see the SoftRobot contract.
+        """
+        return constant_strain_segment_kinematics(self, configuration)
+
+    def strain_and_basis(
+        self, configuration: Array, segment_indices: Array, points: Array
+    ) -> tuple[Array, Array]:
+        """Evaluate spatial strains and their configuration basis.
+
+        Args:
+            configuration: Configuration with shape ``(num_coordinates,)``.
+            segment_indices: Sample segment indices with shape ``(num_points,)``.
+            points: Global reference backbone abscissae, shape ``(num_points,)``.
+
+        Returns:
+            Strains with shape ``(num_points, 6)`` and their analytical basis
+            with shape ``(num_points, 6, num_coordinates)``.
+        """
+        del points
+        _, internal = self.split_configuration(configuration)
+        strains = self.strain(internal).reshape(self.num_segments, 6)[segment_indices]
+        basis = self.B_xi.reshape(self.num_segments, 6, self.num_internal_dofs)
+        basis = jnp.pad(
+            basis[segment_indices], ((0, 0), (0, 0), (self.num_base_coordinates, 0))
+        )
+        return strains, basis
 
     @eqx.filter_jit
     def forward_kinematics(
@@ -2758,6 +2823,11 @@ class PCS(SoftRobot):
         Returns:
             B (Array): Inertia matrix of shape (num_active_strains, num_active_strains).
         """
+        if self._has_custom_inertia:
+            return self._assemble_dynamics_terms(
+                q, jnp.zeros(self.num_velocities, dtype=q.dtype)
+            )[0]
+
         if self.floating_base:
             zeros = jnp.zeros((self.num_velocities,), dtype=q.dtype)
             return self._assemble_dynamics_terms(q, zeros)[0]
@@ -2828,6 +2898,12 @@ class PCS(SoftRobot):
 
         return C_full
 
+    def _assemble_floating_dynamics_terms(
+        self, q: Array, v: Array
+    ) -> tuple[Array, Array, Array]:
+        """Use the augmented chain assembly for floating-base matrix queries."""
+        return self._assemble_dynamics_terms(q, v)
+
     @eqx.filter_jit
     def coriolis_matrix(self, q: Array, qd: Array) -> Array:
         """
@@ -2840,6 +2916,21 @@ class PCS(SoftRobot):
         Returns:
             C (Array): Coriolis matrix of shape (num_active_strains, num_active_strains).
         """
+        if self._has_custom_inertia and not self.floating_base:
+            _, _, jacobians, derivatives = self._integration_kinematics(
+                q, qd, include_tip=True
+            )
+            matrices = self.weighted_inertias.reshape(
+                (*self.weighted_inertias.shape[:2], 6, 6)
+            )
+
+            def contribution(J, Jd, M):
+                return J.T @ (M @ Jd + se3.coadjoint(J @ qd) @ M @ J)
+
+            return jnp.sum(
+                vmap(vmap(contribution))(jacobians, derivatives, matrices), axis=(0, 1)
+            )
+
         if self.floating_base:
             return self._floating_coriolis_matrix(q, qd)
         C_full = self._coriolis_full_matrix(q, qd)
@@ -2913,6 +3004,11 @@ class PCS(SoftRobot):
         Returns:
             G (Array): Gravitational force in generalized-velocity coordinates.
         """
+        if self._has_custom_inertia:
+            return self._assemble_dynamics_terms(
+                q, jnp.zeros(self.num_velocities, dtype=q.dtype)
+            )[2]
+
         point_positions, weighted_masses, linear_jacobians = (
             self._gravity_quadrature_kinematics(q, with_jacobians=True)
         )
@@ -3078,7 +3174,7 @@ class PCS(SoftRobot):
             self, q, u, qd, backend=backend, capabilities=PCS_ACTUATION
         )
 
-    def _threadlike_local_basis(
+    def _threadlike_local_geometry(
         self,
         segment_index: Array,
         strain: Array,
@@ -3087,27 +3183,208 @@ class PCS(SoftRobot):
         path_params: BaseThreadlikeRoutingParams,
         start_segment_index: Array,
         end_segment_index: Array,
-    ) -> Array:
-        """Return one spatial routed-path length gradient density."""
+    ) -> tuple[Array, Array, Array]:
+        """Return one spatial routed-path offset, unit tangent, and activity.
+
+        Args:
+            segment_index: Scalar index of the segment containing the node.
+            strain: PCS strain with shape ``(6,)``.
+            s: Scalar backbone abscissa of the node.
+            routing: Routed-path family being integrated.
+            path_params: Parameters of the single path.
+            start_segment_index: Scalar index of the path's first segment.
+            end_segment_index: Scalar index of the path's last segment.
+
+        Returns:
+            offset: Material-frame routing offset with shape ``(3,)``.
+            unit_tangent: Material-frame unit tangent with shape ``(3,)``.
+            active: Scalar indicating whether the path traverses the segment.
+        """
         active = (start_segment_index <= segment_index) & (
             segment_index <= end_segment_index
         )
-        offset = jnp.append(routing.offset(path_params, s), 1.0)
-        offset_derivative = jnp.append(routing.derivative(path_params, s), 1.0)
-        tangent_unnormalized = (offset_derivative + se3.hat(strain) @ offset)[:-1]
-        tangent = safe_normalize(tangent_unnormalized, eps=self.global_eps)
-        basis = jnp.hstack([so3.skew(offset[:-1]) @ tangent, tangent])
+        offset = routing.offset(path_params, s)
+        offset_derivative = routing.derivative(path_params, s)
+        tangent = threadlike_tangent(strain[:3], strain[3:], offset, offset_derivative)
+        return offset, safe_normalize(tangent, eps=self.global_eps), active
+
+    def _threadlike_local_length_gradient(
+        self, offset: Array, unit_tangent: Array, active: Array
+    ) -> Array:
+        """Return one spatial routed-path length gradient density, ``d|t|/dxi``.
+
+        Args:
+            offset: Material-frame routing offset with shape ``(3,)``.
+            unit_tangent: Material-frame unit tangent with shape ``(3,)``.
+            active: Scalar indicating whether the path traverses the segment.
+
+        Returns:
+            length_gradient_density: Routed-length gradient density with shape
+                ``(6,)``.
+        """
+        basis = jnp.hstack([so3.skew(offset) @ unit_tangent, unit_tangent])
         return active * basis
 
-    def _threadlike_moment_matrix(self, q: Array, routing: ThreadlikeRouting) -> Array:
-        """Integrate raw routed-length moment arms in the PCS strain basis."""
+    def _threadlike_turn_rates(
+        self,
+        xi: Array,
+        routing: ThreadlikeRouting,
+        segment_index: Array,
+        s_ps: Array,
+    ) -> Array:
+        """Evaluate analytical spatial-path turn rates at backbone abscissae.
+
+        Args:
+            xi: Piecewise-constant PCS strains with shape
+                ``(self.num_segments, 6)``.
+            routing: Routed-path family.
+            segment_index: Segment containing every supplied abscissa.
+            s_ps: Backbone abscissae with shape ``(num_points,)``.
+
+        Returns:
+            Turn rates with shape ``(num_points, routing.num_paths)``.
+        """
+        xi_i = xi[segment_index]
+
+        def point_rates(s: Array) -> Array:
+            """Return all path-turn rates at one backbone abscissa."""
+
+            def path_rate(path_params: BaseThreadlikeRoutingParams) -> Array:
+                """Return one routed path's turn rate at the abscissa."""
+                offset = routing.offset(path_params, s)
+                offset_derivative = routing.derivative(path_params, s)
+                offset_second_derivative = routing.second_derivative(path_params, s)
+                return threadlike_constant_strain_turn_rate(
+                    xi_i[:3],
+                    xi_i[3:],
+                    offset,
+                    offset_derivative,
+                    offset_second_derivative,
+                    eps=self.global_eps,
+                )
+
+            return vmap(path_rate)(routing.params)
+
+        return vmap(point_rates)(s_ps)
+
+    def _threadlike_boundary_turn(
+        self,
+        xi: Array,
+        routing: ThreadlikeRouting,
+        left_segment_index: Array,
+    ) -> Array:
+        """Return one-sided path-turn angles at a PCS segment boundary.
+
+        Args:
+            xi: Piecewise-constant PCS strains with shape
+                ``(self.num_segments, 6)``.
+            routing: Routed-path family.
+            left_segment_index: Scalar index of the segment immediately before
+                the boundary.
+
+        Returns:
+            Unsigned tangent angles with shape ``(routing.num_paths,)``.
+        """
+        s = self.L_cum[left_segment_index + 1]
+
+        def path_angle(path_params: BaseThreadlikeRoutingParams) -> Array:
+            """Return one routed path's tangent jump at the boundary."""
+            offset = routing.offset(path_params, s)
+            offset_derivative = routing.derivative(path_params, s)
+
+            def unit_tangent(strain: Array) -> Array:
+                """Return the path unit tangent for one-sided segment strain."""
+                tangent = threadlike_tangent(
+                    strain[:3], strain[3:], offset, offset_derivative
+                )
+                return safe_normalize(tangent, eps=self.global_eps)
+
+            return threadlike_turning_angle(
+                unit_tangent(xi[left_segment_index]),
+                unit_tangent(xi[left_segment_index + 1]),
+            )
+
+        return vmap(path_angle)(routing.params)
+
+    def _threadlike_accumulated_turn(
+        self,
+        xi: Array,
+        routing: ThreadlikeRouting,
+        s: Array,
+    ) -> Array:
+        """Integrate unsigned routed-path turn from each anchor through ``s``.
+
+        Args:
+            xi: Piecewise-constant PCS strains with shape
+                ``(self.num_segments, 6)``.
+            routing: Routed-path family.
+            s: Scalar backbone abscissa.
+
+        Returns:
+            Accumulated turn in radians with shape ``(routing.num_paths,)``.
+        """
+        normalized_s_ps = jnp.broadcast_to(
+            self.integration_points[None, :],
+            (self.num_segments, self.num_integration_points),
+        )
+        weights = jnp.broadcast_to(
+            self.integration_weights[None, :], normalized_s_ps.shape
+        )
+        return integrate_accumulated_turn(
+            lambda segment_index, s_ps: self._threadlike_turn_rates(
+                xi, routing, segment_index, s_ps
+            ),
+            lambda left_segment_index: self._threadlike_boundary_turn(
+                xi, routing, left_segment_index
+            ),
+            s,
+            self.L_cum[:-1],
+            self.L,
+            normalized_s_ps,
+            weights,
+            routing.params.start_segment_index_array,
+            routing.params.end_segment_index_array,
+        )
+
+    def _threadlike_actuation_matrix(
+        self,
+        q: Array,
+        routing: ThreadlikeRouting,
+        friction: ThreadlikeFriction | None = None,
+    ) -> Array:
+        """Integrate the threadlike anchor-effort map in the PCS basis.
+
+        Args:
+            q: Generalized coordinates of shape ``(num_dofs,)``.
+            routing: Routed-path family with ``routing.num_paths`` paths.
+            friction: Optional friction model. ``None`` or any model whose
+                ``is_frictionless`` is set skips the weighting entirely.
+
+        Returns:
+            A: Effort-to-generalized-force matrix with shape
+                ``(self.num_internal_dofs, routing.num_paths)``.
+        """
         params = routing.params
         count = params.num_paths
         if count == 0:
             return jnp.zeros((self.num_internal_dofs, 0), dtype=q.dtype)
-        strains = self.strain(q).reshape((self.num_segments, 6))
+        xi = self.strain(q).reshape((self.num_segments, 6))
+
+        has_friction = friction is not None and not friction.is_frictionless
+        accumulated_turn = None
+        if has_friction:
+            s_ps = (
+                self.L_cum[:-1, None]
+                + self.L[:, None] * (self.integration_points[None, :])
+            )
+            accumulated_turn = vmap(
+                lambda segment_s_ps: vmap(
+                    lambda s: self._threadlike_accumulated_turn(xi, routing, s)
+                )(segment_s_ps)
+            )(s_ps)
 
         def segment_matrix(segment_index: Array) -> Array:
+            """Integrate the effort map over one PCS segment."""
             points, weights = scale_gaussian_quadrature(
                 self.integration_points,
                 self.integration_weights,
@@ -3116,20 +3393,33 @@ class PCS(SoftRobot):
             )
 
             def point_matrix(point_index: Array) -> Array:
-                basis = vmap(
-                    self._threadlike_local_basis,
+                """Return one quadrature node's weighted effort-map density."""
+                offset, unit_tangent, active = vmap(
+                    self._threadlike_local_geometry,
                     in_axes=(None, None, None, None, 0, 0, 0),
-                    out_axes=1,
+                    out_axes=0,
                 )(
                     segment_index,
-                    strains[segment_index],
+                    xi[segment_index],
                     points[point_index],
                     routing,
                     params,
                     params.start_segment_index_array,
                     params.end_segment_index_array,
                 )
-                return weights[point_index] * basis
+                basis = vmap(self._threadlike_local_length_gradient, out_axes=1)(
+                    offset, unit_tangent, active
+                )
+                weighted = weights[point_index] * basis
+                if not has_friction:
+                    return weighted
+                assert accumulated_turn is not None
+                return (
+                    weighted
+                    * friction.effort_ratio(
+                        accumulated_turn[segment_index, point_index]
+                    )[None, :]
+                )
 
             return jnp.sum(
                 vmap(point_matrix)(jnp.arange(self.num_integration_points)), axis=0
@@ -3140,12 +3430,39 @@ class PCS(SoftRobot):
         )
         return self.B_xi.T @ full_matrix
 
+    def _threadlike_path_length_jacobian(
+        self, q: Array, routing: ThreadlikeRouting
+    ) -> Array:
+        """Return the Jacobian of unscaled PCS routed-path lengths.
+
+        Args:
+            q: Generalized coordinates with shape
+                ``(self.num_internal_dofs,)``.
+            routing: Routed-path family.
+
+        Returns:
+            J_l: Path-length Jacobian with shape
+                ``(routing.num_paths, self.num_internal_dofs)``. It maps
+                generalized velocity to unscaled path-length rates as
+                ``path_velocity = J_l @ qd``.
+        """
+        return self._threadlike_actuation_matrix(q, routing).T
+
     def _threadlike_path_lengths(self, q: Array, routing: ThreadlikeRouting) -> Array:
-        """Integrate raw threadlike path lengths without signed work scaling."""
+        """Integrate raw threadlike path lengths without signed work scaling.
+
+        Args:
+            q: Generalized coordinates with shape
+                ``(self.num_internal_dofs,)``.
+            routing: Routed-path family.
+
+        Returns:
+            Physical path lengths with shape ``(routing.num_paths,)``.
+        """
         params = routing.params
         if params.num_paths == 0:
             return jnp.zeros((0,), dtype=q.dtype)
-        strains = self.strain(q).reshape((self.num_segments, 6))
+        xi = self.strain(q).reshape((self.num_segments, 6))
 
         def segment_density(segment_index: Array) -> Array:
             points, weights = scale_gaussian_quadrature(
@@ -3168,9 +3485,7 @@ class PCS(SoftRobot):
                     )
                     offset = jnp.append(routing.offset(path_params, s), 1.0)
                     derivative = jnp.append(routing.derivative(path_params, s), 1.0)
-                    tangent = (derivative + se3.hat(strains[segment_index]) @ offset)[
-                        :-1
-                    ]
+                    tangent = (derivative + se3.hat(xi[segment_index]) @ offset)[:-1]
                     return active * safe_norm(tangent)
 
                 density = vmap(path_density)(
@@ -3189,7 +3504,17 @@ class PCS(SoftRobot):
     def _threadlike_path_positions(
         self, q: Array, s: Array, routing: ThreadlikeRouting
     ) -> Array:
-        """Return spatial positions of all routed paths at backbone coordinate ``s``."""
+        """Return spatial routed-path positions at a backbone abscissa.
+
+        Args:
+            q: Generalized coordinates with shape
+                ``(self.num_internal_dofs,)``.
+            s: Scalar backbone abscissa.
+            routing: Routed-path family.
+
+        Returns:
+            Path positions with shape ``(routing.num_paths, 3)``.
+        """
         params = routing.params
         if params.num_paths == 0:
             return jnp.zeros((0, 3), dtype=q.dtype)
@@ -3227,6 +3552,24 @@ class PCS(SoftRobot):
         Returns:
             U_G (Array): Gravitational energy of the robot.
         """
+        if self._has_custom_inertia:
+            model = self
+            if self.floating_base:
+                base_pose, internal = self.split_configuration(q)
+                model = self._fixed_base_robot_at_pose(base_pose)
+                q = internal
+            _, poses, _, _ = model._integration_kinematics(
+                q, jnp.zeros(model.num_internal_dofs, dtype=q.dtype), include_tip=True
+            )
+            matrices = self.weighted_inertias.reshape(
+                (*self.weighted_inertias.shape[:2], 6, 6)
+            )
+            mass, first_moment = mass_first_moment(matrices)
+            mass_positions = mass[..., None] * poses[..., :3, 3] + jnp.einsum(
+                "...ij,...j->...i", poses[..., :3, :3], first_moment
+            )
+            return -jnp.sum(mass_positions @ self.g[3:])
+
         point_positions, weighted_masses, _ = self._gravity_quadrature_kinematics(
             q, with_jacobians=False
         )
@@ -3374,7 +3717,12 @@ class PCS(SoftRobot):
 
     @eqx.filter_jit
     def _integration_kinematics(
-        self, q: Array, qd: Array, convective_only_jd: bool = False
+        self,
+        q: Array,
+        qd: Array,
+        convective_only_jd: bool = False,
+        *,
+        include_tip: bool = False,
     ) -> tuple[Array, Array, Array, Array]:
         """
         Return weights, poses, active Jacobians, and derivative information.
@@ -3414,6 +3762,11 @@ class PCS(SoftRobot):
             self.L_cum[1:],
         )
         s_local = Xs_inner - self.L_cum[:-1, None]
+        if include_tip:
+            s_local = jnp.concatenate((s_local, self.L[:, None]), axis=1)
+            Ws_inner = jnp.concatenate(
+                (Ws_inner, jnp.ones_like(Ws_inner[:, :1])), axis=1
+            )
 
         def scan_fk(g_base: Array, i: Array) -> tuple[Array, Array]:
             xi_i = lax.dynamic_index_in_dim(xi, i, axis=0, keepdims=False)
@@ -3621,6 +3974,16 @@ class PCS(SoftRobot):
                 Jd_qd_bases,
                 s_local,
             )
+            if self._has_custom_inertia:
+                gravity_tips = jnp.einsum("nij,nj->ni", Ad_inv_tips, gravity_bases)
+                gravity_ps = jnp.concatenate(
+                    (gravity_ps, gravity_tips[:, None]), axis=1
+                )
+                J_ps = jnp.concatenate((J_ps, J_tips[:, None]), axis=1)
+                Jd_qd_ps = jnp.concatenate((Jd_qd_ps, Jd_qd_tips[:, None]), axis=1)
+                Ws_inner = jnp.concatenate(
+                    (Ws_inner, jnp.ones((self.num_segments, 1))), axis=1
+                )
             return Ws_inner, gravity_ps, J_ps, Jd_qd_ps
 
         q = self.normalize_configuration(q)
@@ -3720,6 +4083,14 @@ class PCS(SoftRobot):
             Jd_qd_bases,
             s_local,
         )
+        if self._has_custom_inertia:
+            gravity_tips = jnp.einsum("nij,nj->ni", Ad_inv_tips, gravity_bases)
+            gravity_ps = jnp.concatenate((gravity_ps, gravity_tips[:, None]), axis=1)
+            J_ps = jnp.concatenate((J_ps, J_tips[:, None]), axis=1)
+            Jd_qd_ps = jnp.concatenate((Jd_qd_ps, Jd_qd_tips[:, None]), axis=1)
+            Ws_inner = jnp.concatenate(
+                (Ws_inner, jnp.ones((self.num_segments, 1))), axis=1
+            )
         return Ws_inner, gravity_ps, J_ps, Jd_qd_ps
 
     def dynamics_terms(
@@ -3806,28 +4177,26 @@ class PCS(SoftRobot):
         # prefix width; scan/fori_loop require a fixed-width body and do extra work.
         for segment_index, dof_end in enumerate(self._segment_dof_ends):
             velocity_end = self.num_base_velocities + dof_end
-            mass_diagonal = jnp.diagonal(self.M_segments[segment_index])
+            packed_mass = self.weighted_inertias[segment_index]
             jacobian = jacobians[segment_index, :, :, :velocity_end]
-            weight = weights[segment_index]
 
-            def mass_action(value: Array, diagonal: Array = mass_diagonal) -> Array:
-                shape = (1, diagonal.shape[0]) + (1,) * (value.ndim - 2)
-                return diagonal.reshape(shape) * value
+            def mass_action(value: Array, packed: Array = packed_mass) -> Array:
+                return spatial_mass_action(packed, value)
 
-            flattened_rows = self.num_gauss_points * 6
+            flattened_rows = jacobian.shape[0] * 6
             jacobian_flat = jacobian.reshape(flattened_rows, velocity_end)
-            weighted_mass_jacobian = (
-                weight[:, None, None] * mass_action(jacobian)
-            ).reshape(flattened_rows, velocity_end)
+            weighted_mass_jacobian = mass_action(jacobian).reshape(
+                flattened_rows, velocity_end
+            )
             inertia_segment = jacobian_flat.T @ weighted_mass_jacobian
 
             eta = jacobian @ qd[:velocity_end]
             momentum = mass_action(eta)
             coadjoint_momentum = vmap(se3.coadjoint_action)(eta, momentum)
             wrench = mass_action(jacobian_dot_qd[segment_index]) + coadjoint_momentum
-            coriolis_segment = jacobian_flat.T @ (weight[:, None] * wrench).reshape(-1)
+            coriolis_segment = jacobian_flat.T @ wrench.reshape(-1)
             gravity_segment = -jacobian_flat.T @ (
-                weight[:, None] * mass_action(gravity[segment_index])
+                mass_action(gravity[segment_index])
             ).reshape(-1)
 
             inertia = inertia.at[:velocity_end, :velocity_end].add(inertia_segment)

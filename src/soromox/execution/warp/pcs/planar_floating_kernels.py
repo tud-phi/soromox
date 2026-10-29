@@ -5,6 +5,10 @@ from __future__ import annotations
 
 import warp as wp
 
+from soromox.execution.warp.common.planar_inertia import (
+    _mass_jacobian_action,
+    _mass_vector_action,
+)
 from soromox.execution.warp.common.so2 import _rotation_transpose_entry
 from soromox.execution.warp.common.storage import (
     _matrix_value,
@@ -16,6 +20,7 @@ from soromox.execution.warp.common.storage import (
 wp.set_module_options({"enable_backward": False})
 
 SPATIAL_DIM = 3
+
 
 @wp.kernel(enable_backward=False)
 def planar_floating_persistent_chain_kernel(
@@ -81,7 +86,9 @@ def planar_floating_persistent_chain_kernel(
     num_dofs = velocity.shape[1]
     num_segments = active_indices.shape[0]
     num_quadrature = weighted_masses.shape[0] // num_segments
-    points_per_segment = num_quadrature + 1
+    points_per_segment = adjoint_inverse.shape[0] // (
+        velocity.shape[0] * num_segments * SPATIAL_DIM
+    )
     lane_stride = block_dim
     state_base_row = environment * SPATIAL_DIM
     base_dofs = int(3)
@@ -118,9 +125,7 @@ def planar_floating_persistent_chain_kernel(
             if row == 0 and column == 0:
                 root_jacobian = wp.float64(1.0)
             elif row >= 1 and column >= 1:
-                root_jacobian = _rotation_transpose_entry(
-                    theta, row - 1, column - 1
-                )
+                root_jacobian = _rotation_transpose_entry(theta, row - 1, column - 1)
             root_velocity += root_jacobian * velocity[environment, column]
             column += 1
         root_gravity = wp.float64(0.0)
@@ -136,9 +141,7 @@ def planar_floating_persistent_chain_kernel(
         derivative_second[state_base_row + row, 0] = wp.float64(0.0)
         gravity_first[state_base_row + row, 0] = root_gravity
         gravity_second[state_base_row + row, 0] = wp.float64(0.0)
-    wp.tile_scatter_masked(
-        base_velocity_shared, row, root_velocity, row < SPATIAL_DIM
-    )
+    wp.tile_scatter_masked(base_velocity_shared, row, root_velocity, row < SPATIAL_DIM)
     entry = lane
     while entry < num_dofs * num_dofs:
         output_row = entry // num_dofs
@@ -346,24 +349,22 @@ def planar_floating_persistent_chain_kernel(
                     spatial = int(0)
                     mass_item = segment * num_quadrature + quadrature
                     while spatial < SPATIAL_DIM:
-                        value += (
-                            _matrix_value(
-                                jacobian_first,
-                                jacobian_second,
-                                destination_is_first,
-                                state_base_row,
-                                spatial,
-                                output_row,
-                            )
-                            * weighted_masses[mass_item, spatial]
-                            * _matrix_value(
-                                jacobian_first,
-                                jacobian_second,
-                                destination_is_first,
-                                state_base_row,
-                                spatial,
-                                output_column,
-                            )
+                        value += _matrix_value(
+                            jacobian_first,
+                            jacobian_second,
+                            destination_is_first,
+                            state_base_row,
+                            spatial,
+                            output_row,
+                        ) * _mass_jacobian_action(
+                            weighted_masses,
+                            mass_item,
+                            spatial,
+                            jacobian_first,
+                            jacobian_second,
+                            destination_is_first,
+                            state_base_row,
+                            output_column,
                         )
                         spatial += 1
                     inertia[environment, output_row, output_column] += value
@@ -377,37 +378,34 @@ def planar_floating_persistent_chain_kernel(
                 omega = velocity_shared[0]
                 velocity_x = velocity_shared[1]
                 velocity_y = velocity_shared[2]
-                force_x = weighted_masses[mass_item, 1] * velocity_x
-                force_y = weighted_masses[mass_item, 2] * velocity_y
-                wrench = wp.vec3d(
-                    weighted_masses[mass_item, 0]
-                    * _vector_value(
+                momentum = wp.vec3d()
+                acceleration = wp.vec3d()
+                for row in range(SPATIAL_DIM):
+                    if weighted_masses.shape[1] == SPATIAL_DIM:
+                        momentum[row] = (
+                            weighted_masses[mass_item, row] * velocity_shared[row]
+                        )
+                    else:
+                        for k in range(SPATIAL_DIM):
+                            momentum[row] += (
+                                weighted_masses[mass_item, row * SPATIAL_DIM + k]
+                                * velocity_shared[k]
+                            )
+                    acceleration[row] = _mass_vector_action(
+                        weighted_masses,
+                        mass_item,
+                        row,
                         derivative_first,
                         derivative_second,
                         destination_is_first,
                         state_base_row,
-                        0,
                     )
-                    + velocity_y * force_x
-                    - velocity_x * force_y,
-                    weighted_masses[mass_item, 1]
-                    * _vector_value(
-                        derivative_first,
-                        derivative_second,
-                        destination_is_first,
-                        state_base_row,
-                        1,
-                    )
-                    - omega * force_y,
-                    weighted_masses[mass_item, 2]
-                    * _vector_value(
-                        derivative_first,
-                        derivative_second,
-                        destination_is_first,
-                        state_base_row,
-                        2,
-                    )
-                    + omega * force_x,
+                force_x = momentum[1]
+                force_y = momentum[2]
+                wrench = acceleration + wp.vec3d(
+                    velocity_x * force_y - velocity_y * force_x,
+                    -omega * force_y,
+                    omega * force_x,
                 )
                 coriolis_value = wp.float64(0.0)
                 gravity_value = wp.float64(0.0)
@@ -422,16 +420,14 @@ def planar_floating_persistent_chain_kernel(
                         column,
                     )
                     coriolis_value += jacobian_value * wrench[spatial]
-                    gravity_value -= (
-                        jacobian_value
-                        * weighted_masses[mass_item, spatial]
-                        * _vector_value(
-                            gravity_first,
-                            gravity_second,
-                            destination_is_first,
-                            state_base_row,
-                            spatial,
-                        )
+                    gravity_value -= jacobian_value * _mass_vector_action(
+                        weighted_masses,
+                        mass_item,
+                        spatial,
+                        gravity_first,
+                        gravity_second,
+                        destination_is_first,
+                        state_base_row,
                     )
                     spatial += 1
                 coriolis_qd[environment, column] += coriolis_value
@@ -440,139 +436,146 @@ def planar_floating_persistent_chain_kernel(
             wp.tile_scatter_masked(barrier, 0, int(0), lane == 0)
             quadrature += 1
 
+        # Full inertia already reduced the tip using the final operator point.
+        # The geometric diagonal path propagates that tip here.
         destination_is_first = not current_is_first
-        operator_item = (
-            environment * num_segments + segment
-        ) * points_per_segment + num_quadrature
-        operator_base_row = operator_item * SPATIAL_DIM
-        entry = lane
-        while entry < SPATIAL_DIM * active_end:
-            output_row = entry // active_end
-            output_column = entry - output_row * active_end
-            value = wp.float64(0.0)
-            k = int(0)
-            while k < SPATIAL_DIM:
-                value += adjoint_inverse[operator_base_row + output_row, k] * (
-                    _matrix_value(
-                        jacobian_first,
-                        jacobian_second,
+        if num_quadrature < points_per_segment:
+            destination_is_first = not current_is_first
+            operator_item = (
+                (environment * num_segments + segment) * points_per_segment
+                + points_per_segment
+                - 1
+            )
+            operator_base_row = operator_item * SPATIAL_DIM
+            entry = lane
+            while entry < SPATIAL_DIM * active_end:
+                output_row = entry // active_end
+                output_column = entry - output_row * active_end
+                value = wp.float64(0.0)
+                k = int(0)
+                while k < SPATIAL_DIM:
+                    value += adjoint_inverse[operator_base_row + output_row, k] * (
+                        _matrix_value(
+                            jacobian_first,
+                            jacobian_second,
+                            current_is_first,
+                            state_base_row,
+                            k,
+                            output_column,
+                        )
+                    )
+                    k += 1
+                local = int(0)
+                while local < SPATIAL_DIM:
+                    if active_indices[segment, local] + base_dofs == output_column:
+                        value += (
+                            transported_tangent[operator_base_row + output_row, local]
+                            * active_scales[segment, local]
+                        )
+                    local += 1
+                _write_matrix_value(
+                    jacobian_first,
+                    jacobian_second,
+                    destination_is_first,
+                    state_base_row,
+                    output_row,
+                    output_column,
+                    value,
+                )
+                entry += lane_stride
+            wp.tile_scatter_masked(barrier, 0, int(0), lane == 0)
+
+            row = lane
+            transported_velocity = wp.float64(0.0)
+            if row < SPATIAL_DIM:
+                derivative_value = wp.float64(0.0)
+                gravity_value = wp.float64(0.0)
+                k = int(0)
+                while k < SPATIAL_DIM:
+                    adjoint_value = adjoint_inverse[operator_base_row + row, k]
+                    transported_velocity += adjoint_value * base_velocity_shared[k]
+                    derivative_value += adjoint_value * _vector_value(
+                        derivative_first,
+                        derivative_second,
                         current_is_first,
                         state_base_row,
                         k,
-                        output_column,
                     )
-                )
-                k += 1
-            local = int(0)
-            while local < SPATIAL_DIM:
-                if active_indices[segment, local] + base_dofs == output_column:
-                    value += (
-                        transported_tangent[operator_base_row + output_row, local]
-                        * active_scales[segment, local]
+                    gravity_value += adjoint_value * _vector_value(
+                        gravity_first,
+                        gravity_second,
+                        current_is_first,
+                        state_base_row,
+                        k,
                     )
-                local += 1
-            _write_matrix_value(
-                jacobian_first,
-                jacobian_second,
-                destination_is_first,
-                state_base_row,
-                output_row,
-                output_column,
-                value,
-            )
-            entry += lane_stride
-        wp.tile_scatter_masked(barrier, 0, int(0), lane == 0)
-
-        row = lane
-        transported_velocity = wp.float64(0.0)
-        if row < SPATIAL_DIM:
-            derivative_value = wp.float64(0.0)
-            gravity_value = wp.float64(0.0)
-            k = int(0)
-            while k < SPATIAL_DIM:
-                adjoint_value = adjoint_inverse[operator_base_row + row, k]
-                transported_velocity += adjoint_value * base_velocity_shared[k]
-                derivative_value += adjoint_value * _vector_value(
-                    derivative_first,
-                    derivative_second,
-                    current_is_first,
-                    state_base_row,
-                    k,
-                )
-                gravity_value += adjoint_value * _vector_value(
+                    k += 1
+                _write_vector_value(
                     gravity_first,
                     gravity_second,
-                    current_is_first,
+                    destination_is_first,
                     state_base_row,
-                    k,
+                    row,
+                    gravity_value,
                 )
-                k += 1
-            _write_vector_value(
-                gravity_first,
-                gravity_second,
-                destination_is_first,
-                state_base_row,
+                derivative_value += transported_tangent_dot_velocity[
+                    operator_base_row + row, 0
+                ]
+                _write_vector_value(
+                    derivative_first,
+                    derivative_second,
+                    destination_is_first,
+                    state_base_row,
+                    row,
+                    derivative_value,
+                )
+            wp.tile_scatter_masked(
+                transported_velocity_shared,
                 row,
-                gravity_value,
+                transported_velocity,
+                row < SPATIAL_DIM,
             )
-            derivative_value += transported_tangent_dot_velocity[
-                operator_base_row + row, 0
-            ]
-            _write_vector_value(
-                derivative_first,
-                derivative_second,
-                destination_is_first,
-                state_base_row,
-                row,
-                derivative_value,
-            )
-        wp.tile_scatter_masked(
-            transported_velocity_shared,
-            row,
-            transported_velocity,
-            row < SPATIAL_DIM,
-        )
-        wp.tile_scatter_masked(barrier, 0, int(0), lane == 0)
-        if lane == 0:
-            local_omega = local_velocity[operator_base_row + 0, 0]
-            local_x = local_velocity[operator_base_row + 1, 0]
-            local_y = local_velocity[operator_base_row + 2, 0]
-            source_omega = transported_velocity_shared[0]
-            source_x = transported_velocity_shared[1]
-            source_y = transported_velocity_shared[2]
-            _write_vector_value(
-                derivative_first,
-                derivative_second,
-                destination_is_first,
-                state_base_row,
-                1,
-                _vector_value(
+            wp.tile_scatter_masked(barrier, 0, int(0), lane == 0)
+            if lane == 0:
+                local_omega = local_velocity[operator_base_row + 0, 0]
+                local_x = local_velocity[operator_base_row + 1, 0]
+                local_y = local_velocity[operator_base_row + 2, 0]
+                source_omega = transported_velocity_shared[0]
+                source_x = transported_velocity_shared[1]
+                source_y = transported_velocity_shared[2]
+                _write_vector_value(
                     derivative_first,
                     derivative_second,
                     destination_is_first,
                     state_base_row,
                     1,
+                    _vector_value(
+                        derivative_first,
+                        derivative_second,
+                        destination_is_first,
+                        state_base_row,
+                        1,
+                    )
+                    - (local_y * source_omega - local_omega * source_y),
                 )
-                - (local_y * source_omega - local_omega * source_y),
-            )
-            _write_vector_value(
-                derivative_first,
-                derivative_second,
-                destination_is_first,
-                state_base_row,
-                2,
-                _vector_value(
+                _write_vector_value(
                     derivative_first,
                     derivative_second,
                     destination_is_first,
                     state_base_row,
                     2,
+                    _vector_value(
+                        derivative_first,
+                        derivative_second,
+                        destination_is_first,
+                        state_base_row,
+                        2,
+                    )
+                    - (-local_x * source_omega + local_omega * source_x),
                 )
-                - (-local_x * source_omega + local_omega * source_x),
-            )
-        wp.tile_scatter_masked(barrier, 0, int(0), lane == 0)
+            wp.tile_scatter_masked(barrier, 0, int(0), lane == 0)
         current_is_first = destination_is_first
         segment += 1
+
 
 def launch_planar_floating_persistent_chain(
     adjoint_inverse: wp.array2d[wp.float64],
@@ -661,6 +664,7 @@ def launch_planar_floating_persistent_chain(
         ],
         block_dim=block_dim,
     )
+
 
 planar_floating_persistent_chain = wp.jax_callable(
     launch_planar_floating_persistent_chain, num_outputs=9

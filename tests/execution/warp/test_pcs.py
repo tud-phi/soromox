@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
+import equinox as eqx
 import jax
 import pytest
 from numpy.testing import assert_allclose
@@ -24,6 +25,43 @@ from ._kinematics_equivalence import (
 )
 
 
+@pytest.mark.parametrize("num_gauss_points", [1, 5, 9])
+def test_diagonal_and_full_pcs_inertia_layouts_agree(
+    make_pcs_model: Callable[..., Any],
+    state_batch: Callable[..., Any],
+    num_gauss_points: int,
+) -> None:
+    """Keep both compiled layouts correct when used in the same process."""
+
+    pytest.importorskip("warp")
+    if jax.default_backend() != "gpu":
+        pytest.skip("Spatial PCS Warp dynamics require CUDA.")
+    diagonal = make_pcs_model("warp", num_gauss_points=num_gauss_points)
+    full = diagonal.update_link_params(sectional_inertia=diagonal.M_segments)
+    q, qd, _ = state_batch(diagonal)
+    expected = jax.vmap(diagonal._assemble_dynamics_terms)(q, qd)
+    for model in (diagonal, full, diagonal):
+        actual = jax.jit(jax.vmap(model.dynamics_terms))(q, qd)
+        for term, reference in zip(actual, expected, strict=True):
+            assert_allclose(term, reference, rtol=3e-8, atol=3e-10)
+
+    # Updating values must not freeze the masses selected at compilation time.
+    traces = []
+
+    @eqx.filter_jit
+    def evaluate(model):
+        traces.append(True)
+        return jax.vmap(model.dynamics_terms)(q, qd)
+
+    first = evaluate(diagonal)
+    doubled = evaluate(
+        diagonal.update_link_params(density=2 * diagonal.params.link.density)
+    )
+    assert len(traces) == 1
+    for term, reference in zip(doubled, first, strict=True):
+        assert_allclose(term, 2 * reference, rtol=3e-8, atol=3e-10)
+
+
 def test_pcs_operands_are_views_over_precomputed_model_data(
     make_pcs_model: Callable[[str], Any],
 ) -> None:
@@ -39,7 +77,7 @@ def test_pcs_operands_are_views_over_precomputed_model_data(
     assert operands.block_dim == model.backend_params.warp_block_dim
     assert operands.active_strain_indices is model.active_strain_indices
     assert operands.reference_strain is model.xi_ref
-    assert operands.weighted_mass_diagonals is model.weighted_mass_diagonals
+    assert operands.weighted_inertias is model.weighted_inertias
 
 
 def test_spatial_pcs_pipeline_shapes_cover_workspace_and_results(

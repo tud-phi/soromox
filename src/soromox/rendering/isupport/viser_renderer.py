@@ -963,6 +963,8 @@ class ISupportLiveModeController(LiveModeController):
                     print(f"[ISupportViserRenderer] Callback error: {exc}")
             time.sleep(self._dt)
 
-    def _process_state(self, q: np.ndarray) -> None:
+    def _process_state(
+        self, q: np.ndarray, *, routing=None, routing_solution=None
+    ) -> None:
         self._renderer._current_geometry_q = self._renderer._as_batch(q)
-        super()._process_state(q)
+        super()._process_state(q, routing=routing, routing_solution=routing_solution)

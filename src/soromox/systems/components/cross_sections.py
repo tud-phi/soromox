@@ -18,11 +18,14 @@ __all__ = [
     "ProfileType",
     "evaluate_profile",
     "section_properties",
+    "section_inner_dimensions",
+    "section_torsion_constant",
+    "section_shear_factors",
 ]
 
 
 class CrossSectionGeometry(IntEnum):
-    """Supported solid cross-section families."""
+    """Supported cross-section boundary families."""
 
     CIRCULAR = 0
     RECTANGULAR = 1
@@ -154,12 +157,13 @@ def evaluate_profile(
 def section_properties(
     geometry: CrossSectionGeometry | int,
     dimensions: Array,
+    inner_dimensions: Array | None = None,
 ) -> tuple[Array, Array, Array, Array]:
-    """Return ``(I_x, I_y, I_z, area)`` for a solid section.
+    """Return ``(I_x, I_y, I_z, area)`` for a centred solid or hollow section.
 
     The material-frame x-axis is longitudinal. Rectangular dimensions are
-    ordered ``[height, width]`` and elliptical dimensions are ordered
-    ``[semi_major, semi_minor]``.
+    ordered ``[height, width]``, spanning local y and z respectively. Elliptical
+    dimensions are ordered ``[semi_major, semi_minor]``, also along y and z.
 
     Args:
         geometry: Cross-section family, supplied as a
@@ -167,6 +171,8 @@ def section_properties(
         dimensions: Geometry dimensions. Circular sections use ``[radius]``;
             rectangular sections use ``[height, width]``; elliptical sections
             use ``[semi_major, semi_minor]``.
+        inner_dimensions: Optional cavity dimensions in the same order. The
+            caller validates that the cavity lies inside the outer boundary.
 
     Returns:
         A tuple ``(I_x, I_y, I_z, area)`` containing the polar second moment
@@ -176,22 +182,132 @@ def section_properties(
     Raises:
         ValueError: If ``geometry`` does not identify a supported section.
     """
+    if inner_dimensions is not None:
+        outer = section_properties(geometry, dimensions)
+        inner = section_properties(geometry, inner_dimensions)
+        return tuple(a - b for a, b in zip(outer, inner, strict=True))
     dimensions = jnp.asarray(dimensions)
     geometry = CrossSectionGeometry(int(geometry))
     if geometry == CrossSectionGeometry.CIRCULAR:
-        radius = dimensions[0]
+        radius = dimensions[..., 0]
         area = jnp.pi * radius**2
         transverse = jnp.pi * radius**4 / 4.0
         polar = 2.0 * transverse
         return polar, transverse, transverse, area
     if geometry == CrossSectionGeometry.RECTANGULAR:
-        height, width = dimensions[0], dimensions[1]
+        height, width = dimensions[..., 0], dimensions[..., 1]
         area = height * width
         i_y = height * width**3 / 12.0
         i_z = width * height**3 / 12.0
         return i_y + i_z, i_y, i_z, area
-    semi_major, semi_minor = dimensions[0], dimensions[1]
+    semi_major, semi_minor = dimensions[..., 0], dimensions[..., 1]
     area = jnp.pi * semi_major * semi_minor
     i_y = jnp.pi * semi_major * semi_minor**3 / 4.0
     i_z = jnp.pi * semi_major**3 * semi_minor / 4.0
     return i_y + i_z, i_y, i_z, area
+
+
+def section_inner_dimensions(
+    geometry: CrossSectionGeometry | int,
+    outer_dimensions: Array,
+    wall_thickness: Array,
+) -> Array:
+    """Derive a uniform-wall circular or rectangular cavity.
+
+    Args:
+        geometry: Circular or rectangular boundary family.
+        outer_dimensions: Outer dimensions in the last axis [m].
+        wall_thickness: Uniform wall at each section [m].
+
+    Returns:
+        Inner dimensions with the same shape as the outer dimensions. Callers
+        must validate positive wall thickness and positive resulting dimensions.
+    """
+    if geometry not in (
+        CrossSectionGeometry.CIRCULAR,
+        CrossSectionGeometry.RECTANGULAR,
+    ):
+        raise ValueError(
+            "Uniform-wall cavities require circular or rectangular geometry."
+        )
+    factor = 1 if geometry == CrossSectionGeometry.CIRCULAR else 2
+    return (
+        jnp.asarray(outer_dimensions) - factor * jnp.asarray(wall_thickness)[..., None]
+    )
+
+
+def section_torsion_constant(
+    geometry: CrossSectionGeometry | int,
+    outer_dimensions: Array,
+    inner_dimensions: Array | None = None,
+) -> Array:
+    """Return the Saint-Venant torsion constant, independently of polar inertia.
+
+    Args:
+        geometry: Boundary family; hollow ellipses are unsupported.
+        outer_dimensions: Dimensions in the last axis [m].
+        inner_dimensions: Optional centred, uniform-wall cavity dimensions [m].
+
+    Returns:
+        Torsion constant [m^4]. Circles and solid ellipses use exact formulas;
+        solid rectangles use 64 odd series terms; rectangular tubes use Bredt's
+        thin-wall approximation. The latter is an estimate for thick walls.
+    """
+    dimensions = jnp.asarray(outer_dimensions)
+    if geometry == CrossSectionGeometry.CIRCULAR:
+        return section_properties(geometry, dimensions, inner_dimensions)[0]
+    a, b = dimensions[..., 0], dimensions[..., 1]
+    if geometry == CrossSectionGeometry.ELLIPTICAL:
+        if inner_dimensions is not None:
+            raise ValueError("Hollow elliptical torsion is not supported.")
+        return jnp.pi * a**3 * b**3 / (a**2 + b**2)
+    if geometry != CrossSectionGeometry.RECTANGULAR:
+        raise ValueError("Unsupported cross-section geometry.")
+    if inner_dimensions is not None:
+        inner = jnp.asarray(inner_dimensions)
+        thickness = (a - inner[..., 0]) / 2
+        mid_a, mid_b = (a + inner[..., 0]) / 2, (b + inner[..., 1]) / 2
+        return 2 * thickness * mid_a**2 * mid_b**2 / (mid_a + mid_b)
+    long, short = jnp.maximum(a, b), jnp.minimum(a, b)
+    odd = jnp.arange(1, 128, 2, dtype=dimensions.dtype)
+    correction = jnp.sum(
+        jnp.tanh(odd * jnp.pi * long[..., None] / (2 * short[..., None])) / odd**5,
+        axis=-1,
+    )
+    return long * short**3 / 3 * (1 - 192 * short / (jnp.pi**5 * long) * correction)
+
+
+def section_shear_factors(
+    geometry: CrossSectionGeometry | int,
+    outer_dimensions: Array,
+    inner_dimensions: Array | None = None,
+) -> Array:
+    """Return approximate effective shear-area fractions along material y/z.
+
+    Args:
+        geometry: Circular or rectangular boundary family.
+        outer_dimensions: Dimensions in the last axis [m].
+        inner_dimensions: Optional centred, uniform-wall cavity dimensions [m].
+
+    Returns:
+        Two dimensionless factors per section. Solid circles use 0.9 and solid
+        rectangles 5/6. Circular tubes use Cowper's annular expression at zero
+        Poisson ratio; rectangular tubes use the areas of the two webs aligned
+        with each shear direction. Tube estimates should be calibrated when
+        their assumptions do not suit the material or wall thickness.
+    """
+    dimensions = jnp.asarray(outer_dimensions)
+    if geometry == CrossSectionGeometry.CIRCULAR:
+        if inner_dimensions is None:
+            factor = jnp.full(dimensions.shape[:-1], 0.9)
+        else:
+            ratio2 = (jnp.asarray(inner_dimensions)[..., 0] / dimensions[..., 0]) ** 2
+            factor = 6 * (1 + ratio2) ** 2 / (7 * (1 + ratio2) ** 2 + 20 * ratio2)
+        return jnp.stack((factor, factor), axis=-1)
+    if geometry != CrossSectionGeometry.RECTANGULAR:
+        raise ValueError("Shear factors require circular or rectangular geometry.")
+    if inner_dimensions is None:
+        return jnp.full((*dimensions.shape[:-1], 2), 5 / 6)
+    thickness = (dimensions[..., 0] - jnp.asarray(inner_dimensions)[..., 0]) / 2
+    area = section_properties(geometry, dimensions, inner_dimensions)[3]
+    return 2 * thickness[..., None] * dimensions / area[..., None]
