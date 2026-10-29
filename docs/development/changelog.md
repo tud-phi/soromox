@@ -22,9 +22,9 @@ and include benchmark baseline and measurement context for performance claims.
 - Refreshed the numerical and rendering dependency lock for Python 3.15,
   including compatible Viser, `rpds-py`, Matplotlib, `msgspec`, Numba, and
   llvmlite releases.
-- Python 3.15 source-checkout installs select official PyTorch wheels from
-  its CUDA 13 index on Linux and CPU index on macOS/Windows, enabling the RL
-  and paper-results extras before equivalent wheels are available on PyPI.
+- Updated PyTorch to 2.15 with Python 3.15 wheels from PyPI, removing the
+  temporary custom indexes and separate installation instructions. CI now
+  uses stable Python 3.15 builds.
 
 ### Performance
 
