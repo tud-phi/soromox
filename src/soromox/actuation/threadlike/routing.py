@@ -416,7 +416,11 @@ class ConfigurationDependentThreadlikeRouting(BaseThreadlikeRouting):
 
     @property
     def num_paths(self) -> int:
-        """Return the number of physical paths rather than guided spans."""
+        """Return the number of physical paths rather than guided spans.
+
+        Returns:
+            Number of filaments, each corresponding to one actuator channel.
+        """
         return self.spans.num_paths
 
     def path_lengths(
@@ -519,23 +523,65 @@ class ConfigurationDependentThreadlikeRouting(BaseThreadlikeRouting):
         if not self.num_paths:
             return jnp.zeros((0, dimension), dtype=jnp.asarray(q).dtype)
         boundaries = jnp.concatenate((jnp.zeros(1), jnp.cumsum(robot.segment_length)))
-        paths = []
-        for path in range(self.num_paths):
-            indices = tuple(
-                index
-                for index, item in enumerate(self.spans.span_path_index)
-                if item == path
-            )
-            point = jnp.zeros(3)
-            # Earlier spans overwrite later ones at their shared boundary.
-            for index in reversed(indices):
-                start = boundaries[self.spans.start_segment_index[index]]
-                end = boundaries[self.spans.end_segment_index[index] + 1]
-                fraction = jnp.clip((s - start) / (end - start), 0.0, 1.0)
-                candidate = self.span_positions(robot, q, solution, index, fraction)[0]
-                point = jnp.where((s <= end) | (index == indices[-1]), candidate, point)
-            paths.append(point[:dimension])
-        return jnp.stack(paths)
+        path_indices = jnp.asarray(self.spans.span_path_index)
+        span_indices = jnp.arange(self.spans.num_spans)
+        starts = boundaries[jnp.asarray(self.spans.start_segment_index)]
+        ends = boundaries[jnp.asarray(self.spans.end_segment_index) + 1]
+        # Select the first span ending at or beyond s, or the last span when
+        # s lies beyond a path. Scatter reductions retain interleaved path order
+        # and choose the upstream span at a shared boundary.
+        selected = (
+            jnp.full(self.num_paths, self.spans.num_spans)
+            .at[path_indices]
+            .min(jnp.where(s <= ends, span_indices, self.spans.num_spans))
+        )
+        last = (
+            jnp.zeros(self.num_paths, dtype=span_indices.dtype)
+            .at[path_indices]
+            .max(span_indices)
+        )
+        selected = jnp.minimum(selected, last)
+        fractions = jnp.clip(
+            (s - starts[selected]) / (ends[selected] - starts[selected]), 0.0, 1.0
+        )
+        return self._selected_span_positions(robot, q, solution, selected, fractions)[
+            :, :dimension
+        ]
+
+    def _selected_span_positions(
+        self,
+        robot: SoftRobot,
+        q: Array,
+        solution: RoutingSolution,
+        span_indices: Array,
+        fractions: Array,
+    ) -> Array:
+        """Sample one selected span per path using the strategy's span interface.
+
+        Built-in strategies override this fallback with gathered array
+        evaluation. The fallback supports custom strategies whose span
+        solutions have heterogeneous shapes and require static span indices.
+
+        Args:
+            robot: Continuum host supplying world-frame kinematics.
+            q: Configuration with shape ``(robot.num_coordinates,)``.
+            solution: Resolved routing for this host and configuration.
+            span_indices: Selected span per path, shape ``(self.num_paths,)``.
+            fractions: Selected span fractions in ``[0, 1]``, with the same shape.
+
+        Returns:
+            World positions in metres with shape ``(self.num_paths, 3)``.
+        """
+        branches = tuple(
+            lambda fraction, index=index: self.span_positions(
+                robot, q, solution, index, fraction
+            )[0]
+            for index in range(self.spans.num_spans)
+        )
+        return jax.lax.map(
+            lambda sample: jax.lax.switch(sample[0], branches, sample[1]),
+            (span_indices, fractions),
+        )
 
     @abstractmethod
     def span_positions(self, robot, configuration, solution, span_index, fractions):

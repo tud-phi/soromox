@@ -445,7 +445,22 @@ def _sample_routing_paths(robot, q, routing, solution, num_points):
 
 
 def _installed_routing_paths(robot, q, routing, num_points):
-    """Resolve installed paths once per configuration for trajectory sampling."""
+    """Resolve installed paths once per configuration for trajectory sampling.
+
+    Args:
+        robot: Continuum host supplying world-frame path geometry.
+        q: Configuration with shape ``(robot.num_coordinates,)``.
+        routing: Configuration-dependent routing strategy.
+        num_points: Number of uniformly spaced samples per span.
+
+    Returns:
+        One world-position array per path, each with shape
+        ``(1, num_spans_in_path * num_points, 3)``. Unconverged solutions return
+        NaNs so the caller can reject the trajectory outside compiled code.
+
+    Raises:
+        ValueError: Fewer than two samples per span are requested.
+    """
     if num_points < 2:
         raise ValueError("s_points must have at least two samples.")
     solution = routing.solve_routing(robot, q)

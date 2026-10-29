@@ -4,7 +4,7 @@ Threadlike paths describe axial force transmission through a continuum robot.
 Choose the routing strategy according to how the path is constrained:
 
 - **Fixed material routing:** `ThreadlikeRouting` prescribes offsets along the
-  backbone and integrates with `ThreadlikeActuator`.
+  backbone.
 - **Straight spans between guides:** `StraightSpanRouting` follows prescribed
   guides when wall contact is irrelevant throughout operation.
 - **Shortest paths inside a lumen:** `ShortestPathRouting` resolves the path
@@ -13,8 +13,7 @@ Choose the routing strategy according to how the path is constrained:
 All three strategies implement `BaseThreadlikeRouting` and work with
 `ThreadlikeActuator`, `ThreadlikeTransmission`, and `ThreadlikeImpedance`.
 The routing supplies physical geometry; the transmission applies the actuator's
-coordinate sign, scale, and supported friction model. Existing fixed-routing
-constructors and imports retain their behavior.
+coordinate sign, scale, and supported friction model.
 
 ## Fixed material routing
 
@@ -37,8 +36,9 @@ A routing is a material-frame offset from the backbone. `PCS`, `PlanarPCS`, and
 `GVS` combine that routing with their native strain kinematics to evaluate path
 length, coordinate velocity, and generalized actuator force.
 
-This strategy assumes fixed material-frame routing, one scalar coordinate and
-effort per path, and an optional static effort loss along active paths.
+This strategy assumes fixed material-frame routing, one constant coordinate
+scale per path, and an optional static, direction-independent effort loss along
+active paths.
 
 ### Routing
 
@@ -172,6 +172,12 @@ routing = ThreadlikeRouting(
 Path count and segment spans are static topology. Updating either requires
 reconstructing the routing and robot.
 
+## Actuators and transmissions
+
+The following APIs apply to all three routing strategies on `PlanarPCS`, `PCS`,
+and `GVS`. Pass the routing object to an actuator preset and install the result
+through the robot constructor's `actuators` argument.
+
 ### Modality presets
 
 Let \(\ell\) be raw physical path length. Presets choose the signed or scaled
@@ -194,7 +200,8 @@ actuator = ThreadlikeActuator.tendons(routing)
 robot = PCS(body_params, structure=structure, actuators=actuator)
 ```
 
-Pass a tuple to combine ordered actuator groups or modalities.
+Pass a tuple to combine routing strategies or modalities. Channels follow group
+order, then physical path order within each group.
 
 ### Coordinates, Jacobians, and force maps
 
@@ -220,17 +227,29 @@ The two matrix contracts are
 \tau_u=A(q)e,
 \]
 
-where `coordinate_jacobian` is \(J_a=\partial y_a/\partial q\) with shape
-`(num_actuators, num_velocities)`, and `actuation_matrix` is \(A\) with shape
-`(num_velocities, num_actuators)`. For a lossless transmission, virtual work
+where `coordinate_jacobian` is the actuator-coordinate velocity map \(J_a\),
+with shape `(num_actuators, num_velocities)`, and `actuation_matrix` is \(A\)
+with shape `(num_velocities, num_actuators)`. For a lossless transmission, virtual work
 gives \(A=J_a^T\). Friction can make them differ without changing path
 coordinates or velocities.
+
+The transmission's `path_length_jacobian` also maps generalized velocities to
+length rates. A routing strategy's `path_length_jacobian` differentiates with
+respect to configuration coordinates instead; use its `path_velocity_jacobian`
+for forces when a spatial floating base has seven pose coordinates and six
+velocity components.
+
+Configuration-dependent queries resolve the routing at the supplied `q`.
+For diagnostics, warm starts, or reuse across queries, use the
+[explicit solution API](#solve-apply-forces-and-sample-geometry).
 
 ### Continuum Capstan friction
 
 `ThreadlikeFriction.capstan(coefficient=mu)` attenuates active threadlike effort
 along increasing backbone abscissa, starting at each path's configured
-anchor. It is available for `PCS`, `PlanarPCS`, and `GVS`. The default
+anchor. It is available for fixed routing on `PCS`, `PlanarPCS`, and `GVS`.
+Straight and shortest-path routing require frictionless transmission; installing
+Capstan friction with either raises an error. The default
 `ThreadlikeFriction.frictionless()` returns unit effort ratio.
 
 #### Path-turn derivation
@@ -416,7 +435,7 @@ actuator's `.transmission`; friction is intentionally active-only.
 
 ### Parameter updates
 
-Updates use immutable replacement:
+Updates use immutable replacement. For example, to change fixed-path offsets:
 
 ```python
 params = robot.actuators[0].params
@@ -427,19 +446,21 @@ robot = robot.update_actuator_params(0, transmission=transmission_params)
 
 Routing coefficients, coordinate scales, friction coefficients, effort bounds,
 and passive mechanical values are updateable. Path counts and segment spans are
-static topology and require reconstruction.
+static topology and require reconstruction. Runtime routing objects retain their
+callbacks, mesh, and solver settings through these updates. Parameter-only
+constructors infer the built-in strategy: `RoutingSpanParams` selects straight
+routing and `ShortestPathRoutingParams` selects shortest-path routing with
+default solver settings.
 
 ### Rendering
 
 Renderer adapters turn path queries into semantic visual layers. Generic
 renderers draw swept geometry when a radius is configured and use polylines
-otherwise. I-SUPPORT retains its detailed bellows renderer.
-
-### Current limits
-
-Threadlike paths are fixed in the material frame, use contiguous segment spans,
-and have one constant coordinate scale per path. Active effort loss is static
-and direction-independent.
+otherwise. Installed configuration-dependent paths use one layer per physical
+path, preserving unequal span counts and connecting guides. Their
+`path_poses(robot, q, s)` query samples one station, clamped to each path's ends;
+at a moving joint it selects the upstream guide. Use span sampling to represent
+both sides of the connection. I-SUPPORT retains its detailed bellows renderer.
 
 ## Configuration-dependent routing
 
@@ -511,13 +532,16 @@ For actuation without world endpoint reconstruction, use
 `routing.actuation_force(robot, configuration, tensions, backend="warp")`.
 The latter accumulates forces directly without materializing an actuation matrix.
 Matrix rows and force entries use generalized velocity coordinates, including
-zero floating-base entries for valid routes.
+zero floating-base entries for valid routes. For installed actuator groups, use
+`backend="jax"` or `"auto"` on the robot; fused robot Warp actuation kernels
+currently accept fixed linear routing only.
 
-The strategies share the `soromox.actuation.threadlike` namespace: `fixed_routing`
-contains fixed routing and transmissions, `routing` defines shared span contracts,
-and `straight_span` and `shortest_path` implement the two configuration-dependent
-strategies. The Warp backend mirrors the threadlike grouping: its `fixed_routing`
-module prepares data and checks eligibility for linear fixed routing, while
+The strategies share the `soromox.actuation.threadlike` namespace: `components`
+contains the shared actuators and transmissions, `base` defines their routing
+contract, and `fixed_routing`, `straight_span`, and `shortest_path` implement the
+strategies. Shared span geometry and solutions live in `routing`. The Warp
+backend mirrors the threadlike grouping: its `fixed_routing` module prepares data
+and checks eligibility for linear fixed routing, while
 `straight_span` evaluates free-space routing. Reusable continuum kinematics lives
 in `execution.warp.common.relative_kinematics`.
 
@@ -582,74 +606,14 @@ backbone coordinates. Use a previous optimized solution as an explicit warm star
 next_solution = solve(robot, next_configuration, initial_guess=solution)
 ```
 
+The routing's `path_lengths`, `path_length_jacobian`, and
+`path_velocity_jacobian` accept an optional solution to reuse a solve; omitting
+it resolves the route once for that call.
+
 `path_length_jacobian` differentiates lengths with respect to configuration
 coordinates. Use `path_velocity_jacobian` for forces: spatial floating bases
 have different numbers of pose coordinates and velocity components. Rigid base
 motion contributes zero to internal path lengths and forces.
-
-### Use the common actuator API
-
-Wrap either strategy in the same actuator constructor used for fixed paths:
-
-```python
-from soromox.actuation import ThreadlikeActuator
-
-actuator = ThreadlikeActuator.tendons(routing)
-transmission = actuator.transmission
-
-lengths = actuator.path_lengths(robot, configuration)       # physical metres
-coordinates = actuator.coordinates(robot, configuration)   # -lengths for tendons
-J = transmission.coordinate_jacobian(robot, configuration)
-A = actuator.actuation_matrix(robot, configuration)         # J.T when frictionless
-```
-
-Pass `actuators=actuator` when constructing `PlanarPCS`, `PCS`, or `GVS`.
-The installed group then participates in `robot.actuator_coordinates(q)`,
-`robot.actuator_coordinate_jacobian(q)`, `robot.actuator_velocities(q, v)`,
-`robot.actuation_matrix(q)`, `robot.actuation_force(q, tension)`, and dynamics.
-Fixed and configuration-dependent groups can be mixed; channel order follows
-the installed groups and then physical path order within each group.
-
-| Query | Result |
-| --- | --- |
-| `actuator.path_lengths(robot, q)` | Physical lengths in metres |
-| `actuator.path_velocities(robot, q, v)` | Physical length rates in metres/second |
-| `actuator.coordinates(robot, q)` | Scaled lengths; tendons use `-lengths` |
-| `transmission.path_length_jacobian(robot, q)` | Physical length-rate map, `(paths, velocities)` |
-| `transmission.coordinate_jacobian(robot, q)` | Scaled length-rate map, `(paths, velocities)` |
-| `transmission.actuation_matrix(robot, q)` | Effort-to-force map, `(velocities, paths)` |
-
-The transmission's existing `path_length_jacobian` name retains its velocity
-coordinate convention. The routing strategy's `path_length_jacobian` instead
-has configuration-coordinate columns. These differ for spatial floating bases;
-`routing.path_velocity_jacobian(robot, q)` supplies the velocity-coordinate map.
-
-Each query resolves the route at its supplied configuration. There is no hidden
-solver state. For diagnostics, explicit warm starts, or reuse across multiple
-queries, keep using `solve_routing` and pass its solution to the routing's
-`path_lengths`, `path_length_jacobian`, and `path_velocity_jacobian` methods.
-Installed length and coordinate queries return NaNs for paths containing a
-failed span; derivative and force queries also reject collapsed moving guide
-connections. The full solution retains the diagnostic length estimates.
-
-Passing a runtime `ShortestPathRouting` preserves its mesh and solver options,
-including through `update_actuator_params` and transmission parameter updates.
-Passing only `RoutingSpanParams` constructs straight routing; passing only
-`ShortestPathRoutingParams` constructs shortest-path routing with default
-solver settings. Connectivity changes still require reconstruction.
-
-These strategies support frictionless transmissions. Installing a Capstan
-model with them raises an error. Use `backend="jax"` or `"auto"` for the
-robot's general actuation dispatch; the existing fused robot Warp kernels
-accept fixed linear routing only. Straight routing retains its own explicit
-Warp methods described above.
-
-Installed paths also render automatically, with one visual layer per physical
-path so unequal span counts and connecting guides are retained. The existing
-`path_poses(robot, q, s)` query samples a single backbone station per path:
-straight spans interpolate along their chord, optimized spans use material
-offsets, and stations outside a path clamp to its ends. At a moving joint it
-selects the upstream guide; span sampling represents both sides explicitly.
 
 ### Guides at moving joints
 
@@ -679,10 +643,12 @@ Jacobian row returns NaNs. Permanently coincident guides have zero derivatives.
 
 ### Check accuracy
 
-Always check `solution.converged`. Straight spans check finite geometry and
-positive length; wall clearance is the caller's responsibility. Optimized spans
-check endpoint error, optimality, and wall containment independently of the
-optimizer's termination code.
+Always check `solution.converged`. Installed length and coordinate queries return
+NaNs for failed spans; explicit solutions retain diagnostic length estimates.
+Derivative and force queries also reject collapsed moving guide connections.
+Straight spans check finite geometry and positive length; wall clearance is the
+caller's responsibility. Optimized spans check endpoint error, optimality, and
+wall containment independently of the optimizer's termination code.
 
 `RoutingSolverOptions` separates the solver stopping tolerance from physical
 limits: `endpoint_tolerance` defaults to `1e-8` m and `wall_tolerance` to `1e-6` m.

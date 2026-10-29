@@ -314,3 +314,158 @@ def test_wall_contact_coordinate_gradient_matches_resolved_length_changes():
         atol=1e-8,
         rtol=2e-3,
     )
+
+
+@pytest.fixture(scope="module", params=["planar", "gvs"])
+def sampling_robot(request):
+    """Create unequal links with a floating base and a moving joint on GVS."""
+    lengths = jnp.array([0.1, 0.08, 0.12])
+    if request.param == "planar":
+        robot = PlanarPCS(
+            planar_pcs_params(
+                length=lengths,
+                radius=jnp.full(3, 0.03),
+                density=jnp.full(3, 1000.0),
+                young_modulus=jnp.full(3, 1000.0),
+                shear_modulus=jnp.full(3, 500.0),
+                gravity=jnp.zeros(2),
+                damping_matrix=jnp.zeros((9, 9)),
+            ),
+            PlanarPCSStructure(num_gauss_points=3),
+            backend="jax",
+        )
+        q = jnp.array([0.2, 0, 0, -0.1, 0, 0, 0.3, 0, 0])
+    else:
+        robot = GVS.from_segments(
+            [
+                GVSSegment(
+                    link=LinkSpec.circular(
+                        young_modulus=1000.0,
+                        shear_modulus=500.0,
+                        density=1000.0,
+                        length=length,
+                        radius=0.03,
+                        reference_strain=[0, 0, 0, 1, 0, 0],
+                    ),
+                    joint=JointSpec.revolute(axis="z")
+                    if index == 1
+                    else JointSpec.fixed(),
+                    basis=StrainBasisSpec(
+                        type="monomial",
+                        strain_selector=[0, 0, 1, 0, 0, 0],
+                        basis_order=[0] * 6,
+                    ),
+                    num_gauss_points=5,
+                )
+                for index, length in enumerate(lengths)
+            ],
+            floating_base=True,
+            backend="jax",
+        )
+        q = robot.pack_configuration(
+            jnp.array([0.2, 0.4, -0.1, 0.3]),
+            base_pose=jnp.array([0, 0, np.sin(0.1), np.cos(0.1), 0.5, -0.2, 0.1]),
+        )
+    return robot, q
+
+
+@pytest.fixture(scope="module", params=["straight", "shortest"])
+def sampling_case(sampling_robot, request):
+    """Resolve interleaved paths whose spans have different mesh sizes."""
+    robot, q = sampling_robot
+    offsets = jnp.array([[0, 0.003, 0], [0, -0.002, 0], [0, 0.003, 0]])
+    spans = RoutingSpanParams(offsets, offsets, (0, 1, 0), (0, 1, 1), (0, 1, 2))
+    routing = (
+        StraightSpanRouting(spans)
+        if request.param == "straight"
+        else ShortestPathRouting(
+            ShortestPathRoutingParams(spans, CircularLumenParams.constant(0.02, 3)),
+            PiecewiseLinearRoutingDiscretization(
+                elements_per_segment=2, quadrature_order=3
+            ),
+        )
+    )
+    solution = eqx.filter_jit(routing.solve_routing)(robot, q)
+    assert bool(solution.converged)
+    return robot, q, routing, solution
+
+
+def _span_sampling_reference(robot, q, routing, solution, station):
+    """Sample every span independently as a reference for selection and clamping."""
+    boundaries = jnp.concatenate((jnp.zeros(1), jnp.cumsum(robot.segment_length)))
+    paths = []
+    for path in range(routing.num_paths):
+        indices = [
+            i for i, item in enumerate(routing.spans.span_path_index) if item == path
+        ]
+        point = jnp.zeros(3)
+        for index in reversed(indices):
+            start = boundaries[routing.spans.start_segment_index[index]]
+            end = boundaries[routing.spans.end_segment_index[index] + 1]
+            fraction = jnp.clip((station - start) / (end - start), 0, 1)
+            candidate = routing.span_positions(robot, q, solution, index, fraction)[0]
+            point = jnp.where(
+                (station <= end) | (index == indices[-1]), candidate, point
+            )
+        paths.append(point[:2] if robot.is_planar else point)
+    return jnp.stack(paths)
+
+
+def test_selected_span_sampling_matches_endpoints_boundaries_and_batches(sampling_case):
+    robot, q, routing, solution = sampling_case
+    stations = jnp.array([-0.02, 0, 0.05, 0.1, 0.10001, 0.14, 0.18, 0.24, 0.3, 0.32])
+
+    def sample(station):
+        return routing.path_positions(robot, q, station, solution)
+
+    def reference(station):
+        return _span_sampling_reference(robot, q, routing, solution, station)
+
+    assert_allclose(
+        jax.jit(jax.vmap(sample))(stations),
+        jax.jit(jax.vmap(reference))(stations),
+        atol=1e-12,
+    )
+    for station in stations:
+        assert_allclose(sample(station), reference(station), atol=1e-12)
+    _, derivative = jax.jvp(sample, (jnp.array(0.143),), (jnp.array(1.0),))
+    expected = (reference(jnp.array(0.143001)) - reference(jnp.array(0.142999))) / 2e-6
+    assert_allclose(derivative, expected, atol=1e-8)
+
+
+def test_selected_span_sampling_limits_kinematics_to_physical_paths(
+    sampling_case, monkeypatch
+):
+    robot, q, routing, solution = sampling_case
+    expected = _span_sampling_reference(robot, q, routing, solution, jnp.array(0.14))
+
+    def unused_span(*args, **kwargs):
+        raise AssertionError("Sampling selected paths must not evaluate every span")
+
+    monkeypatch.setattr(type(routing), "span_positions", unused_span)
+    calls = []
+    original = type(robot).forward_kinematics_abscissa_batched
+
+    def batched_positions(host, configuration, stations):
+        calls.append(stations.shape)
+        return original(host, configuration, stations)
+
+    monkeypatch.setattr(
+        type(robot), "forward_kinematics_abscissa_batched", batched_positions
+    )
+    actual = routing.path_positions(robot, q, jnp.array(0.14), solution)
+    assert_allclose(actual, expected, atol=1e-12)
+    assert calls == (
+        [(routing.num_paths,)] if isinstance(routing, ShortestPathRouting) else []
+    )
+
+
+@pytest.mark.parametrize("strategy", ["straight", "shortest"])
+def test_empty_paths_keep_sampling_shape(strategy):
+    routing = _routing(strategy, count=0)
+    robot = _robot()
+    q = _configuration(robot)
+    assert eqx.filter_jit(routing.path_positions)(robot, q, jnp.array(0.05)).shape == (
+        0,
+        2,
+    )

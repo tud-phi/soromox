@@ -2,16 +2,18 @@
 
 from ._solver import RoutingSolverOptions
 from .base import BaseThreadlikeRouting
-from .fixed_routing import (
-    BaseThreadlikeRoutingParams,
-    LinearThreadlikeRoutingParams,
+from .components import (
     ThreadlikeActuator,
     ThreadlikeActuatorParams,
     ThreadlikeImpedance,
     ThreadlikeImpedanceParams,
-    ThreadlikeRouting,
     ThreadlikeTransmission,
     ThreadlikeTransmissionParams,
+)
+from .fixed_routing import (
+    BaseThreadlikeRoutingParams,
+    LinearThreadlikeRoutingParams,
+    ThreadlikeRouting,
     linear_threadlike_routing,
     linear_threadlike_routing_derivative,
     linear_threadlike_routing_second_derivative,
