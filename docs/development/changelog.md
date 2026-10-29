@@ -43,8 +43,7 @@ Describe the delta from the last release, not intermediate development changes.
   [Helicoidal](../api/systems/gvs/helicoidal.md) and
   [PR #229](https://github.com/tud-phi/soromox/pull/229).
 - Python 3.15 support, with numerical tests and patched Open3D source-build
-  and rendering checks in Ubuntu CI. The Python 3.15 native-rendering job also
-  runs the complete paper-results test suite.
+  and rendering checks in Ubuntu CI.
 
 ### Changed
 
@@ -56,9 +55,6 @@ Describe the delta from the last release, not intermediate development changes.
 - Refreshed the numerical and rendering dependency lock for Python 3.15,
   including compatible Viser, `rpds-py`, Matplotlib, `msgspec`, Numba, and
   llvmlite releases.
-- Updated PyTorch to 2.15 with Python 3.15 wheels from PyPI, removing the
-  temporary custom indexes and separate installation instructions. CI now
-  uses stable Python 3.15 builds.
 
 ### Performance
 
@@ -88,9 +84,6 @@ Describe the delta from the last release, not intermediate development changes.
   accepts that same loop-array shape at each endpoint.
 
 ### Fixed
-
-- Matched the Open3D adapter's static dependency metadata to the pinned native
-  wheel so building it does not change the lockfile's dependency metadata.
 
 - Viser live mode initializes the camera and lighting on its first state and
   rebuilds static meshes as editable surfaces when switching from a static

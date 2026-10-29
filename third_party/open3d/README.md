@@ -120,7 +120,7 @@ DYLD_LIBRARY_PATH="$soromox_torch_lib${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}" 
 The release-tag pin is `b6c5e196384ad71e75b6e6f9c5da22d046221f1d`.
 Patched wheels report `0.20.0+b6c5e19.soromox3`.
 
-Python 3.15.0 final was source-built and tested on Apple Silicon (M4 Max).
+Python 3.15.0 was source-built and tested on Apple Silicon (M4 Max).
 The frozen rendering/test installation, Metal color-grading check, PNG and
 60-frame H.264 export, and modern-window lifecycle all passed. Ubuntu CI also
 includes a Python 3.15 x86-64 source-build and native-rendering job.

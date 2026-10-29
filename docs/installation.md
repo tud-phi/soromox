@@ -12,7 +12,7 @@
 
 !!! warning "Python Version Compatibility"
     - **Open3D Rendering**: Patched Open3D 0.20 source builds are tested
-      with Python 3.11–3.14 on Ubuntu x86-64. Python 3.12–3.14 and 3.15.0
+      with Python 3.11–3.14 on Ubuntu x86-64. Python 3.12–3.15
       are tested on Apple Silicon; Ubuntu CI also covers Python 3.15.
     - **Python 3.14 on Windows**: There may currently exist an incompatibility of Python 3.14 on Windows with the package
 
@@ -99,7 +99,7 @@ uv sync --extra rendering
     and other platforms. On Ubuntu 26.04 x86-64, Python 3.11–3.14 pass real
     Vulkan image and MP4 export plus modern and animated viewers under Xvfb.
     Apple Silicon image, video, and modern-window checks pass with Python
-    3.12–3.14 and 3.15.0. Native Windows builds are validated in CI. Plain
+    3.12–3.15. Native Windows builds are validated in CI. Plain
     `pip install soromox[rendering]` uses PyPI and does not include the required
     Open3D patches.
 
