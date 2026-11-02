@@ -15,6 +15,7 @@ from soromox.actuation import (
     ShortestPathRouting,
     ShortestPathRoutingParams,
     StraightSpanRouting,
+    ThreadlikeActuator,
 )
 from soromox.actuation.threadlike._geometry import guide_kinematics
 from soromox.systems import (
@@ -76,12 +77,13 @@ def test_warp_straight_joint_connections_match_jax(kind, floating, offset):
     assert bool(jnp.isfinite(joint_gradient)) == (kind == "revolute" and offset == 0)
 
 
-def _joint_robot(kind="revolute", floating=False):
+def _joint_robot(kind="revolute", floating=False, actuators=None):
     """Build two straight hollow links with an intervening joint.
 
     Args:
         kind: Joint family; revolute uses z, prismatic uses x.
         floating: Whether to expose a runtime base pose.
+        actuators: Optional installed actuator groups.
 
     Returns:
         GVS host with one bending coordinate per link and the selected joint.
@@ -115,6 +117,7 @@ def _joint_robot(kind="revolute", floating=False):
         ],
         gravity=jnp.zeros(3),
         floating_base=floating,
+        actuators=actuators,
         backend="jax",
     )
 
@@ -427,3 +430,44 @@ def test_variable_strain_basis_matches_configuration_derivative(scaled):
     assert bool(jnp.all(jnp.isfinite(strains)))
     assert_allclose(basis, numerical, atol=1e-12)
     assert_allclose(basis[:, :, 0], 0, atol=0)
+
+
+@pytest.mark.parametrize("strategy", [ShortestPathRouting, StraightSpanRouting])
+@pytest.mark.parametrize("floating", [False, True])
+def test_installed_tendon_includes_joint_connection_in_lengths_and_forces(
+    strategy, floating
+):
+    routing = _guided_routing(0.004, strategy)
+    actuator = ThreadlikeActuator.tendons(routing)
+    robot = _joint_robot(floating=floating, actuators=actuator)
+    configuration = robot.pack_configuration(
+        jnp.array([0.2, 0.4, -0.1]),
+        base_pose=jnp.array([0.0, 0.0, np.sin(0.2), np.cos(0.2), 0.1, -0.2, 0.3])
+        if floating
+        else None,
+    )
+    solution = eqx.filter_jit(routing.solve_routing)(robot, configuration)
+    assert bool(solution.converged)
+    assert robot.num_actuators == 1
+    expected_length = (
+        sum(span.length for span in solution.spans) + solution.guides[0].length
+    )
+    assert solution.guides[0].length > 0
+    assert_allclose(robot.actuator_coordinates(configuration), [-expected_length])
+    matrix = robot.actuation_matrix(configuration)
+    assert_allclose(
+        matrix,
+        -routing.path_velocity_jacobian(robot, configuration, solution).T,
+        atol=1e-10,
+    )
+    assert abs(matrix[robot.num_base_velocities + 1, 0]) > 1e-4
+    delta = jnp.zeros_like(configuration).at[robot.num_base_coordinates + 1].set(1e-5)
+    numerical = (
+        robot.actuator_coordinates(configuration + delta)
+        - robot.actuator_coordinates(configuration - delta)
+    ) / 2e-5
+    assert_allclose(
+        matrix[robot.num_base_velocities + 1], numerical, atol=1e-8, rtol=2e-4
+    )
+    if floating:
+        assert_allclose(matrix[: robot.num_base_velocities], 0)
