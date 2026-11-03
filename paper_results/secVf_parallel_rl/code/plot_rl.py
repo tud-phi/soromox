@@ -32,12 +32,32 @@ REWARD_KEY = "episode_reward_mean"
 TIME_KEY = "wall_time"
 FIGURE_SIZE_CM = (12.0, 12.0)  # Matches original 3.8 x 3.8 inches
 
+# Subfolders of --csv-dir plotted by default. The device tag in the legend is
+# taken from the folder name: the GPU model for GPU folders, otherwise CPU.
+REWARD_LOG_SUBDIRS = ("PyElastica-CPU", "SoRoMoX-CPU", "SoRoMoX-GPU-RTX4070")
+# Legend names of the GPU models in GPU folder names (SoRoMoX-GPU-<model>).
+GPU_NAMES = {"RTX4070": "RTX 4070"}
+# PyElastica and SoRoMoX-CPU file names carry no env count; those runs used 2 envs.
+CPU_NUM_ENVS = 2
+# Completed episodes averaged in one CSV record. SoRoMoX train.py writes one
+# record per --reward-batch-episodes (default 8) episodes; the PyElastica runs
+# logged one record per vector step, i.e. the 2 episodes that ended together.
+EPISODES_PER_RECORD = {"PyElastica-CPU": 2}
+DEFAULT_EPISODES_PER_RECORD = 8
+# W&B-style plot: "Random sampling" point aggregation keeps at most this many
+# records per run (fixed seed), then Gaussian smoothing over neighbouring
+# records with the W&B smoothing value.
+WANDB_SAMPLE_POINTS = 1500
+WANDB_SAMPLE_SEED = 0
+WANDB_SMOOTHING = 10.0
+
 COLORS_RL = {
-    "PyElastica": COLORS["pre_opt_1"],
-    "SoRoMoX 64 envs": COLORS["pre_opt_2"],
-    "SoRoMoX 128 envs": COLORS["post_opt_1"],
-    "SoRoMoX 256 envs": COLORS["post_opt_2"],
-    "SoRoMoX 512 envs": COLORS["post_opt_3"],
+    "PyElastica (CPU, 2 envs)": COLORS["pre_opt_1"],
+    "SoRoMoX (CPU, 2 envs)": COLORS["target"],
+    "SoRoMoX (RTX 4070, 64 envs)": COLORS["pre_opt_2"],
+    "SoRoMoX (RTX 4070, 128 envs)": COLORS["post_opt_1"],
+    "SoRoMoX (RTX 4070, 256 envs)": COLORS["post_opt_2"],
+    "SoRoMoX (RTX 4070, 512 envs)": COLORS["post_opt_3"],
 }
 
 
@@ -46,6 +66,7 @@ class Curve:
     source: Path
     time_seconds: np.ndarray
     reward: np.ndarray
+    episodes: np.ndarray  # Completed episodes averaged in each point.
 
 
 def configure_matplotlib() -> None:
@@ -115,23 +136,49 @@ def normalize_label(raw: str) -> str:
     return text
 
 
+def device_from_dir(path: Path) -> str | None:
+    folder = path.parent.name.upper()
+    if "GPU" in folder:
+        model = path.parent.name.partition("GPU-")[2]
+        return GPU_NAMES.get(model, model) or "GPU"
+    if "CPU" in folder:
+        return "CPU"
+    return None
+
+
 def label_from_csv(path: Path) -> str:
     stem = path.stem
-    match = re.match(r"^SoRoMoX_(\d+)_envs(?:_.+)?$", stem)
-    if match:
-        return f"SoRoMoX {match.group(1)} envs"
+    device = device_from_dir(path)
     if stem.startswith("PyElastica"):
-        return "PyElastica"
+        if device == "CPU":
+            return f"PyElastica ({device}, {CPU_NUM_ENVS} envs)"
+        return f"PyElastica ({device})" if device else "PyElastica"
+    if stem.startswith("SoRoMoX"):
+        match = re.match(r"^SoRoMoX_(\d+)_envs(?:_.+)?$", stem)
+        if match:
+            num_envs = match.group(1)
+        elif device == "CPU":
+            num_envs = str(CPU_NUM_ENVS)
+        else:
+            num_envs = None
+        details = [part for part in (device, num_envs and f"{num_envs} envs") if part]
+        return f"SoRoMoX ({', '.join(details)})" if details else "SoRoMoX"
     return " ".join(stem.split("_"))
 
 
 def discover_csv_groups(csv_dir: Path) -> dict[str, list[Path]]:
     groups: dict[str, list[Path]] = {}
-    for path in sorted(csv_dir.glob("*.csv")):
-        groups.setdefault(label_from_csv(path), []).append(path)
+    subdirs = [csv_dir / name for name in REWARD_LOG_SUBDIRS if (csv_dir / name).is_dir()]
+    for folder in subdirs or [csv_dir]:
+        for path in sorted(folder.glob("*.csv")):
+            groups.setdefault(label_from_csv(path), []).append(path)
     if not groups:
         raise FileNotFoundError(f"No CSV files found in {csv_dir}")
     return groups
+
+
+def episodes_per_record(path: Path) -> int:
+    return EPISODES_PER_RECORD.get(path.parent.name, DEFAULT_EPISODES_PER_RECORD)
 
 
 def read_reward_csv(path: Path) -> Curve | None:
@@ -152,11 +199,14 @@ def read_reward_csv(path: Path) -> Curve | None:
                 times.append(t)
                 rewards.append(r)
 
-    return clean_curve(path, times, rewards) if times else None
+    return clean_curve(path, times, rewards, episodes_per_record(path)) if times else None
 
 
 def clean_curve(
-    source: Path, times: Iterable[float], rewards: Iterable[float]
+    source: Path,
+    times: Iterable[float],
+    rewards: Iterable[float],
+    record_episodes: int = 1,
 ) -> Curve:
     data = sorted(
         (float(t), float(r))
@@ -172,15 +222,87 @@ def clean_curve(
 
     unique_times = np.array(sorted(by_time), dtype=float)
     unique_rewards = np.array([np.mean(by_time[t]) for t in unique_times], dtype=float)
-    return Curve(source=source, time_seconds=unique_times, reward=unique_rewards)
+    episodes = np.array([len(by_time[t]) * record_episodes for t in unique_times])
+    return Curve(
+        source=source,
+        time_seconds=unique_times,
+        reward=unique_rewards,
+        episodes=episodes,
+    )
 
 
-def load_curve(path: Path) -> Curve:
+def bin_by_episodes(curve: Curve, episodes_per_point: int) -> Curve:
+    """Merge consecutive points until each averages ``episodes_per_point`` episodes.
+
+    Time and reward of a merged point are episode-weighted means. A trailing
+    partial bin is dropped so that every point averages the same number of
+    episodes; a single point that already holds more episodes is kept as is.
+    """
+    if episodes_per_point <= 0:
+        return curve
+
+    times: list[float] = []
+    rewards: list[float] = []
+    episodes: list[int] = []
+    t_sum = r_sum = 0.0
+    n = 0
+    for t, r, k in zip(curve.time_seconds, curve.reward, curve.episodes):
+        t_sum += t * k
+        r_sum += r * k
+        n += k
+        if n >= episodes_per_point:
+            times.append(t_sum / n)
+            rewards.append(r_sum / n)
+            episodes.append(n)
+            t_sum = r_sum = 0.0
+            n = 0
+    return Curve(
+        source=curve.source,
+        time_seconds=np.array(times, dtype=float),
+        reward=np.array(rewards, dtype=float),
+        episodes=np.array(episodes),
+    )
+
+
+def load_wandb_style_curve(
+    path: Path, rng: np.random.Generator
+) -> Curve:
+    """Mimic a W&B line plot with random sampling and Gaussian smoothing.
+
+    Records are kept in logged order, randomly subsampled to at most
+    ``WANDB_SAMPLE_POINTS`` like W&B's "Random sampling" point aggregation, and then
+    smoothed over neighbouring records. Records sharing a wall time (GPU runs)
+    are merged only after smoothing so that time interpolation stays defined.
+    """
+    with path.open(newline="", encoding="utf-8") as f:
+        rows = [
+            (float(row[TIME_KEY]), float(row[REWARD_KEY]))
+            for row in csv.DictReader(f)
+            if row.get(TIME_KEY) and row.get(REWARD_KEY)
+        ]
+    if WANDB_SAMPLE_POINTS < len(rows):
+        keep = np.sort(rng.choice(len(rows), size=WANDB_SAMPLE_POINTS, replace=False))
+        rows = [rows[i] for i in keep]
+    times = np.array([t for t, _ in rows], dtype=float)
+    rewards = gaussian_smooth(np.array([r for _, r in rows], dtype=float), WANDB_SMOOTHING)
+    curve = clean_curve(path, times, rewards)
+    print(
+        f"Loaded {path.name}: records={len(rows)}, points={len(curve.time_seconds)}, "
+        f"last_wall_time={curve.time_seconds[-1]:.3f}s, "
+        f"last_reward={curve.reward[-1]:.6g}"
+    )
+    return curve
+
+
+def load_curve(path: Path, episodes_per_point: int = 0) -> Curve:
     curve = read_reward_csv(path)
+    if curve is not None:
+        curve = bin_by_episodes(curve, episodes_per_point)
     if curve is None or len(curve.time_seconds) < 2:
         raise RuntimeError(f"Could not load at least two valid records from {path}")
     print(
         f"Loaded {path.name}: points={len(curve.time_seconds)}, "
+        f"episodes/point={int(np.median(curve.episodes))}, "
         f"last_wall_time={curve.time_seconds[-1]:.3f}s, "
         f"last_reward={curve.reward[-1]:.6g}"
     )
@@ -203,7 +325,6 @@ def gaussian_smooth(values: np.ndarray, scale: float) -> np.ndarray:
 def aggregate_curves(
     curves: list[Curve],
     num_points: int,
-    smooth_scale: float,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     start = max(curve.time_seconds[0] for curve in curves)
     end = min(curve.time_seconds[-1] for curve in curves)
@@ -213,11 +334,7 @@ def aggregate_curves(
     grid = np.linspace(start, end, num_points)
     interpolated = np.vstack(
         [
-            np.interp(
-                grid,
-                curve.time_seconds,
-                gaussian_smooth(curve.reward, smooth_scale),
-            )
+            np.interp(grid, curve.time_seconds, curve.reward)
             for curve in curves
         ]
     )
@@ -236,6 +353,7 @@ def build_figure(
         fig = ax.figure
 
     global_max_x = 0.0
+    rng = np.random.default_rng(WANDB_SAMPLE_SEED)
 
     ordered_labels = sorted(
         groups.keys(),
@@ -244,8 +362,13 @@ def build_figure(
 
     for label in ordered_labels:
         csv_paths = groups[label]
-        curves = [load_curve(path) for path in csv_paths]
-        x_min, mean, std = aggregate_curves(curves, args.points, args.smooth_scale)
+        if args.episodes_per_point > 0:
+            curves = [load_curve(path, args.episodes_per_point) for path in csv_paths]
+        else:
+            curves = [
+                load_wandb_style_curve(path, rng) for path in csv_paths
+            ]
+        x_min, mean, std = aggregate_curves(curves, args.points)
 
         # Fallback to dark gray if a group label is missing from the global COLORS_RL dict
         color = COLORS_RL.get(label, "#333333")
@@ -285,7 +408,10 @@ def build_argparser() -> argparse.ArgumentParser:
         "--csv-dir",
         type=Path,
         default=SCRIPT_DIR / "data" / "reward_logs",
-        help="Directory containing reward CSV exports.",
+        help=(
+            "Directory containing reward CSV exports; its PyElastica-CPU, SoRoMoX-CPU "
+            "and SoRoMoX-GPU-RTX4070 subfolders are used when present."
+        ),
     )
     parser.add_argument(
         "--output",
@@ -300,10 +426,15 @@ def build_argparser() -> argparse.ArgumentParser:
         help="Interpolation points per averaged curve.",
     )
     parser.add_argument(
-        "--smooth-scale",
-        type=float,
-        default=0.5,
-        help="Gaussian smoothing scale, similar to W&B smoothing. Use 0 for no smoothing.",
+        "--episodes-per-point",
+        type=int,
+        default=0,
+        help=(
+            "Instead of the default W&B-style plot, merge consecutive reward records "
+            "so that every plotted point averages this many completed episodes, "
+            "giving all curves the same noise level (e.g. 512, which matches the "
+            "512-env runs whose records end together)."
+        ),
     )
     parser.add_argument(
         "--show",

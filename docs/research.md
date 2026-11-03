@@ -163,10 +163,11 @@ among the purple obstacles.
 
 The final study vectorizes tendon-driven PCS environments on a GPU for PPO
 training. The trained policy reaches a 6.19 mm final mean tracking error and a
-91.4% step-wise success rate. The reported 4× and 7× training speedups at 256
+91.4% step-wise success rate. The reported 6× and 8× training speedups at 256
 and 512 environments relative to the CPU PyElastica baseline jointly reflect
 model formulation, JIT compilation, hardware acceleration, and rollout
-parallelization.
+parallelization. With the same two CPU environments and the pure JAX backend,
+SoRoMoX takes 1.6× as long as PyElastica to complete training.
 
 The video shows the trained policy tracking the green target in one environment.
 

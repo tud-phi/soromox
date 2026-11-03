@@ -24,6 +24,19 @@ uv run python paper_results/secVf_parallel_rl/code/train.py \
   --reward-csv /tmp/soromox-secVf/training_reward.csv
 ```
 
+`--device` selects where the environment is simulated. `--device gpu` pins JAX
+to CUDA and runs SoRoMoX on the Warp backend; `--device cpu` pins JAX to the CPU
+and runs SoRoMoX on the pure JAX backend. The default `--device auto` keeps
+JAX's default platform and picks Warp on a GPU and JAX otherwise. PPO itself
+runs through PyTorch independently of this choice. Evaluation and rollout
+generation always use the `auto` backend.
+
+The reward CSV has the columns `wall_time` and `episode_reward_mean`. One record
+is written for every `--reward-batch-episodes` completed episodes (default 8):
+`episode_reward_mean` is the mean return of those episodes and `wall_time` the
+mean time in seconds at which they finished. The clock starts after the
+environment has been built, so environment construction is not counted.
+
 The training CLI refuses to replace the released checkpoint or an existing
 reward CSV unless `--force` is supplied.
 
@@ -43,6 +56,26 @@ Recreate the reward curve from the committed training logs:
 ```bash
 uv run python paper_results/secVf_parallel_rl/code/plot_rl.py
 ```
+
+The plot reads three subfolders of `data/reward_logs/`, each holding one
+reward CSV per training run:
+
+| Folder | Runs | Legend label |
+|---|---|---|
+| `PyElastica-CPU/` | PyElastica baseline, 2 envs on CPU | PyElastica (CPU, 2 envs) |
+| `SoRoMoX-CPU/` | SoRoMoX with `--device cpu`, 2 envs pinned to 2 CPU cores | SoRoMoX (CPU, 2 envs) |
+| `SoRoMoX-GPU-RTX4070/` | SoRoMoX with `--device gpu` on an RTX 4070, 64, 128, 256 and 512 envs | SoRoMoX (RTX 4070, N envs) |
+
+The device tag comes from the folder name (CPU, or the GPU model of a
+`SoRoMoX-GPU-<model>/` folder) and the environment count from
+file names of the form `SoRoMoX_<N>_envs_<run-id>.csv`; files without a count in
+their name (PyElastica and SoRoMoX CPU) are labeled with 2 envs. Runs with the
+same label are averaged and the shaded band shows one standard deviation.
+Before averaging, consecutive records of each run are merged so that every
+plotted point is the mean return of the same number of completed episodes
+(`--episodes-per-point`, default 512); otherwise the noise of a curve would
+mainly reflect how many episodes end at once rather than the training itself.
+A SoRoMoX record holds 8 episodes and a PyElastica record 2.
 
 Rollout generation and rendering are separate steps. Generate the single-arm
 trajectory data for both the uniformly random initialized-policy baseline and
