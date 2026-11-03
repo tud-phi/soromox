@@ -14,6 +14,23 @@ Describe the delta from the last release, not intermediate development changes.
 
 ### Added
 
+- Shared rendering of installed and standalone fixed, free-space, and implicit
+  threadlike paths in Matplotlib, Open3D, Viser (including Helicoidal), and planar
+  OpenCV, with reuse of routing solutions for frames, batches, and playback. The
+  hollow-tendon example saves complete routing solutions for replay with all four
+  backends.
+
+- Configuration-dependent threadlike routing for PlanarPCS, PCS, and GVS:
+  straight spans between prescribed guides, or differentiable shortest paths
+  inside circular lumens using `slsqp-jax`. Both integrate with
+  `ThreadlikeActuator`, `ThreadlikeTransmission`, and `ThreadlikeImpedance` for
+  lengths, actuator coordinates, and force maps, including mixed routing groups,
+  moving joints, and floating bases; see
+  [PR #238](https://github.com/tud-phi/soromox/pull/238) and
+  [PR #248](https://github.com/tud-phi/soromox/pull/248).
+- Native FP64 Warp kernels for free-space threadlike routing and actuation,
+  with batched execution, reusable buffers, and CUDA graph support.
+
 - Added optional continuum Capstan friction for active threadlike actuation in
   PCS, PlanarPCS, and GVS, with analytical routed-path turn and custom friction
   laws; see [threadlike actuation](../api/actuation/threadlike.md#continuum-capstan-friction).
@@ -40,7 +57,8 @@ Describe the delta from the last release, not intermediate development changes.
 - Shared PCS/GVS dynamics support full sectional and tip inertia in JAX and Warp;
   see [PR #229](https://github.com/tud-phi/soromox/pull/229).
 - Refreshed the numerical and rendering dependency lock for Python 3.15,
-  including compatible Viser and `rpds-py` releases.
+  including compatible Viser, `rpds-py`, Matplotlib, `msgspec`, Numba, and
+  llvmlite releases.
 
 ### Performance
 
@@ -88,6 +106,11 @@ Describe the delta from the last release, not intermediate development changes.
   rendering guard, allowing image/video export and modern windows.
 
 ### Documentation
+
+- Added a [configuration-dependent routing guide](../api/actuation/threadlike.md#configuration-dependent-routing)
+  covering the common actuator APIs, explicit solutions, and a hollow-tendon
+  example with static equilibrium, dynamic simulation, and rendering of resolved
+  paths through guides at segment transitions.
 
 - Documented the continuum Capstan derivation, actuator-coordinate scales,
   local length-gradient notation, and distinction from discrete spacer disks.

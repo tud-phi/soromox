@@ -24,7 +24,6 @@ RUNTIME_REQUIREMENTS = (
     "dash>=2.6.0",
     "werkzeug>=3.0.0",
     "flask>=3.0.0",
-    "ipywidgets>=8.0.4",
     "nbformat>=5.7.0",
     "configargparse",
 )

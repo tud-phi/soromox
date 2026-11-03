@@ -83,3 +83,65 @@ def _mass_jacobian_action(
             first, second, use_first, base_row, k, column
         )
     return value
+
+
+@wp.func
+def _diagonal_mass_vector_action(
+    masses: wp.array2d[wp.float64],
+    item: int,
+    row: int,
+    first: wp.array2d[wp.float64],
+    second: wp.array2d[wp.float64],
+    use_first: bool,
+    base_row: int,
+) -> wp.float64:
+    """Apply a six-column diagonal inertia to one stored vector component.
+
+    Args:
+        masses: FP64 weighted diagonal inertias with shape ``(items, 6)``,
+            in angular-first order. Full 36-column matrices are not supported.
+        item: Inertia row for the current quadrature or link-tip contribution.
+        row: Spatial component of the result, from zero through five.
+        first: First FP64 vector buffer with shape ``(state_rows, 1)``.
+        second: Second vector buffer with the same shape as ``first``.
+        use_first: Whether to read from ``first`` rather than ``second``.
+        base_row: First row of the stored six-component spatial vector.
+
+    Returns:
+        Component ``row`` of the weighted inertia-vector product. All input
+        buffers are read-only.
+    """
+    return masses[item, row] * _vector_value(first, second, use_first, base_row, row)
+
+
+@wp.func
+def _diagonal_mass_jacobian_action(
+    masses: wp.array2d[wp.float64],
+    item: int,
+    row: int,
+    first: wp.array2d[wp.float64],
+    second: wp.array2d[wp.float64],
+    use_first: bool,
+    base_row: int,
+    column: int,
+) -> wp.float64:
+    """Apply a six-column diagonal inertia to one stored Jacobian entry.
+
+    Args:
+        masses: FP64 weighted diagonal inertias with shape ``(items, 6)``,
+            in angular-first order. Full 36-column matrices are not supported.
+        item: Inertia row for the current quadrature or link-tip contribution.
+        row: Spatial row of the result, from zero through five.
+        first: First FP64 Jacobian buffer with shape ``(state_rows, num_dofs)``.
+        second: Second Jacobian buffer with the same shape as ``first``.
+        use_first: Whether to read from ``first`` rather than ``second``.
+        base_row: First row of the stored six-row spatial Jacobian block.
+        column: Generalized-velocity column of the Jacobian.
+
+    Returns:
+        Entry ``(row, column)`` of the weighted inertia-Jacobian product. All
+        input buffers are read-only.
+    """
+    return masses[item, row] * _matrix_value(
+        first, second, use_first, base_row, row, column
+    )

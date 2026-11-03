@@ -1,5 +1,22 @@
 # Threadlike actuation
 
+Threadlike paths describe axial force transmission through a continuum robot.
+Choose the routing strategy according to how the path is constrained:
+
+- **Fixed material routing:** `ThreadlikeRouting` prescribes offsets along the
+  backbone.
+- **Straight spans between guides:** `StraightSpanRouting` follows prescribed
+  guides when wall contact is irrelevant throughout operation.
+- **Shortest paths inside a lumen:** `ShortestPathRouting` resolves the path
+  subject to circular wall constraints using SLSQP.
+
+All three strategies implement `BaseThreadlikeRouting` and work with
+`ThreadlikeActuator`, `ThreadlikeTransmission`, and `ThreadlikeImpedance`.
+The routing supplies physical geometry; the transmission applies the actuator's
+coordinate sign, scale, and supported friction model.
+
+## Fixed material routing
+
 Threadlike actuation models paths embedded in a continuum robot's material
 frame. The same geometry supports pulling tendons, pushing rods, simplified
 contractile muscles, and pressure chambers represented by an equivalent axial
@@ -19,14 +36,13 @@ A routing is a material-frame offset from the backbone. `PCS`, `PlanarPCS`, and
 `GVS` combine that routing with their native strain kinematics to evaluate path
 length, coordinate velocity, and generalized actuator force.
 
-The model assumes fixed material-frame routing, one scalar coordinate and
-effort per path, and an optional static effort loss along active paths. It does
-not model configuration-dependent rerouting, slack, actuator dynamics, or
-changes in pressure-chamber cross-section.
+This strategy assumes fixed material-frame routing, one constant coordinate
+scale per path, and an optional static, direction-independent effort loss along
+active paths.
 
-## Routing
+### Routing
 
-### Linear routing
+#### Linear routing
 
 `ThreadlikeRouting` stores a vectorized path family. Linear paths use
 
@@ -66,7 +82,7 @@ a(s) =
 In particular, a positive-`y` path lies on the inside of a
 positive-curvature bend and shortens relative to the backbone.
 
-### Custom routing laws
+#### Custom routing laws
 
 A custom routing supplies immutable parameters and analytical offset
 functions. Friction also needs the second derivative; production code does not
@@ -156,7 +172,13 @@ routing = ThreadlikeRouting(
 Path count and segment spans are static topology. Updating either requires
 reconstructing the routing and robot.
 
-## Modality presets
+## Actuators and transmissions
+
+The following APIs apply to all three routing strategies on `PlanarPCS`, `PCS`,
+and `GVS`. Pass the routing object to an actuator preset and install the result
+through the robot constructor's `actuators` argument.
+
+### Modality presets
 
 Let \(\ell\) be raw physical path length. Presets choose the signed or scaled
 coordinate while positive input retains its named physical meaning.
@@ -178,9 +200,10 @@ actuator = ThreadlikeActuator.tendons(routing)
 robot = PCS(body_params, structure=structure, actuators=actuator)
 ```
 
-Pass a tuple to combine ordered actuator groups or modalities.
+Pass a tuple to combine routing strategies or modalities. Channels follow group
+order, then physical path order within each group.
 
-## Coordinates, Jacobians, and force maps
+### Coordinates, Jacobians, and force maps
 
 Raw geometry is separate from the actuator coordinate and force map:
 
@@ -204,20 +227,32 @@ The two matrix contracts are
 \tau_u=A(q)e,
 \]
 
-where `coordinate_jacobian` is \(J_a=\partial y_a/\partial q\) with shape
-`(num_actuators, num_velocities)`, and `actuation_matrix` is \(A\) with shape
-`(num_velocities, num_actuators)`. For a lossless transmission, virtual work
+where `coordinate_jacobian` is the actuator-coordinate velocity map \(J_a\),
+with shape `(num_actuators, num_velocities)`, and `actuation_matrix` is \(A\)
+with shape `(num_velocities, num_actuators)`. For a lossless transmission, virtual work
 gives \(A=J_a^T\). Friction can make them differ without changing path
 coordinates or velocities.
 
-## Continuum Capstan friction
+The transmission's `path_length_jacobian` also maps generalized velocities to
+length rates. A routing strategy's `path_length_jacobian` differentiates with
+respect to configuration coordinates instead; use its `path_velocity_jacobian`
+for forces when a spatial floating base has seven pose coordinates and six
+velocity components.
+
+Configuration-dependent queries resolve the routing at the supplied `q`.
+For diagnostics, warm starts, or reuse across queries, use the
+[explicit solution API](#solve-apply-forces-and-sample-geometry).
+
+### Continuum Capstan friction
 
 `ThreadlikeFriction.capstan(coefficient=mu)` attenuates active threadlike effort
 along increasing backbone abscissa, starting at each path's configured
-anchor. It is available for `PCS`, `PlanarPCS`, and `GVS`. The default
+anchor. It is available for fixed routing on `PCS`, `PlanarPCS`, and `GVS`.
+Straight and shortest-path routing require frictionless transmission; installing
+Capstan friction with either raises an error. The default
 `ThreadlikeFriction.frictionless()` returns unit effort ratio.
 
-### Path-turn derivation
+#### Path-turn derivation
 
 Let \(s\) be the backbone abscissa in the undeformed configuration,
 \(R(s)\in SO(3)\) the material orientation, \(p(s)\in\mathbb{R}^3\) the backbone position, and
@@ -273,7 +308,7 @@ SoRoMoX evaluates this integral using the host quadrature. Genuine one-sided
 tangent jumps introduced by a piecewise host discretization contribute their
 unsigned angle at the interface.
 
-### Relation to the cited discrete model
+#### Relation to the cited discrete model
 
 The exponential Capstan relation is established for ropes, belts, and tendons
 sliding over contact. SoRoMoX takes inspiration from a discrete spacer-disk
@@ -305,7 +340,7 @@ This is not an implementation of discrete spacer disks. The current API does
 not represent discrete guide locations, guide radii, or individual guide
 reactions.
 
-### Generalized-force integration
+#### Generalized-force integration
 
 The local routed-length gradient with respect to material-frame strain is
 \(\Phi_\xi=[r\times u;u]\). The actuator coordinate is \(y_a=c\ell\), with
@@ -336,7 +371,7 @@ actuator = ThreadlikeActuator.tendons(
 The coefficient may be a scalar shared by the family or an array of shape
 `(num_paths,)`.
 
-### Custom effort-ratio laws
+#### Custom effort-ratio laws
 
 Custom laws receive only explicit friction state, not a host-specific context:
 
@@ -379,7 +414,7 @@ model sticking, direction-dependent backdriving, frictional hysteresis, or
 slack. Warp threadlike kernels currently accept only frictionless linear
 routing; automatic backend selection evaluates frictional actuation with JAX.
 
-## Passive paths
+### Passive paths
 
 `ThreadlikeImpedance` implements conservative routed spring-damper mechanics:
 
@@ -398,9 +433,9 @@ It contributes elastic force, damping, and elastic energy without consuming an
 active control channel. Its `.routing` attribute stays distinct from an active
 actuator's `.transmission`; friction is intentionally active-only.
 
-## Parameter updates
+### Parameter updates
 
-Updates use immutable replacement:
+Updates use immutable replacement. For example, to change fixed-path offsets:
 
 ```python
 params = robot.actuators[0].params
@@ -411,17 +446,231 @@ robot = robot.update_actuator_params(0, transmission=transmission_params)
 
 Routing coefficients, coordinate scales, friction coefficients, effort bounds,
 and passive mechanical values are updateable. Path counts and segment spans are
-static topology and require reconstruction.
+static topology and require reconstruction. Runtime routing objects retain their
+callbacks, mesh, and solver settings through these updates. Parameter-only
+constructors infer the built-in strategy: `RoutingSpanParams` selects straight
+routing and `ShortestPathRoutingParams` selects shortest-path routing with
+default solver settings.
 
-## Rendering
+### Rendering
 
 Renderer adapters turn path queries into semantic visual layers. Generic
 renderers draw swept geometry when a radius is configured and use polylines
-otherwise. I-SUPPORT retains its detailed bellows renderer.
+otherwise. Installed configuration-dependent paths use one layer per physical
+path, preserving unequal span counts and connecting guides. Their
+`path_poses(robot, q, s)` query samples one station, clamped to each path's ends;
+at a moving joint it selects the upstream guide. Use span sampling to represent
+both sides of the connection. I-SUPPORT retains its detailed bellows renderer.
 
-## Current limits
+## Configuration-dependent routing
 
-Threadlike paths are fixed in the material frame, use contiguous segment spans,
-and have one constant coordinate scale per path. Active effort loss is static
-and direction-independent. Discrete guides and internal actuator dynamics are
-not implemented.
+Use these strategies when a filament can move relative to the backbone:
+
+- `StraightSpanRouting` connects prescribed guides with straight lines. Use it
+  when you can guarantee that wall contact is irrelevant throughout operation.
+- `ShortestPathRouting` optimizes each span inside a circular hollow passage
+  (the lumen), using `slsqp-jax`, which is installed with SoRoMoX.
+
+Both support PlanarPCS, PCS, and GVS, including floating bases and prescribed
+guides at moving joints. They describe taut, frictionless filaments with
+negligible bending stiffness and inertia. Slack, friction, joint housing
+collisions, and elastic rod buckling require additional models.
+
+### Define guides and choose a strategy
+
+A **path** is one physical filament. A **span** is its portion between two
+prescribed guides. `RoutingSpanParams` contains the guides and their connectivity:
+
+- Offsets have shape `(num_spans, 3)`, in local `[0, y, z]` order and metres.
+  PlanarPCS requires zero `z` offsets.
+- Segment indices are zero-based and inclusive.
+- Spans of the same path must be ordered and contiguous. A segment transition
+  inside a span does not add a guide.
+- `span_path_index` groups spans into paths numbered from zero.
+
+For an existing one-segment `robot` and its `configuration`, start with:
+
+```python
+import equinox as eqx
+import jax
+import jax.numpy as jnp
+
+from soromox.actuation import (
+    CircularLumenParams,
+    RoutingSpanParams,
+    ShortestPathRouting,
+    ShortestPathRoutingParams,
+    StraightSpanRouting,
+)
+
+jax.config.update("jax_enable_x64", True)
+
+spans = RoutingSpanParams(
+    start_offset=[[0.0, 0.002, 0.0]],
+    end_offset=[[0.0, 0.002, 0.0]],
+    span_path_index=(0,),
+    start_segment_index=(0,),
+    end_segment_index=(0,),
+)
+routing = StraightSpanRouting(spans)
+```
+
+With the optional `warp-lang` dependency, use
+`routing.solve_routing(robot, configuration, backend="warp")` to evaluate straight
+segment kinematics, span geometry, joint-guide connections, and analytical path
+Jacobians with FP64 Warp kernels. Configuration batches, including nested
+`jax.vmap` calls, share one set of launches with common model and guide parameters.
+Each link is integrated once and relative intervals are shared across paths.
+Differentiation through these APIs uses the JAX reference implementation.
+The default, `backend=None`, inherits `robot.backend`. Use `backend="jax"` or
+`backend="warp"` to override it per call. `"auto"` selects Warp on GPU and JAX
+on CPU, following the shared execution policy. Hosts without a backend preference
+use JAX. Measure your workload when choosing a backend.
+
+For actuation without world endpoint reconstruction, use
+`routing.actuation_matrix(robot, configuration, backend="warp")` or
+`routing.actuation_force(robot, configuration, tensions, backend="warp")`.
+The latter accumulates forces directly without materializing an actuation matrix.
+Matrix rows and force entries use generalized velocity coordinates, including
+zero floating-base entries for valid routes. For installed actuator groups, use
+`backend="jax"` or `"auto"` on the robot; fused robot Warp actuation kernels
+currently accept fixed linear routing only.
+
+The strategies share the `soromox.actuation.threadlike` namespace: `components`
+contains the shared actuators and transmissions, `base` defines their routing
+contract, and `fixed_routing`, `straight_span`, and `shortest_path` implement the
+strategies. Shared span geometry and solutions live in `routing`. The Warp
+backend mirrors the threadlike grouping: its `fixed_routing` module prepares data
+and checks eligibility for linear fixed routing, while
+`straight_span` evaluates free-space routing. Reusable continuum kinematics lives
+in `execution.warp.common.relative_kinematics`.
+
+A native Warp simulation can prepare reusable buffers once:
+
+```python
+from soromox.execution.warp.actuation.threadlike import StraightSpanActuation
+
+executor = StraightSpanActuation(robot, routing, batch_size=batch_size, device="cuda")
+# q: contiguous FP64 Warp array (batch_size, robot.num_coordinates)
+# tensions: contiguous FP64 Warp array (batch_size, routing.spans.num_paths)
+force = executor.actuation_force(q, tensions)
+```
+
+`force` aliases the executor's output buffer. Calls launch only Warp kernels and
+can be recorded in a CUDA graph after warming up the kernels. Keep the executor
+and input buffers alive for graph replay. Use one executor per concurrent stream
+and rebuild it after changing model or guide parameters. Construction uses the
+SoRoMoX model data; steady-state calls perform no JAX evaluation or host transfers.
+Native launches are forward-only. Use the JAX-facing methods above when gradients
+through the actuation are needed.
+
+To account for wall contact, use the same guides with a lumen radius per segment:
+
+```python
+routing = ShortestPathRouting(
+    ShortestPathRoutingParams(
+        spans,
+        CircularLumenParams.constant(0.005, robot.num_segments),
+    )
+)
+```
+
+`inner_radius` has shape `(robot.num_segments,)`. Each guide must lie inside
+its segment's lumen. Use FP64 for the default numerical tolerances.
+`with_params` replaces numerical geometry while preserving topology; changing
+path or segment connectivity requires constructing new routing parameters.
+
+### Solve, apply forces, and sample geometry
+
+```python
+solve = eqx.filter_jit(routing.solve_routing)
+solution = solve(robot, configuration)
+if not bool(solution.converged):
+    raise RuntimeError("Routing did not converge")
+
+lengths = solution.path_lengths
+tension = jnp.full(spans.num_paths, 0.1)
+jacobian = routing.path_velocity_jacobian(robot, configuration, solution)
+force = -jacobian.T @ tension
+positions = routing.span_positions(
+    robot, configuration, solution, 0, jnp.linspace(0.0, 1.0, 50)
+)
+```
+
+`path_lengths` has one entry per physical path, including connections between
+adjacent span guides. `span_positions` returns world coordinates in metres.
+For optimized routes, `span_offsets` also samples material offsets at specified
+backbone coordinates. Use a previous optimized solution as an explicit warm start:
+
+```python
+next_solution = solve(robot, next_configuration, initial_guess=solution)
+```
+
+The routing's `path_lengths`, `path_length_jacobian`, and
+`path_velocity_jacobian` accept an optional solution to reuse a solve; omitting
+it resolves the route once for that call.
+
+`path_length_jacobian` differentiates lengths with respect to configuration
+coordinates. Use `path_velocity_jacobian` for forces: spatial floating bases
+have different numbers of pose coordinates and velocity components. Rigid base
+motion contributes zero to internal path lengths and forces.
+
+### Guides at moving joints
+
+Joints have no modeled thickness. End a span before each moving joint and start
+another after it, assigning both to the same path. A straight cable connects
+the upstream and downstream guides and contributes to length and force.
+
+For one path through two sections, with guides at their transition:
+
+```python
+offsets = [[0.0, 0.004, 0.0], [0.0, 0.004, 0.0]]
+spans = RoutingSpanParams(
+    start_offset=offsets,
+    end_offset=offsets,
+    span_path_index=(0, 0),
+    start_segment_index=(0, 1),
+    end_segment_index=(0, 1),
+)
+```
+
+Zero offsets give centered guides. At a rotational joint, centered guides remain
+coincident and contribute zero connecting length and direct joint torque.
+Offset guides can separate under rotation; translation can separate both kinds.
+Inspect `solution.guides` for connection lengths and their `differentiable` flags.
+A moving connection collapsing to zero length has no unique derivative; its
+Jacobian row returns NaNs. Permanently coincident guides have zero derivatives.
+
+### Check accuracy
+
+Always check `solution.converged`. Installed length and coordinate queries return
+NaNs for failed spans; explicit solutions retain diagnostic length estimates.
+Derivative and force queries also reject collapsed moving guide connections.
+Straight spans check finite geometry and positive length; wall clearance is the
+caller's responsibility. Optimized spans check endpoint error, optimality, and
+wall containment independently of the optimizer's termination code.
+
+`RoutingSolverOptions` separates the solver stopping tolerance from physical
+limits: `endpoint_tolerance` defaults to `1e-8` m and `wall_tolerance` to `1e-6` m.
+Each optimized span reports `dense_wall_violation` at validation samples and
+`wall_violation_bound`, a conservative bound between them. Acceptance uses the
+bound. Increase `validation_samples_per_element` when the bound is overly
+conservative; refine the routing mesh and wall constraint samples when actual
+penetration is excessive. Configure these through
+`PiecewiseLinearRoutingDiscretization`.
+
+### Routing interfaces
+
+::: soromox.actuation.BaseThreadlikeRouting
+
+::: soromox.actuation.ConfigurationDependentThreadlikeRouting
+
+::: soromox.actuation.StraightSpanRouting
+
+::: soromox.actuation.ShortestPathRouting
+
+::: soromox.actuation.RoutingSolverOptions
+
+### Native Warp actuation
+
+::: soromox.execution.warp.actuation.threadlike.straight_span.StraightSpanActuation

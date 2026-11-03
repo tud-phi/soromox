@@ -1,4 +1,7 @@
-"""Preparation and eligibility for Warp linear-threadlike actuation."""
+"""Preparation and eligibility for fixed-routing Warp threadlike actuation.
+
+The supported routing offsets vary linearly with backbone position and remain
+prescribed in the material frame as the robot deforms."""
 
 from __future__ import annotations
 

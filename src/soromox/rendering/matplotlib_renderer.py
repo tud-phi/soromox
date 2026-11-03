@@ -14,6 +14,11 @@ from matplotlib.collections import LineCollection
 from matplotlib.widgets import Slider
 from mpl_toolkits.mplot3d.art3d import Line3DCollection, Poly3DCollection
 
+from soromox.actuation.threadlike import (
+    ConfigurationDependentThreadlikeRouting,
+    RoutingSolution,
+    ThreadlikeRouting,
+)
 from soromox.rendering.config.output import VideoEncodingConfig
 from soromox.rendering.video_encoding import FFmpegVideoWriter
 
@@ -103,6 +108,10 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
         camera_config: CameraConfig | None = None,
         render_actuators: bool = True,
         actuator_inputs: Array | None = None,
+        routing: ThreadlikeRouting
+        | ConfigurationDependentThreadlikeRouting
+        | None = None,
+        routing_solution: RoutingSolution | None = None,
     ) -> np.ndarray:
         """Render configuration(s) to an RGB image array.
 
@@ -117,6 +126,10 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
                 and the direction from position to look-at for 3D plots.
             render_actuators: Whether to render actuator visual layers if available.
             actuator_inputs: Optional actuator inputs for scalar-colored layers.
+            routing: Optional fixed or configuration-dependent threadlike routing.
+            routing_solution: Existing configuration-dependent routing solution, with
+                matching batch/time axes. Omit to solve. Must be ``None`` for
+                fixed routing, which is evaluated directly.
 
         Returns:
             img (np.ndarray): RGB image of shape (height, width, 3), dtype uint8.
@@ -175,12 +188,14 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
         curves_np = np.array(curves)
         self._fit_scene_bounds(curves_np)
         actuator_layers = ()
-        if render_actuators and self._has_actuator_visuals:
+        if render_actuators and (self._has_actuator_visuals or routing is not None):
             if batched:
                 actuator_layers = self.compute_actuator_visual_layers_batched(
                     q_arr,
                     base_offsets_arr,
                     actuator_inputs=actuator_inputs,
+                    routing=routing,
+                    routing_solution=routing_solution,
                 )
             else:
                 actuator_offsets = (
@@ -192,6 +207,8 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
                     q_arr[None, :],
                     actuator_offsets,
                     actuator_inputs=actuator_inputs,
+                    routing=routing,
+                    routing_solution=routing_solution,
                 )
 
         fig = plt.figure(figsize=(self.width / 100, self.height / 100), dpi=100)
@@ -251,6 +268,10 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
         camera_config: CameraConfig | None = None,
         render_actuators: bool = True,
         actuator_inputs: Array | None = None,
+        routing: ThreadlikeRouting
+        | ConfigurationDependentThreadlikeRouting
+        | None = None,
+        routing_solution: RoutingSolution | None = None,
     ) -> None:  # type: ignore[override]
         """Display a single frame interactively (supports batched inputs).
 
@@ -263,6 +284,10 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
                 and the direction from position to look-at for 3D plots.
             render_actuators: Whether to render actuator visual layers if available.
             actuator_inputs: Optional actuator inputs for scalar-colored layers.
+            routing: Optional fixed or configuration-dependent threadlike routing.
+            routing_solution: Existing configuration-dependent routing solution, with
+                matching batch/time axes. Omit to solve. Must be ``None`` for
+                fixed routing, which is evaluated directly.
 
         Returns:
             None
@@ -275,6 +300,8 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
             camera_config=camera_config,
             render_actuators=render_actuators,
             actuator_inputs=actuator_inputs,
+            routing=routing,
+            routing_solution=routing_solution,
         )
         plt.figure(figsize=(self.width / 100, self.height / 100), dpi=100)
         plt.imshow(img)
@@ -297,6 +324,10 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
         camera_config: CameraConfig | None = None,
         render_actuators: bool = True,
         actuator_inputs: Array | None = None,
+        routing: ThreadlikeRouting
+        | ConfigurationDependentThreadlikeRouting
+        | None = None,
+        routing_solution: RoutingSolution | None = None,
     ) -> AnimateReturn:
         """Interactive matplotlib animation with slider or auto-play.
 
@@ -315,6 +346,10 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
                 and the direction from position to look-at for 3D plots.
             render_actuators: Whether to render actuator visual layers if available
             actuator_inputs: Optional actuator inputs for scalar-colored layers.
+            routing: Optional fixed or configuration-dependent threadlike routing.
+            routing_solution: Existing configuration-dependent routing solution, with
+                matching batch/time axes. Omit to solve. Must be ``None`` for
+                fixed routing, which is evaluated directly.
 
         Returns:
             HTML object for Jupyter display (animation mode only)
@@ -341,6 +376,8 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
                 color_config=color_config,
                 render_actuators=render_actuators,
                 actuator_inputs=actuator_inputs,
+                routing=routing,
+                routing_solution=routing_solution,
                 record_path=record_path,
                 video_config=video_config,
                 playback_speed=playback_speed,
@@ -357,6 +394,8 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
                 color_config=color_config,
                 render_actuators=render_actuators,
                 actuator_inputs=actuator_inputs,
+                routing=routing,
+                routing_solution=routing_solution,
                 record_path=record_path,
                 video_config=video_config,
                 playback_speed=playback_speed,
@@ -378,6 +417,8 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
         color_config: RendererColorConfig | None,
         render_actuators: bool,
         actuator_inputs: Array | None,
+        routing: ThreadlikeRouting | ConfigurationDependentThreadlikeRouting | None,
+        routing_solution: RoutingSolution | None,
         record_path: str | None,
         video_config: VideoEncodingConfig | None,
         playback_speed: float,
@@ -395,6 +436,10 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
             color_config: Shared renderer color configuration.
             render_actuators: Whether to render actuator visual layers if available.
             actuator_inputs: Optional actuator inputs for scalar-colored layers.
+            routing: Optional fixed or configuration-dependent threadlike routing.
+            routing_solution: Existing configuration-dependent routing solution, with
+                matching batch/time axes. Omit to solve. Must be ``None`` for
+                fixed routing, which is evaluated directly.
             video_config: Complete video encoding override; None uses output defaults.
             record_path: Optional path to save animation (mp4/gif depending on writer).
             playback_speed: Playback speed multiplier (>0).
@@ -417,7 +462,7 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
             curves = curves + single_offset
         all_curves = curves[None, ...]  # (1, T, P, dim)
         actuator_layers = ()
-        if render_actuators and self._has_actuator_visuals:
+        if render_actuators and (self._has_actuator_visuals or routing is not None):
             actuator_offsets = (
                 jnp.zeros((1, int(curves.shape[-1])), dtype=q_ts.dtype)
                 if single_offset is None
@@ -427,6 +472,8 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
                 q_ts[None, ...],
                 actuator_offsets,
                 actuator_inputs=actuator_inputs,
+                routing=routing,
+                routing_solution=routing_solution,
             )
 
         cfg = color_config or self.color_config
@@ -460,6 +507,8 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
         color_config: RendererColorConfig | None,
         render_actuators: bool,
         actuator_inputs: Array | None,
+        routing: ThreadlikeRouting | ConfigurationDependentThreadlikeRouting | None,
+        routing_solution: RoutingSolution | None,
         record_path: str | None,
         video_config: VideoEncodingConfig | None,
         playback_speed: float,
@@ -477,6 +526,10 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
             color_config: Shared renderer color configuration.
             render_actuators: Whether to render actuator visual layers if available.
             actuator_inputs: Optional actuator inputs for scalar-colored layers.
+            routing: Optional fixed or configuration-dependent threadlike routing.
+            routing_solution: Existing configuration-dependent routing solution, with
+                matching batch/time axes. Omit to solve. Must be ``None`` for
+                fixed routing, which is evaluated directly.
             video_config: Complete video encoding override; None uses output defaults.
             record_path: Optional path to save animation (mp4/gif depending on writer).
             playback_speed: Playback speed multiplier (>0).
@@ -532,11 +585,13 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
         )
 
         actuator_layers = ()
-        if render_actuators and self._has_actuator_visuals:
+        if render_actuators and (self._has_actuator_visuals or routing is not None):
             actuator_layers = self.compute_actuator_visual_layers_trajectory(
                 q_ts,
                 base_offsets_arr,
                 actuator_inputs=actuator_inputs,
+                routing=routing,
+                routing_solution=routing_solution,
             )
 
         return self._animate_backbone_curves(
@@ -781,6 +836,10 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
         color_config: RendererColorConfig | None = None,
         render_actuators: bool = True,
         actuator_inputs: Array | None = None,
+        routing: ThreadlikeRouting
+        | ConfigurationDependentThreadlikeRouting
+        | None = None,
+        routing_solution: RoutingSolution | None = None,
         show: bool = False,
     ) -> None:
         """Render an animated sequence (optionally saving to disk).
@@ -799,6 +858,10 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
             color_config: Shared renderer color configuration.
             render_actuators: Whether to render actuator visual layers if available
             actuator_inputs: Optional actuator inputs for scalar-colored layers.
+            routing: Optional fixed or configuration-dependent threadlike routing.
+            routing_solution: Existing configuration-dependent routing solution, with
+                matching batch/time axes. Omit to solve. Must be ``None`` for
+                fixed routing, which is evaluated directly.
             show: Whether to display the animation
         """
         self._warn_simple_appearance("animated")
@@ -815,6 +878,8 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
             color_config=color_config,
             render_actuators=render_actuators,
             actuator_inputs=actuator_inputs,
+            routing=routing,
+            routing_solution=routing_solution,
         )
 
     @staticmethod

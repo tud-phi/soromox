@@ -114,6 +114,7 @@ dependencies = [
   "jax>=0.10.0",
   "numpy",
   "scipy",
+  "slsqp-jax>=0.21.1",
   "tqdm",
 ]
 

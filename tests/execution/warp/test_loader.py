@@ -15,8 +15,29 @@ def clear_executor_cache() -> None:
     """Isolate the process-global lazy-loader cache between tests."""
 
     loader.load_executor.cache_clear()
+    loader.load_straight_span_evaluator.cache_clear()
     yield
     loader.load_executor.cache_clear()
+    loader.load_straight_span_evaluator.cache_clear()
+
+
+@pytest.mark.parametrize("missing", ["warp", "unexpected"])
+def test_straight_span_loader_preserves_import_errors(monkeypatch, missing):
+    """Explain missing Warp while preserving unrelated import failures."""
+    failure = ModuleNotFoundError(f"No module named '{missing}'", name=missing)
+
+    def unavailable(name):
+        """Simulate an unavailable evaluator dependency."""
+        raise failure
+
+    monkeypatch.setattr(loader, "import_module", unavailable)
+    if missing == "warp":
+        with pytest.raises(ImportError, match=r"pip install soromox\[warp\]"):
+            loader.load_straight_span_evaluator()
+    else:
+        with pytest.raises(ModuleNotFoundError) as error:
+            loader.load_straight_span_evaluator()
+        assert error.value is failure
 
 
 def test_load_executor_resolves_and_caches_family_entry_point(

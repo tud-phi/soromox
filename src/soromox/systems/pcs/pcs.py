@@ -46,6 +46,7 @@ from soromox.systems.components.inertia import (
     spatial_mass_action,
     weighted_inertias,
 )
+from soromox.systems.pcs.kinematics import constant_strain_segment_kinematics
 from soromox.systems.pcs.params import PCSParams
 from soromox.systems.pcs.structures import PCSStructure
 from soromox.systems.soft_robot import SoftRobot
@@ -977,6 +978,41 @@ class PCS(SoftRobot):
         xi = self.B_xi @ q + self.xi_ref
 
         return xi
+
+    def relative_segment_kinematics(self, configuration):
+        """Evaluate each constant-strain segment's relative transform and Jacobian.
+
+        Args:
+            configuration (Array): Configuration, shape ``(num_coordinates,)``.
+
+        Returns:
+            result (tuple[Array, Array, Array]): Local link transforms, body
+                Jacobians, and identity joints; see the SoftRobot contract.
+        """
+        return constant_strain_segment_kinematics(self, configuration)
+
+    def strain_and_basis(
+        self, configuration: Array, segment_indices: Array, points: Array
+    ) -> tuple[Array, Array]:
+        """Evaluate spatial strains and their configuration basis.
+
+        Args:
+            configuration: Configuration with shape ``(num_coordinates,)``.
+            segment_indices: Sample segment indices with shape ``(num_points,)``.
+            points: Global reference backbone abscissae, shape ``(num_points,)``.
+
+        Returns:
+            Strains with shape ``(num_points, 6)`` and their analytical basis
+            with shape ``(num_points, 6, num_coordinates)``.
+        """
+        del points
+        _, internal = self.split_configuration(configuration)
+        strains = self.strain(internal).reshape(self.num_segments, 6)[segment_indices]
+        basis = self.B_xi.reshape(self.num_segments, 6, self.num_internal_dofs)
+        basis = jnp.pad(
+            basis[segment_indices], ((0, 0), (0, 0), (self.num_base_coordinates, 0))
+        )
+        return strains, basis
 
     @eqx.filter_jit
     def forward_kinematics(

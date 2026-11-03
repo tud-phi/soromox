@@ -16,6 +16,7 @@ import sys
 from pathlib import Path
 
 import jax
+import numpy as np
 import optax
 import pytest
 
@@ -124,8 +125,11 @@ def test_one_yogi_with_scaled_rates_equals_three_yogis(initial_gains, gradients,
         committed_optimizer(alpha, COMMITTED_LR_RATIO), initial_gains, gradients
     )
     for name in GAIN_ORDER:
-        assert harmonized["opt_ctr_params"][name] == pytest.approx(
-            committed["opt_ctr_params"][name], rel=1e-9
+        np.testing.assert_allclose(
+            np.asarray(harmonized["opt_ctr_params"][name]),
+            np.asarray(committed["opt_ctr_params"][name]),
+            rtol=1e-9,
+            atol=1e-12,
         )
 
 
@@ -181,8 +185,6 @@ def test_the_committed_archive_describes_the_rate_the_code_would_run(method):
     exactly the drift the metadata exists to make visible. Asserting the
     agreement rather than a hand-copied literal means the two cannot separate.
     """
-    import numpy as np
-
     archive = CODE_DIR.parent / "data" / method / "optimization_results.npz"
     if not archive.exists():
         pytest.skip(f"no committed {method} archive to compare against")

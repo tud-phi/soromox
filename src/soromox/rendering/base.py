@@ -12,7 +12,16 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 
+from soromox.actuation.threadlike import (
+    ConfigurationDependentThreadlikeRouting,
+    RoutingSolution,
+    ThreadlikeRouting,
+)
 from soromox.rendering.actuation import (
+    _fixed_routing_points,
+    _reshape_routing_solution,
+    _routing_solution_at,
+    _routing_visual_layers,
     actuator_visual_layers,
     vectorized_actuator_visual_layers_trajectory,
 )
@@ -545,7 +554,230 @@ class BaseSoftRobotRenderer(ABC):
         s_ps = self._backbone_abscissae
         return self.robot.forward_kinematics_abscissa_batched(q, s_ps)
 
+    def _routing_points_for_backend(self, points):
+        """Match world positions to this renderer's spatial dimension.
+
+        Args:
+            points: Positions with arbitrary leading axes and final axis 2 or 3.
+
+        Returns:
+            Positions with final axis 2 for planar renderers or 3 for spatial
+            renderers. Planar world positions gain ``z=0`` in a spatial scene.
+        """
+        dim = 3 if self.is_3d else 2
+        if points.shape[-1] < dim:
+            points = jnp.pad(points, [(0, 0)] * (points.ndim - 1) + [(0, 1)])
+        return points[..., :dim]
+
+    def _routing_layers(self, q, routing, solution):
+        """Sample optional routing in world coordinates for this backend.
+
+        Args:
+            q: Single configuration, shape ``(robot.num_coordinates,)``.
+            routing: Optional fixed or configuration-dependent routing strategy.
+            solution: Matching configuration-dependent solution, or ``None`` to
+                solve once. Must be ``None`` for fixed routing.
+
+        Returns:
+            One layer per physical path with shape ``(1, samples_in_path, dim)``.
+            Planar renderers retain world x/y; spatial renderers retain x/y/z.
+            Positions are in metres, before display offsets.
+
+        Raises:
+            ValueError: A solution lacks routing or its topology, convergence,
+                configuration shape, or sampled geometry is invalid.
+        """
+        layers = _routing_visual_layers(
+            self.robot, q, routing, solution=solution, s_points=self._backbone_abscissae
+        )
+        return tuple(
+            layer.with_points(self._routing_points_for_backend(layer.points))
+            for layer in layers
+        )
+
     def compute_actuator_visual_layers(
+        self,
+        q: Array,
+        *,
+        actuator_inputs: Array | None = None,
+        routing: ThreadlikeRouting
+        | ConfigurationDependentThreadlikeRouting
+        | None = None,
+        routing_solution: RoutingSolution | None = None,
+    ) -> tuple[ActuatorVisualLayer, ...]:
+        """Combine installed actuators with optional resolved routing for one robot.
+
+        Args:
+            q: Generalized coordinates, shape ``(robot.num_coordinates,)``.
+            actuator_inputs: Optional installed actuator inputs, shape
+                ``(robot.num_actuators,)``.
+            routing: Optional fixed or configuration-dependent routing, using
+                the configured tendon style and sampling resolution.
+            routing_solution: Solution for exactly this robot, routing, and ``q``.
+                Reused without solving; omitted solutions are solved once. Must be
+                ``None`` for fixed routing, which is evaluated directly.
+
+        Returns:
+            Installed layers followed by optional routing layers in world
+            coordinates (metres), with no display offsets. Each layer has shape
+            ``(channels, samples, dim)``.
+
+        Raises:
+            ValueError: Routing inputs or geometry are invalid. The caller must
+                ensure a supplied solution matches the configuration and model.
+        """
+        layers = self._compute_installed_actuator_visual_layers(
+            q, actuator_inputs=actuator_inputs
+        )
+        return layers + self._routing_layers(q, routing, routing_solution)
+
+    def _routing_layers_batched(self, q, routing, solution, *, trajectory=False):
+        """Sample routes independently while preserving batch/time ordering.
+
+        Args:
+            q: Normalized configurations, shape ``(N, DOF)`` or ``(N, T, DOF)``.
+            routing: Optional fixed or configuration-dependent routing strategy.
+            solution: Matching solution PyTree with the same leading axes as
+                ``q``. Singleton axes may be omitted; ``None`` solves each state.
+                Must be ``None`` for fixed routing, which is vectorized over states.
+            trajectory: Select trajectory rather than batch layer containers.
+
+        Returns:
+            Layers with points shaped ``(*q.shape[:-1], 1, samples_in_path, dim)``
+            in world coordinates, before layout offsets. Empty without routing.
+
+        Raises:
+            ValueError: Solution axes do not match, a solution lacks routing,
+                or a sampled route is invalid.
+        """
+        if routing is None:
+            if solution is not None:
+                raise ValueError(
+                    "routing is required when routing_solution is supplied."
+                )
+            return ()
+        q = jnp.asarray(q)
+        expected_ndim = 3 if trajectory else 2
+        if q.ndim != expected_ndim:
+            raise ValueError(f"q must have {expected_ndim} axes, got shape {q.shape}.")
+        layer_type = (
+            TrajectoryActuatorVisualLayer if trajectory else BatchedActuatorVisualLayer
+        )
+        if isinstance(routing, ThreadlikeRouting):
+            points = self._routing_points_for_backend(
+                _fixed_routing_points(
+                    self.robot, q, routing, self._backbone_abscissae, solution
+                )
+            )
+            return tuple(
+                layer_type(
+                    name=f"routing/path_{index}",
+                    kind="tendon",
+                    points=points[..., index : index + 1, :, :],
+                )
+                for index in range(routing.num_paths)
+            )
+        shape = q.shape[:-1]
+        solution = _reshape_routing_solution(solution, shape)
+        frames = [
+            self._routing_layers(
+                q[index], routing, _routing_solution_at(solution, index)
+            )
+            for index in np.ndindex(shape)
+        ]
+        if not frames:
+            return ()
+        return tuple(
+            layer_type(
+                name=layer.name,
+                kind=layer.kind,
+                points=jnp.stack([frame[i].points for frame in frames]).reshape(
+                    (*shape, *layer.points.shape)
+                ),
+            )
+            for i, layer in enumerate(frames[0])
+        )
+
+    def compute_actuator_visual_layers_batched(
+        self,
+        q_batch: Array,
+        base_offsets: Array,
+        *,
+        actuator_inputs: Array | np.ndarray | None = None,
+        routing: ThreadlikeRouting
+        | ConfigurationDependentThreadlikeRouting
+        | None = None,
+        routing_solution: RoutingSolution | None = None,
+    ) -> tuple[BatchedActuatorVisualLayer, ...]:
+        """Combine actuator layers for ``(N, DOF)`` configurations.
+
+        Args:
+            q_batch: Configurations, shape ``(N, robot.num_coordinates)``.
+            base_offsets: Display translations, shape ``(N, 2)`` or ``(N, 3)``.
+            actuator_inputs: Optional installed inputs, shape
+                ``(N, robot.num_actuators)`` (or a single vector for ``N=1``).
+            routing: Optional fixed or configuration-dependent routing.
+            routing_solution: Solutions with leading axis ``N`` on every leaf.
+                A single solution is accepted only for ``N=1``. Omit to solve
+                each configuration; supplied solutions must match their states.
+                Must be ``None`` for fixed routing, which is evaluated directly.
+
+        Returns:
+            Layers with points shaped ``(N, channels, samples, dim)`` in metres.
+            Display offsets are applied once after world geometry is sampled.
+
+        Raises:
+            ValueError: Configuration/solution axes, display offsets, or routes
+                are invalid. Solutions are never broadcast across robots.
+        """
+        layers = self._compute_installed_actuator_visual_layers_batched(
+            q_batch, base_offsets, actuator_inputs=actuator_inputs
+        )
+        extra = self._routing_layers_batched(q_batch, routing, routing_solution)
+        return layers + self._offset_batched_actuator_layers(extra, base_offsets)
+
+    def compute_actuator_visual_layers_trajectory(
+        self,
+        q_ts: Array,
+        base_offsets: Array,
+        *,
+        actuator_inputs: Array | np.ndarray | None = None,
+        routing: ThreadlikeRouting
+        | ConfigurationDependentThreadlikeRouting
+        | None = None,
+        routing_solution: RoutingSolution | None = None,
+    ) -> tuple[TrajectoryActuatorVisualLayer, ...]:
+        """Combine actuator layers for ``(N, T, DOF)`` trajectories.
+
+        Args:
+            q_ts: Configurations, shape ``(N, T, robot.num_coordinates)``.
+            base_offsets: Display translations, shape ``(N, 2)`` or ``(N, 3)``.
+            actuator_inputs: Optional inputs with leading ``(N, T)`` axes, or
+                ``(N,)`` for inputs constant over time. For a single robot,
+                a ``(T, channels)`` array or constant channel vector is accepted.
+            routing: Optional fixed or configuration-dependent routing.
+            routing_solution: Solutions with leading axes ``(N, T)`` in the same
+                order as ``q_ts``. Singleton robot/time axes may be omitted.
+                Supplied solutions are reused; omitting them solves each state.
+                Must be ``None`` for fixed routing, which is evaluated directly.
+
+        Returns:
+            Layers with points shaped ``(N, T, channels, samples, dim)`` in metres,
+            including display offsets applied once after world-space sampling.
+
+        Raises:
+            ValueError: Configuration/solution axes, display offsets, or routes
+                are invalid. Solutions are never broadcast across states.
+        """
+        layers = self._compute_installed_actuator_visual_layers_trajectory(
+            q_ts, base_offsets, actuator_inputs=actuator_inputs
+        )
+        extra = self._routing_layers_batched(
+            q_ts, routing, routing_solution, trajectory=True
+        )
+        return layers + self._offset_trajectory_actuator_layers(extra, base_offsets)
+
+    def _compute_installed_actuator_visual_layers(
         self,
         q: Array,
         *,
@@ -703,7 +935,7 @@ class BaseSoftRobotRenderer(ABC):
             return inputs[frame_idx]
         return inputs
 
-    def compute_actuator_visual_layers_batched(
+    def _compute_installed_actuator_visual_layers_batched(
         self,
         q_batch: Array,
         base_offsets: Array,
@@ -774,7 +1006,7 @@ class BaseSoftRobotRenderer(ABC):
             )
         return self._offset_batched_actuator_layers(tuple(batched_layers), base_offsets)
 
-    def compute_actuator_visual_layers_trajectory(
+    def _compute_installed_actuator_visual_layers_trajectory(
         self,
         q_ts: Array,
         base_offsets: Array,

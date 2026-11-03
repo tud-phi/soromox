@@ -73,6 +73,10 @@ objects with points shaped
 `(num_actuators_in_layer, num_points, dim)`. It is also available directly as
 `soromox.rendering.actuator_visual_layers(...)`.
 
+Optional `routing=` displays a standalone threadlike route alongside installed
+components. For configuration-dependent routing, pass a matching
+`routing_solution=` to reuse a saved solution without solving again.
+
 Specialized or third-party robots may override this default by exposing
 `actuator_visual_layers(q, s_points, *, actuator_inputs=None)`.
 

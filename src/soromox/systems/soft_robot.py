@@ -86,6 +86,84 @@ class SoftRobot(DynamicalSystem):
     actuators: tuple[Actuator, ...]
     passive_elements: tuple[PassiveElement, ...]
 
+    def strain_and_basis(
+        self, configuration: Array, segment_indices: Array, points: Array
+    ) -> tuple[Array, Array]:
+        """Evaluate material strains and their analytical configuration basis.
+
+        Args:
+            configuration: Generalized configuration, shape ``(num_coordinates,)``.
+            segment_indices: Segment for each sample, shape ``(num_points,)``.
+            points: Global reference backbone coordinates in metres, shape
+                ``(num_points,)``. Indices select the side at segment boundaries.
+
+        Returns:
+            Spatial strains in angular/linear order, shape ``(num_points, 6)``,
+            and their configuration derivatives, shape
+            ``(num_points, 6, num_coordinates)``. Floating base columns are zero
+            because a rigid motion does not change material strain.
+
+        Raises:
+            NotImplementedError: The host does not implement material strain sampling.
+        """
+        raise NotImplementedError("The host must implement strain_and_basis.")
+
+    def relative_segment_kinematics(self, configuration):
+        """Evaluate relative segment transforms and body Jacobians.
+
+        Args:
+            configuration (Array): Configuration, shape ``(num_coordinates,)``.
+
+        Returns:
+            result (tuple[Array, Array, Array]): Link entry-to-exit transforms,
+                link body Jacobians, and preceding joint transforms, with shapes
+                ``(num_segments, 4, 4)``,
+                ``(num_segments, 6, num_coordinates)``, and
+                ``(num_segments, 4, 4)``. Base and joint columns in link Jacobians
+                are zero. Each link is evaluated independently of upstream motion.
+
+        Raises:
+            NotImplementedError: The host has no relative segment kinematics implementation.
+        """
+        raise NotImplementedError(
+            "The host must implement relative_segment_kinematics."
+        )
+
+    @property
+    def moving_joint_indices(self) -> tuple[int, ...]:
+        """Indices of segments preceded by a moving joint.
+
+        Returns:
+            Static segment indices; empty for continuous backbones.
+        """
+        return ()
+
+    def joint_kinematics(
+        self, configuration: Array, segment: int
+    ) -> tuple[Array, Array, Array]:
+        """Evaluate a joint relative to the preceding segment's exit frame.
+
+        Args:
+            configuration: Configuration, shape ``(num_coordinates,)``.
+            segment: Static segment index identifying its preceding joint.
+
+        Returns:
+            result (tuple[Array, Array, Array]): Transform, shape ``(4, 4)``;
+                spatial twist Jacobian in the upstream frame, shape
+                ``(6, num_coordinates)``; and constant motion generators in
+                angular/linear order, shape ``(6, num_generators)``. The generators
+                span every possible joint twist, including any reference twist.
+                A point annihilated by every generator stays fixed for every joint
+                state. Base and link columns in the Jacobian are zero.
+                Continuous backbones return identity transforms and zero columns.
+        """
+        del segment
+        return (
+            jnp.eye(4, dtype=configuration.dtype),
+            jnp.zeros((6, self.num_coordinates), dtype=configuration.dtype),
+            jnp.zeros((6, 0), dtype=configuration.dtype),
+        )
+
     @property
     def tangent_eps(self) -> Array:
         """Epsilon value for Lie algebra tangent computations.

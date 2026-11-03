@@ -49,6 +49,8 @@ def test_importing_soromox_does_not_load_warp() -> None:
             "-c",
             (
                 "import sys; import soromox; "
+                "import soromox.actuation.threadlike; "
+                "import soromox.execution.warp.actuation.threadlike; "
                 "assert 'warp' not in sys.modules; "
                 "assert not any(name.endswith('.executor') and "
                 "'.execution.warp.' in name for name in sys.modules)"

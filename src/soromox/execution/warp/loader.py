@@ -83,6 +83,31 @@ _ACTUATION_EXECUTOR_MODULES: dict[WarpExecutorKey, str] = {
 
 
 @cache
+def load_straight_span_evaluator() -> Callable:
+    """Load the optional free-space routing evaluator.
+
+    Returns:
+        A callable accepting routing parameters, a robot, and a configuration.
+
+    Raises:
+        ImportError: If the optional ``warp-lang`` dependency is unavailable.
+        ModuleNotFoundError: If an unrelated dependency is missing.
+    """
+    try:
+        module = import_module(
+            "soromox.execution.warp.actuation.threadlike.straight_span_executor"
+        )
+    except ModuleNotFoundError as error:
+        if error.name == "warp":
+            raise ImportError(
+                "Warp straight routing requires the optional 'warp-lang' dependency. "
+                "Install it with `pip install soromox[warp]`."
+            ) from error
+        raise
+    return module.evaluate
+
+
+@cache
 def load_executor(key: WarpExecutorKey) -> WarpExecutor:
     """Load and cache one family executor behind the optional-dependency boundary.
 
@@ -767,4 +792,5 @@ __all__ = [
     "load_executor",
     "load_dynamics_actuation_executor",
     "load_kinematics_executor",
+    "load_straight_span_evaluator",
 ]

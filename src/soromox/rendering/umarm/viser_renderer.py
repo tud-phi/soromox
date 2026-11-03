@@ -623,9 +623,22 @@ class UMArmViserRenderer(ViserRenderer):
         *,
         color_config=None,
         actuator_inputs: Array | None = None,
+        routing=None,
+        routing_solution=None,
     ) -> None:
         if self._server is None or self._scene_handles is None:
             return
+
+        if routing is not None or routing_solution is not None:
+            return super()._build_actuator_geometry(
+                q,
+                base_offsets,
+                num_robots,
+                color_config=color_config,
+                actuator_inputs=actuator_inputs,
+                routing=routing,
+                routing_solution=routing_solution,
+            )
 
         q = jnp.asarray(q)
         actuator_segments = self.compute_actuator_visual_layers_batched(
@@ -712,7 +725,9 @@ class UMArmLiveModeController(LiveModeController):
 
             time.sleep(self._dt)
 
-    def _process_state(self, q: np.ndarray) -> None:
+    def _process_state(
+        self, q: np.ndarray, *, routing=None, routing_solution=None
+    ) -> None:
         q = jnp.asarray(q)
         if q.ndim == 1:
             q = q[None, :]
@@ -764,4 +779,6 @@ class UMArmLiveModeController(LiveModeController):
                 num_robots,
                 color_config=self._renderer.color_config,
                 actuator_inputs=self._renderer._pressures_for_frame(q),
+                routing=routing,
+                routing_solution=routing_solution,
             )

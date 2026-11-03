@@ -38,6 +38,7 @@ from soromox.execution.dispatch import (
     dispatch_fused_dynamics_actuation_force,
     dispatch_kinematics,
     dispatch_kinematics_abscissa_batched,
+    select_execution_backend,
 )
 from soromox.execution.transforms import (
     evaluate_forward_dynamics,
@@ -72,6 +73,7 @@ from soromox.execution.types import (
 )
 
 __all__ = [
+    "select_execution_backend",
     "AbscissaBatchedKinematicsEvaluator",
     "ActuationCapabilities",
     "ActuationForceEvaluator",
