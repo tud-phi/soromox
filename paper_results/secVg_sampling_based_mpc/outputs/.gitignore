@@ -1,0 +1,16 @@
+# Version current case-study plots and rendered media. The root ignore rules keep
+# MP4/GIF files local elsewhere, so these exceptions are intentionally scoped.
+*
+!*/
+!.gitignore
+!*.pdf
+!*.png
+!*.mp4
+!*.gif
+
+# Of the seed 0 video frames, keep only the four panel C reads.
+square_icem_seed0_frames/frames/*.png
+!square_icem_seed0_frames/frames/frame_0075.png
+!square_icem_seed0_frames/frames/frame_0189.png
+!square_icem_seed0_frames/frames/frame_0318.png
+!square_icem_seed0_frames/frames/frame_0453.png
