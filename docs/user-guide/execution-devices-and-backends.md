@@ -146,9 +146,12 @@ The selected dynamics backend is used by:
 - `rollout_to(...)` and `rollout_closed_loop_to(...)`, through their calls to
   `forward_dynamics`;
 - `model_terms(t, y)`, which returns the `ModelTerms` that model-based
-  controllers read. The node kinematics in the terms of PlanarPCS and
+  controllers read and that `rollout_closed_loop_to` shares with
+  `share_model_terms=True`. The node kinematics in the terms of PlanarPCS and
   GVS come from the JAX dynamics only; with Warp dynamics they are `None`, and
   the controllers compute the task kinematics themselves.
+  `forward_dynamics_from_model_terms` assembles the force balance from the
+  terms, so the fused Warp dynamics and actuation path does not apply.
 
 The selected kinematics backend is used by:
 

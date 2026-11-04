@@ -38,11 +38,12 @@ class SystemState:
         model_terms: Model terms of the robot at ``(t, y)`` (see
             ``SoftRobot.model_terms``), or None. Model-based controllers read their
             quantities at the current state from them; without them, a controller
-            computes the terms of its own model. The computed-torque tracker and
-            the synergistic controller set their own terms for both parts of their
-            control law. A controller that changes ``y`` before calling another
-            controller must set this field to None. Rollout outputs never carry
-            terms.
+            computes the terms of its own model. A closed-loop rollout with
+            ``share_model_terms=True`` sets the terms of the simulated system, and
+            the computed-torque tracker and the synergistic controller set their
+            own terms for both parts of their control law. A controller that
+            changes ``y`` before calling another controller must set this field
+            to None. Rollout outputs never carry terms.
     """
 
     t: Array

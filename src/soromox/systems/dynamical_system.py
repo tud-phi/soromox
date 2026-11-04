@@ -3,7 +3,7 @@ import math
 import warnings
 from abc import abstractmethod
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 import equinox as eqx
@@ -22,6 +22,7 @@ from diffrax import (
 from jax import Array, lax, vmap
 from jax import numpy as jnp
 
+from soromox.systems.model_terms import ModelTerms
 from soromox.systems.system_state import SystemState
 
 
@@ -69,6 +70,100 @@ class DynamicalSystem(eqx.Module):
             yd (Array): State derivative yd with the same shape as y.
         """
         ...
+
+    def model_terms(self, t: Array, y: Array) -> ModelTerms | None:
+        """
+        Compute the model terms that the forward dynamics can share.
+
+        A system that returns terms evaluates its dynamics from them in
+        ``forward_dynamics_from_model_terms``, so a closed-loop rollout computes
+        them once for the controller and the dynamics. The generic implementation
+        provides no terms.
+
+        Args:
+            t: Current time.
+            y: State vector.
+
+        Returns:
+            The model terms at ``(t, y)``, or ``None`` if the system provides none.
+        """
+        del t, y
+        return None
+
+    def forward_dynamics_from_model_terms(
+        self,
+        t: Array,
+        y: Array,
+        actuation_args: tuple | None,
+        model_terms: ModelTerms,
+    ) -> Array:
+        """
+        Compute the forward dynamics from the model terms at ``(t, y)``.
+
+        A closed-loop rollout with ``share_model_terms=True`` calls this method
+        instead of ``forward_dynamics``. A system whose ``model_terms`` returns
+        terms implements it.
+
+        Args:
+            t: Current time.
+            y: State vector.
+            actuation_args: Actuation inputs, as in ``forward_dynamics``.
+            model_terms: Model terms of the system at ``(t, y)``.
+
+        Returns:
+            State derivative with the same shape as ``y``.
+
+        Raises:
+            NotImplementedError: The generic system provides no model terms.
+        """
+        del t, y, actuation_args, model_terms
+        raise NotImplementedError(f"{type(self).__name__} provides no model terms.")
+
+    def _require_model_terms(self, t: Array, y: Array) -> ModelTerms:
+        """
+        Return the model terms at ``(t, y)`` for a rollout that shares them.
+
+        Args:
+            t: Current time.
+            y: State vector.
+
+        Returns:
+            The model terms at ``(t, y)``.
+
+        Raises:
+            ValueError: If the system provides no model terms.
+        """
+        model_terms = self.model_terms(t, y)
+        if model_terms is None:
+            raise ValueError(
+                "share_model_terms=True requires model terms, but "
+                f"{type(self).__name__}.model_terms returned None. Floating-base "
+                "systems and systems without a generalized force balance provide "
+                "none."
+            )
+        return model_terms
+
+    def _controller_with_model_terms(
+        self, controller: Callable[[SystemState], tuple[Array, Any | None]]
+    ) -> Callable[[SystemState], tuple[Array, Any | None]]:
+        """
+        Wrap a controller so that its states carry the system's model terms.
+
+        Args:
+            controller: Controller called with a ``SystemState``.
+
+        Returns:
+            Controller that calls ``controller`` with a state whose ``model_terms``
+            are the terms of the system at ``(system_state.t, system_state.y)``.
+        """
+
+        def controller_with_model_terms(
+            system_state: SystemState,
+        ) -> tuple[Array, Any | None]:
+            model_terms = self._require_model_terms(system_state.t, system_state.y)
+            return controller(replace(system_state, model_terms=model_terms))
+
+        return controller_with_model_terms
 
     @staticmethod
     def _compute_save_times(
@@ -191,6 +286,7 @@ class DynamicalSystem(eqx.Module):
             Any | None,
             Callable | None,
             Any | None,
+            bool,
         ],
     ):
         """Wrapper for forward_dynamics used in closed-loop rollouts.
@@ -208,6 +304,8 @@ class DynamicalSystem(eqx.Module):
                 - zero_control_state_dot: Zero-structured control state derivative.
                 - environment_model: Optional callable computing environment torques.
                 - zero_environment_state_dot: Zero-structured environment state derivative.
+                - share_model_terms: Whether the controller and the forward dynamics
+                  share the model terms of the system.
         """
         (
             base_u_val,
@@ -216,17 +314,21 @@ class DynamicalSystem(eqx.Module):
             zero_control_state_dot,
             environment_model,
             zero_environment_state_dot,
+            share_model_terms,
         ) = actuation_args
         track_control_state = zero_control_state_dot is not None
         track_environment_state = zero_environment_state_dot is not None
 
         y = self.project_state(ode_state.y)
+        # One evaluation of the model terms serves the controller and the dynamics.
+        model_terms = self._require_model_terms(t, y) if share_model_terms else None
         system_state = SystemState(
             t=t,
             y=y,
             u=base_u_val,
             control_state=ode_state.control_state,
             environment_state=ode_state.environment_state,
+            model_terms=model_terms,
         )
         u_control, control_state_dot = controller(system_state)
         if control_state_dot is not None and not track_control_state:
@@ -259,7 +361,12 @@ class DynamicalSystem(eqx.Module):
             )
 
         tau_ext_total = self._combine_external_torques(base_tau_ext, tau_environment)
-        yd = self.forward_dynamics(t, y, (u_total, tau_ext_total))
+        if model_terms is None:
+            yd = self.forward_dynamics(t, y, (u_total, tau_ext_total))
+        else:
+            yd = self.forward_dynamics_from_model_terms(
+                t, y, (u_total, tau_ext_total), model_terms
+            )
         if track_control_state:
             control_state_dot = (
                 control_state_dot
@@ -392,6 +499,7 @@ class DynamicalSystem(eqx.Module):
         solver: AbstractSolver | None = None,
         stepsize_controller: AbstractStepSizeController | None = ConstantStepSize(),
         max_steps: int | None = None,
+        share_model_terms: bool = False,
     ) -> SystemState:
         """
         Roll out the system dynamics in closed loop using Diffrax.
@@ -419,6 +527,12 @@ class DynamicalSystem(eqx.Module):
             solver: Solver to use for the ODE integration.
             stepsize_controller: Stepsize controller for the solver.
             max_steps: Maximum number of steps for the solver.
+            share_model_terms: If true, the system computes its model terms once
+                per evaluation (see ``model_terms``), passes them to the controller
+                in ``SystemState.model_terms``, and evaluates its dynamics from them
+                with ``forward_dynamics_from_model_terms``. The controller then uses
+                the simulated system's model instead of its own, which is exact only
+                when the two models are the same. The system must provide terms.
 
         Returns:
             SystemState PyTree containing time samples, system state trajectory,
@@ -454,6 +568,7 @@ class DynamicalSystem(eqx.Module):
             zero_control_state_dot,
             environment_model,
             zero_environment_state_dot,
+            share_model_terms,
         )
         term = ODETerm(self._closed_loop_forward_dynamics)
         saveat = SaveAt(ts=save_ts)  # Save at specified time points
@@ -485,6 +600,9 @@ class DynamicalSystem(eqx.Module):
         controller_state_out = sol.ys.control_state
         environment_state_out = sol.ys.environment_state
 
+        if share_model_terms:
+            # The saved controls are recomputed as the vector field computed them.
+            controller = self._controller_with_model_terms(controller)
         if track_control_state and track_environment_state:
             u_controls = vmap(
                 lambda t_i, y_i, c_i, e_i: controller(

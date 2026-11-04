@@ -90,9 +90,9 @@ class BaseController(eqx.Module, ABC):
         """
         Return the model terms at the current state.
 
-        These are the terms that the state carries, such as those that the
-        computed-torque tracker passes to both of its terms, or else the terms of
-        the controller's own model: the fixed-base robot of
+        These are the terms that the state carries, such as those of the
+        simulated system in a closed-loop rollout with ``share_model_terms=True``,
+        or else the terms of the controller's own model: the fixed-base robot of
         :meth:`_controller_robot_and_state`, mounted at the base pose.
 
         Args:
