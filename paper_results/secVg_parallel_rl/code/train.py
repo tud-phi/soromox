@@ -2,7 +2,7 @@
 
 The training entry point saves the final PPO model and SB3 VecNormalize state.
 It can also periodically save checkpoints and reward CSV records under the
-Section Vf data directory.
+Section Vg data directory.
 """
 
 import argparse

@@ -14,7 +14,7 @@ from soromox.rendering.config import (
 pytest.importorskip("open3d")
 
 MODULE_DIR = (
-    Path(__file__).resolve().parents[3] / "paper_results" / "secVf_parallel_rl" / "code"
+    Path(__file__).resolve().parents[3] / "paper_results" / "secVg_parallel_rl" / "code"
 )
 sys.path.insert(0, str(MODULE_DIR))
 

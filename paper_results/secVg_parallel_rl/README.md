@@ -1,4 +1,4 @@
-# Section Vf: Parallel Reinforcement Learning
+# Section Vg: Parallel Reinforcement Learning
 
 This case contains the complete parallel SoRoMoX PPO workflow: environment,
 training, evaluation, rollout generation, reward plotting, and offline video
@@ -17,11 +17,11 @@ Train with the paper defaults. Checkpoints and reward records are written below
 the case-local `data/` directory:
 
 ```bash
-uv run python paper_results/secVf_parallel_rl/code/train.py \
+uv run python paper_results/secVg_parallel_rl/code/train.py \
   --num-envs 64 --total-timesteps 1000000 --n-steps 200 \
-  --save-dir /tmp/soromox-secVf/checkpoints \
-  --checkpoint-dir /tmp/soromox-secVf/checkpoints \
-  --reward-csv /tmp/soromox-secVf/training_reward.csv
+  --save-dir /tmp/soromox-secVg/checkpoints \
+  --checkpoint-dir /tmp/soromox-secVg/checkpoints \
+  --reward-csv /tmp/soromox-secVg/training_reward.csv
 ```
 
 `--device` selects where the environment is simulated. `--device gpu` pins JAX
@@ -43,7 +43,7 @@ reward CSV unless `--force` is supplied.
 Evaluate the released checkpoint:
 
 ```bash
-uv run python paper_results/secVf_parallel_rl/code/evaluate_rl.py
+uv run python paper_results/secVg_parallel_rl/code/evaluate_rl.py
 ```
 
 Evaluation reports the component-wise end-effector error, mean Euclidean
@@ -54,7 +54,7 @@ tracking error, and success rate for a fixed rollout.
 Recreate the reward curve from the committed training logs:
 
 ```bash
-uv run python paper_results/secVf_parallel_rl/code/plot_rl.py
+uv run python paper_results/secVg_parallel_rl/code/plot_rl.py
 ```
 
 The plot reads three subfolders of `data/reward_logs/`, each holding one
@@ -82,14 +82,14 @@ trajectory data for both the uniformly random initialized-policy baseline and
 the fully trained PPO policy with:
 
 ```bash
-uv run python paper_results/secVf_parallel_rl/code/run_rl_policy.py \
+uv run python paper_results/secVg_parallel_rl/code/run_rl_policy.py \
   --policy random --num-envs 1 --game-time 20 --n-steps 300 \
-  --trajectory-output paper_results/secVf_parallel_rl/data/traj/rl_rollout_initialized_1_env.npz \
+  --trajectory-output paper_results/secVg_parallel_rl/data/traj/rl_rollout_initialized_1_env.npz \
   --force
 
-uv run python paper_results/secVf_parallel_rl/code/run_rl_policy.py \
+uv run python paper_results/secVg_parallel_rl/code/run_rl_policy.py \
   --policy trained --num-envs 1 --game-time 20 --n-steps 300 \
-  --trajectory-output paper_results/secVf_parallel_rl/data/traj/rl_rollout_trained_1_env.npz \
+  --trajectory-output paper_results/secVg_parallel_rl/data/traj/rl_rollout_trained_1_env.npz \
   --force
 ```
 
@@ -98,12 +98,12 @@ the trained mode loads the released PPO checkpoint and normalization state.
 Render both saved trajectories without rerunning either policy:
 
 ```bash
-uv run python paper_results/secVf_parallel_rl/code/render_rl_video.py \
-  --data paper_results/secVf_parallel_rl/data/traj/rl_rollout_initialized_1_env.npz \
+uv run python paper_results/secVg_parallel_rl/code/render_rl_video.py \
+  --data paper_results/secVg_parallel_rl/data/traj/rl_rollout_initialized_1_env.npz \
   --force
 
-uv run python paper_results/secVf_parallel_rl/code/render_rl_video.py \
-  --data paper_results/secVf_parallel_rl/data/traj/rl_rollout_trained_1_env.npz \
+uv run python paper_results/secVg_parallel_rl/code/render_rl_video.py \
+  --data paper_results/secVg_parallel_rl/data/traj/rl_rollout_trained_1_env.npz \
   --force
 ```
 
@@ -118,22 +118,22 @@ To generate and render parallel rollouts for both policy states, save all
 environments in one NPZ per policy and pass each file to the same renderer:
 
 ```bash
-uv run python paper_results/secVf_parallel_rl/code/run_rl_policy.py \
+uv run python paper_results/secVg_parallel_rl/code/run_rl_policy.py \
   --policy random --num-envs 64 --game-time 20 --n-steps 300 \
-  --trajectory-output paper_results/secVf_parallel_rl/data/traj/rl_rollout_initialized_64_envs.npz \
+  --trajectory-output paper_results/secVg_parallel_rl/data/traj/rl_rollout_initialized_64_envs.npz \
   --force
 
-uv run python paper_results/secVf_parallel_rl/code/run_rl_policy.py \
+uv run python paper_results/secVg_parallel_rl/code/run_rl_policy.py \
   --policy trained --num-envs 64 --game-time 20 --n-steps 300 \
-  --trajectory-output paper_results/secVf_parallel_rl/data/traj/rl_rollout_trained_64_envs.npz \
+  --trajectory-output paper_results/secVg_parallel_rl/data/traj/rl_rollout_trained_64_envs.npz \
   --force
 
-uv run python paper_results/secVf_parallel_rl/code/render_rl_video.py \
-  --data paper_results/secVf_parallel_rl/data/traj/rl_rollout_initialized_64_envs.npz \
+uv run python paper_results/secVg_parallel_rl/code/render_rl_video.py \
+  --data paper_results/secVg_parallel_rl/data/traj/rl_rollout_initialized_64_envs.npz \
   --force
 
-uv run python paper_results/secVf_parallel_rl/code/render_rl_video.py \
-  --data paper_results/secVf_parallel_rl/data/traj/rl_rollout_trained_64_envs.npz \
+uv run python paper_results/secVg_parallel_rl/code/render_rl_video.py \
+  --data paper_results/secVg_parallel_rl/data/traj/rl_rollout_trained_64_envs.npz \
   --force
 ```
 

@@ -1,4 +1,4 @@
-# Section Vg: Sampling-Based MPC
+# Section Vf: Sampling-Based MPC
 
 This case runs closed-loop sampling-based MPC, iCEM by default and MPPI with
 `--mppi`, in which a tapered four-tendon soft arm on a kinematically driven
@@ -16,7 +16,7 @@ This case has two uv projects, one for the experiments and one for the
 figures. Run every command from this directory:
 
 ```bash
-cd paper_results/secVg_sampling_based_mpc
+cd paper_results/secVf_sampling_based_mpc
 uv sync --project env_newton17   # experiments
 uv sync --project .              # renderers and summary figure
 ```
@@ -55,7 +55,7 @@ Run one closed-loop push with `code/run_experiment.py`:
 ```bash
 uv run --project env_newton17 python code/run_experiment.py --device cuda:0 \
   --stop-after-one-square --object-shape box --k-samples 200 100 50 --num-iters 3 --seed 0 \
-  --save-path /tmp/soromox-secVg/square_icem_seed0.npz
+  --save-path /tmp/soromox-secVf/square_icem_seed0.npz
 ```
 
 `--k-samples` takes one value or a per-iteration schedule. `--save-samples`

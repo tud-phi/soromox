@@ -1,9 +1,9 @@
-# Section V-G figure environment: the summary figure and both RTX renderers, on
+# Section V-F figure environment: the summary figure and both RTX renderers, on
 # newton-cosserat upstream main with a Newton 1.6 stack. Experiments run in env_newton17/.
 # Run from this folder:
 #   uv run --project . python code/rendering.py ...
 [project]
-name = "secvg-sampling-based-mpc"
+name = "secvf-sampling-based-mpc"
 version = "0.0.0"
 requires-python = ">=3.11,<3.14"
 dependencies = ["soromox[cuda13]", "newton[rtx,sim,importers]", "newton-cosserat", "scipy", "matplotlib", "gitpython"]

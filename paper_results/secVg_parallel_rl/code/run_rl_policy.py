@@ -1,4 +1,4 @@
-"""Generate and save Section Vf PPO rollout trajectories."""
+"""Generate and save Section Vg PPO rollout trajectories."""
 
 import argparse
 import importlib.util
@@ -199,7 +199,7 @@ def save_rollout_npz(
     policy: str = "trained",
     force: bool = False,
 ) -> Path:
-    """Save a complete parallel rollout using the time-major Section Vf schema."""
+    """Save a complete parallel rollout using the time-major Section Vg schema."""
     ts = np.asarray(ts, dtype=np.float64)
     q_ts = np.asarray(q_ts, dtype=np.float64)
     ball_ts = np.asarray(ball_ts, dtype=np.float64)
@@ -342,7 +342,7 @@ def main() -> None:
     print(f"Saved {q_ts.shape[1]} environment(s): {output}")
     print(
         "Render with: uv run python "
-        "paper_results/secVf_parallel_rl/code/render_rl_video.py "
+        "paper_results/secVg_parallel_rl/code/render_rl_video.py "
         f"--data {output}"
     )
 

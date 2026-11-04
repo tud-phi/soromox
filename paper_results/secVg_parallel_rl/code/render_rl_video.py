@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render saved Section Vf RL rollouts as MP4 and GIF videos."""
+"""Render saved Section Vg RL rollouts as MP4 and GIF videos."""
 
 from __future__ import annotations
 
@@ -306,7 +306,7 @@ def _string_metadata(data: np.lib.npyio.NpzFile, key: str) -> str | None:
 
 
 def load_rollout(path: Path, *, max_envs: int | None = None) -> RLRollout:
-    """Load either unbatched or time-major batched Section Vf trajectory data."""
+    """Load either unbatched or time-major batched Section Vg trajectory data."""
     path = Path(path)
     if not path.exists():
         raise FileNotFoundError(f"Could not find trajectory file: {path}")

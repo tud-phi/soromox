@@ -1,4 +1,4 @@
-"""Shared visual style for Section Vf reinforcement-learning rollouts."""
+"""Shared visual style for Section Vg reinforcement-learning rollouts."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ TARGET_TRAIL_STRIDE = 2
 
 TARGET_COLOR = tuple(colors.to_rgb(PAPER_COLORS["target"]))
 _target_cmap = colors.LinearSegmentedColormap.from_list(
-    "secVf_target_gradient", ["#FFFFFF", PAPER_COLORS["target"]]
+    "secVg_target_gradient", ["#FFFFFF", PAPER_COLORS["target"]]
 )
 TARGET_TRAIL_COLOR = tuple(_target_cmap(np.array([0.65]))[0, :3])
 
@@ -38,7 +38,7 @@ def make_rl_camera_config(
     fov: float = 60.0,
     up: tuple[float, float, float] = (0.0, 0.0, 1.0),
 ) -> CameraConfig:
-    """Return the camera used for the Section Vf paper renderings."""
+    """Return the camera used for the Section Vg paper renderings."""
     return CameraConfig(
         position=(0.0, float(-1.87 * arm_length), float(1.3275 * arm_length)),
         look_at=(0.0, 0.0, float(0.35 * arm_length)),
@@ -50,7 +50,7 @@ def make_rl_camera_config(
 def make_rl_color_config(color_label: str = "post_opt_1") -> RendererColorConfig:
     """Return the shared arm, actuator, base, and ground-plane colors."""
     if color_label not in PAPER_COLORS:
-        raise KeyError(f"Unknown Section Vf color label: {color_label!r}")
+        raise KeyError(f"Unknown Section Vg color label: {color_label!r}")
     return RendererColorConfig(
         backbone=BackboneColorConfig(
             segment_colors=np.array(

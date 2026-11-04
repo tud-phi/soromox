@@ -20,7 +20,7 @@ from PIL import Image
 
 ROOT = Path(__file__).resolve().parent
 SAFETY = ROOT / "secVe_safety_constrained_control"
-RL = ROOT / "secVf_parallel_rl"
+RL = ROOT / "secVg_parallel_rl"
 for directory in (SAFETY / "code", RL / "code"):
     sys.path.insert(0, str(directory))
 

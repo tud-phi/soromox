@@ -2365,7 +2365,7 @@ wheels = [
 ]
 
 [[package]]
-name = "secvg-sampling-based-mpc"
+name = "secvf-sampling-based-mpc"
 version = "0.0.0"
 source = { virtual = "." }
 dependencies = [

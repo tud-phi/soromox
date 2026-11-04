@@ -14,10 +14,10 @@ publication figures/videos under `outputs/`.
 | Vc, model-based control | [`secVc_model_based_control/`](secVc_model_based_control/README.md) | standardized configuration- and operational-space figures |
 | Vd, control-gain optimization | [`secVd_control_gain_optimization/`](secVd_control_gain_optimization/README.md) | collocated/synergistic optimization data and comparison |
 | Ve, safety-constrained control | `secVe_safety_constrained_control/` | rollout data, plots, and videos |
-| Vf, parallel reinforcement learning | [`secVf_parallel_rl/`](secVf_parallel_rl/README.md) | training, checkpoints, reward curve, rollout data, and media |
-| Vg, sampling-based MPC | [`secVg_sampling_based_mpc/`](secVg_sampling_based_mpc/README.md) | iCEM/MPPI push runs, sample-cloud renders, and summary figure |
+| Vf, sampling-based MPC | [`secVf_sampling_based_mpc/`](secVf_sampling_based_mpc/README.md) | iCEM/MPPI push runs, sample-cloud renders, and summary figure |
+| Vg, parallel reinforcement learning | [`secVg_parallel_rl/`](secVg_parallel_rl/README.md) | training, checkpoints, reward curve, rollout data, and media |
 
-Section Vg has its own uv project with the Newton stack; its commands run from
+Section Vf has its own uv project with the Newton stack; its commands run from
 that directory with `uv run --project .` instead of the `paper_results` extra.
 
 `final_outputs/` contains composed figures assembled from one or more section
@@ -47,7 +47,7 @@ Figure 13 combines the safety-control and reinforcement-learning studies:
 uv run --extra paper_results python paper_results/assemble_safety_rl_figure.py --force
 ```
 
-This assembles panels A–D from the Section Ve rollout data, Section Vf reward
+This assembles panels A–D from the Section Ve rollout data, Section Vg reward
 CSVs, and the current single-environment videos. It writes PDF, SVG, PNG and a
 source-hash manifest to `final_outputs/control_barrier_function_reinforcement_learning.*`.
 The plots remain vector graphics; snapshots retain the current studio composition.
