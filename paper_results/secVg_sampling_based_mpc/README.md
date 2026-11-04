@@ -123,6 +123,8 @@ uv run --project . python code/rendering.py --run-path data/square_icem_cylinder
 
 The renderer reads the saved trajectory without re-simulating and adds a
 decorative Franka FR3 whose end effector follows the arm base; `--franka-base`
-moves it. The numbered PNG frames are kept under `outputs/<stem>_frames/frames/`,
-and panel C uses selected frames copied to `outputs/frames/`. Encoding the MP4
-and GIF requires ffmpeg.
+moves it. The numbered PNG frames are kept under `outputs/<stem>_frames/frames/`.
+Panel C reads frames 75, 189, 318 and 453 directly from
+`outputs/square_icem_seed0_frames/frames/`, so render `data/square_icem_seed0.npz`
+with `--output outputs/square_icem_seed0.mp4` first. Encoding the MP4 and GIF
+requires ffmpeg.

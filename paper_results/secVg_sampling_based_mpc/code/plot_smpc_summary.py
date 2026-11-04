@@ -61,12 +61,9 @@ SCENE_ZOOM = 0.9
 PUSH_SCENE_ZOOM = 0.8
 SATURATION_THRESHOLD = 0.15
 
-TRAJECTORY_IMAGES = [
-    FRAMES_DIR / "new_frame_0075.png",
-    FRAMES_DIR / "frame_0189.png",
-    FRAMES_DIR / "frame_0318.png",
-    FRAMES_DIR / "frame_0453.png",
-]
+# Frames rendered by rendering.py --output outputs/square_icem_seed0.mp4.
+TRAJECTORY_FRAMES_DIR = OUTPUT_DIR / "square_icem_seed0_frames" / "frames"
+TRAJECTORY_IMAGES = [TRAJECTORY_FRAMES_DIR / f"frame_{i:04d}.png" for i in (75, 189, 318, 453)]
 CONTROL_DT = 0.05
 RENDER_FRAMES_PER_STEP = 10
 
