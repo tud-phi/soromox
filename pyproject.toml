@@ -208,6 +208,12 @@ rl = [
     "matplotlib",
     "stable-baselines3",
 ]
+# Section V-G only: the push experiment and its RTX renderer run on Newton.
+# newton-cosserat itself is installed from its own repository -- it depends on
+# soromox, so declaring it here would close a dependency cycle.
+sampling_based_mpc = [
+    "newton[rtx,sim]>=1.7,<1.8",
+]
 test = [
     "cbfpy",
     "codecov",
@@ -406,6 +412,18 @@ skip-magic-trailing-comma = false
 
 # Auto-detect line ending
 line-ending = "auto"
+
+# newton 1.7.0 declares ovrtx>=0.3 / ovstage>=0.1.1 with no upper bound, but calls
+# ovstage.population.open_usd(..., time_code=0.0); ovstage 0.3.0 renamed that kwarg to
+# `time` five hours after newton 1.7.0 released, so a fresh resolve breaks ViewerRTX.
+# Floors match newton main's tightened pins -- one matched ovrtx/ovstage build wave --
+# and the ceilings are the ones main still omits.
+
+[tool.uv]
+constraint-dependencies = [
+    "ovrtx>=0.5.1.385782,<0.6",
+    "ovstage>=0.2.1.385922,<0.3",
+]
 
 # macOS, Linux x86-64, Linux ARM64 and Windows x86-64 build the checked-in
 # Open3D 0.20 release with the renderer fixes; other platforms use stable
