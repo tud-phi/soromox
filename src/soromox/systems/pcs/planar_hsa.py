@@ -18,6 +18,7 @@ from soromox.systems.components.inertia import (
     mass_first_moment,
     spatial_mass_action,
 )
+from soromox.systems.model_terms import ModelTerms
 from soromox.systems.pcs.params import PlanarHSAParams
 from soromox.systems.pcs.planar_pcs import PlanarPCS
 from soromox.systems.pcs.structures import PlanarHSAStructure
@@ -2159,6 +2160,87 @@ class PlanarHSA(PlanarPCS):
             return self._assemble_dynamics_terms(q, qd)
         return self._assemble_dynamics_terms(q, qd, convective_only_jd=True)
 
+    def _elastic_force_with_hysteresis(self, q: Array, z: Array) -> Array:
+        """Return the elastic force of the forward dynamics.
+
+        With hysteresis enabled, the rod stiffness force is blended with the
+        force of the hysteresis coordinates ``z``; otherwise the force is
+        :meth:`elastic_force`.
+
+        Args:
+            q: Generalized coordinates.
+            z: Hysteresis coordinates with shape ``(num_hysteresis,)``.
+
+        Returns:
+            Generalized elastic force with shape ``(num_velocities,)``.
+        """
+        if not self.consider_hysteresis:
+            return self.elastic_force(q)
+        _, q_internal = self.split_configuration(q)
+        tau_el_full = self._stiffness_full_vector(q_internal)
+        tau_hyst_full = self.K_full @ (self.hysteresis_basis @ z)
+        tau_el_internal = self.B_xi.T @ (
+            self.hysteresis_alpha * tau_el_full
+            + (1.0 - self.hysteresis_alpha) * tau_hyst_full
+        )
+        if self.floating_base:
+            return jnp.pad(tau_el_internal, (self.num_base_velocities, 0))
+        return tau_el_internal
+
+    def _actuation_and_hysteresis_rate(
+        self, y: Array, actuation_args: tuple | None
+    ) -> tuple[Array, Array, Array, Array, Array, Array]:
+        """Return the state split, the hysteresis rate, and the applied forces.
+
+        :meth:`forward_dynamics` and :meth:`forward_dynamics_from_model_terms`
+        start from these quantities, which do not depend on the model terms.
+
+        Args:
+            y: State vector with shape ``(2 * num_dofs,)`` or
+                ``(2 * num_dofs + num_hysteresis,)``.
+            actuation_args: ``None``, ``(u,)``, or ``(u, tau_ext)``.
+
+        Returns:
+            Tuple ``(q, qd, z, zd, tau_u, tau_ext)``: the configuration, the
+            velocity, the hysteresis coordinates and their rate (empty without
+            hysteresis), the actuation force, and the external force.
+
+        Raises:
+            ValueError: If ``actuation_args`` has a length other than one or
+                two.
+        """
+        if actuation_args is None:
+            u, tau_ext = None, None
+        elif len(actuation_args) == 1:
+            u, tau_ext = actuation_args[0], None
+        elif len(actuation_args) == 2:
+            u, tau_ext = actuation_args
+        else:
+            raise ValueError("actuation_args must be a tuple of length 1 or 2.")
+        if u is None:
+            u = jnp.zeros((self.num_actuators,), dtype=y.dtype)
+        q, qd, z = self.split_state(y)
+        _, qd_internal = self.split_velocity(qd)
+        if tau_ext is None:
+            tau_ext = jnp.zeros((self.num_velocities,), dtype=y.dtype)
+        if self.consider_hysteresis:
+            hysteresis_basis_active = self.B_xi.T @ self.hysteresis_basis
+            zd = (hysteresis_basis_active.T @ qd_internal) * (
+                self.hysteresis_A
+                - jnp.abs(z) ** self.hysteresis_n
+                * (
+                    self.hysteresis_gamma
+                    + self.hysteresis_beta
+                    * jnp.sign((hysteresis_basis_active.T @ qd_internal) * z)
+                )
+            )
+        else:
+            z = jnp.zeros((0,), dtype=y.dtype)
+            zd = z
+
+        tau_u = self.actuation_force(q, u, qd=qd)
+        return q, qd, z, zd, tau_u, tau_ext
+
     @eqx.filter_jit
     def forward_dynamics(
         self, t: Array, y: Array, actuation_args: tuple | None = None
@@ -2183,54 +2265,60 @@ class PlanarHSA(PlanarPCS):
             ValueError: If ``actuation_args`` has a length other than one or
                 two.
         """
-        if actuation_args is None:
-            u, tau_ext = None, None
-        elif len(actuation_args) == 1:
-            u, tau_ext = actuation_args[0], None
-        elif len(actuation_args) == 2:
-            u, tau_ext = actuation_args
-        else:
-            raise ValueError("actuation_args must be a tuple of length 1 or 2.")
-        if u is None:
-            u = jnp.zeros((self.num_actuators,), dtype=y.dtype)
-        q, qd, z = self.split_state(y)
-        _, q_internal = self.split_configuration(q)
-        _, qd_internal = self.split_velocity(qd)
-        if tau_ext is None:
-            tau_ext = jnp.zeros((self.num_velocities,), dtype=y.dtype)
-        if self.consider_hysteresis:
-            hysteresis_basis_active = self.B_xi.T @ self.hysteresis_basis
-            zd = (hysteresis_basis_active.T @ qd_internal) * (
-                self.hysteresis_A
-                - jnp.abs(z) ** self.hysteresis_n
-                * (
-                    self.hysteresis_gamma
-                    + self.hysteresis_beta
-                    * jnp.sign((hysteresis_basis_active.T @ qd_internal) * z)
-                )
-            )
-        else:
-            z = jnp.zeros((0,), dtype=y.dtype)
-            zd = z
-
-        tau_u = self.actuation_force(q, u, qd=qd)
-        if self.consider_hysteresis:
-            tau_el_full = self._stiffness_full_vector(q_internal)
-            tau_hyst_full = self.K_full @ (self.hysteresis_basis @ z)
-            tau_el_internal = self.B_xi.T @ (
-                self.hysteresis_alpha * tau_el_full
-                + (1.0 - self.hysteresis_alpha) * tau_hyst_full
-            )
-            tau_el = (
-                jnp.pad(tau_el_internal, (self.num_base_velocities, 0))
-                if self.floating_base
-                else tau_el_internal
-            )
-        else:
-            tau_el = self.elastic_force(q)
+        q, qd, z, zd, tau_u, tau_ext = self._actuation_and_hysteresis_rate(
+            y, actuation_args
+        )
+        tau_el = self._elastic_force_with_hysteresis(q, z)
         B, Cqd, G = self.dynamics_terms(q, qd)
         qdd = jnp.linalg.solve(
             B, tau_u + tau_ext - Cqd - G - tau_el - self.damping_matrix(q) @ qd
+        )
+        qdot = self.configuration_derivative(q, qd)
+        if not self.consider_hysteresis:
+            return jnp.concatenate((qdot, qdd))
+        return jnp.concatenate((qdot, qdd, zd))
+
+    def forward_dynamics_from_model_terms(
+        self,
+        t: Array,
+        y: Array,
+        actuation_args: tuple | None,
+        model_terms: ModelTerms,
+    ) -> Array:
+        """Compute the HSA first-order state derivative from the model terms.
+
+        The terms give the inertia, convective, gravitational, and damping
+        terms. The elastic force with the hysteresis coordinates, the actuation
+        force, and the hysteresis rate are computed as in
+        :meth:`forward_dynamics`, because the terms hold the elastic force
+        without hysteresis that a controller reads.
+
+        Args:
+            t: Simulation time, not used.
+            y: State vector with shape ``(2 * num_dofs,)`` or
+                ``(2 * num_dofs + num_hysteresis,)``.
+            actuation_args: ``None``, ``(u,)``, or ``(u, tau_ext)``.
+            model_terms: Model terms of the system at ``y``.
+
+        Returns:
+            State derivative with the same shape as ``y``.
+
+        Raises:
+            ValueError: If ``actuation_args`` has a length other than one or
+                two.
+        """
+        del t
+        q, qd, z, zd, tau_u, tau_ext = self._actuation_and_hysteresis_rate(
+            y, actuation_args
+        )
+        tau_el = self._elastic_force_with_hysteresis(q, z)
+        qdd = model_terms.solve_inertia(
+            tau_u
+            + tau_ext
+            - model_terms.coriolis_force
+            - model_terms.gravitational_force
+            - tau_el
+            - model_terms.damping_matrix @ qd
         )
         qdot = self.configuration_derivative(q, qd)
         if not self.consider_hysteresis:

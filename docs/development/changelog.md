@@ -53,6 +53,10 @@ Describe the delta from the last release, not intermediate development changes.
   GVS on the JAX backend, and the optional field `SystemState.model_terms`
   that carries them to a controller; see
   [Model Terms](../api/control/index.md#model-terms).
+- `share_model_terms=True` in `rollout_closed_loop_to` computes the terms once
+  per evaluation of the vector field for the controller and for
+  `forward_dynamics_from_model_terms`; see
+  [Shared Model Terms](../api/control/index.md#shared-model-terms).
 
 ### Changed
 
@@ -100,6 +104,14 @@ Describe the delta from the last release, not intermediate development changes.
   closed loops 1.18–2.09× faster, their gradients 1.36–2.09× faster, and
   their discrete closed loops with a 0.2 ms control period 1.04–1.30× faster;
   the other six controllers compile to the previous programs.
+- `share_model_terms=True` shares that evaluation with the forward dynamics
+  and added 1.05–1.78× in the continuous loop and 1.12–1.86× for the
+  gradients of the nine controllers. See
+  [Shared Model Terms](../api/control/index.md#shared-model-terms). With the
+  flag, articulated robots solve the dense force balance instead of the
+  articulated-body algorithm: the 12-joint McKibben UMArm ran 6.4× slower
+  under the configuration-space PID controller and 1.15× faster under the
+  computed-torque tracker.
 
 ### Deprecated
 

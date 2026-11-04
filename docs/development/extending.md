@@ -344,7 +344,10 @@ convective force `C(q, qd) @ qd` for this same convention.
 return the node kinematics of the same pass. A subclass that overrides
 `dynamics_terms` or `_assemble_dynamics_terms` gets its terms from its own
 `dynamics_terms`, without node kinematics. The terms hold quantities at
-`(q, qd)` only.
+`(q, qd)` only. A subclass whose `forward_dynamics` adds more than the force
+balance, such as PlanarHSA with its hysteresis states, also overrides
+`forward_dynamics_from_model_terms`, which `rollout_closed_loop_to` calls with
+`share_model_terms=True`, and adds the rest there.
 
 #### 6. Implement Energy Methods (Optional but Recommended)
 

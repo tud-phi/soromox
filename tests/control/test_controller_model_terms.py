@@ -228,8 +228,8 @@ def test_controller_matches_with_given_model_terms(build_case, controller_class)
     state = _state(robot, control_state)
 
     own = controller(state)
-    # The terms of the robot from SoftRobot.model_terms, and the terms from the
-    # separate model methods.
+    # The terms of the simulated system, as a rollout with share_model_terms=True
+    # passes them, and the terms from the separate model methods.
     given = controller(replace(state, model_terms=robot.model_terms(state.t, state.y)))
     public = controller(replace(state, model_terms=_public_terms(robot, state.y)))
 

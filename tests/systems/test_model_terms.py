@@ -1,6 +1,7 @@
 # ruff: noqa: E402
 from pathlib import Path
 
+import equinox as eqx
 import jax
 
 jax.config.update("jax_enable_x64", True)
@@ -10,6 +11,14 @@ from numpy.testing import assert_allclose
 from system_param_builders import articulated_params, pendulum_params, planar_base_pose
 
 from soromox.actuation import ThreadlikeActuator, ThreadlikeFriction, ThreadlikeRouting
+from soromox.control import (
+    OperationalSpaceSynergisticController,
+    PIDControl,
+    PIDControllerState,
+    ReferenceTrajectory,
+)
+from soromox.control.configuration_space import ComputedTorqueTracker
+from soromox.coordinate_transformations import OperationalSpaceDynamics
 from soromox.systems import (
     GVS,
     PCS,
@@ -24,6 +33,7 @@ from soromox.systems import (
     PlanarHSAStructure,
     PlanarPCS,
     StrainBasisSpec,
+    SystemState,
     spatial_inertia,
 )
 
@@ -260,6 +270,7 @@ def test_model_terms_match_system_methods(make_robot):
     robot = make_robot()
     t = jnp.array(0.0)
     y = _state(robot)
+    u = jax.random.normal(jax.random.PRNGKey(1), (robot.num_actuators,))
     q, qd, _ = robot.split_state(y)
 
     terms = robot.model_terms(t, y)
@@ -273,8 +284,15 @@ def test_model_terms_match_system_methods(make_robot):
     rhs = jax.random.normal(jax.random.PRNGKey(2), (q.shape[0], 2))
     _assert_close(terms.solve_inertia(rhs[:, 0]), jnp.linalg.solve(inertia, rhs[:, 0]))
     _assert_close(terms.solve_inertia(rhs), jnp.linalg.solve(inertia, rhs))
+    # The state derivative also covers the elastic force, which for the HSA
+    # includes the hysteresis coordinates.
+    _assert_close(
+        robot.forward_dynamics_from_model_terms(t, y, (u,), terms),
+        robot.forward_dynamics(t, y, (u,)),
+    )
     # The terms take no auxiliary state, so for the HSA their elastic force
-    # excludes the hysteresis coordinates.
+    # excludes the hysteresis coordinates: a controller reads the same terms
+    # with and without sharing, and the HSA dynamics add the hysteresis.
     _assert_close(terms.elastic_force, robot.elastic_force(q))
 
 
@@ -297,6 +315,7 @@ def test_model_terms_follow_a_subclass_that_overrides_the_dynamics():
     )
     t = jnp.array(0.0)
     y = _state(robot)
+    u = jax.random.normal(jax.random.PRNGKey(1), (robot.num_actuators,))
     q, qd, _ = robot.split_state(y)
 
     terms = robot.model_terms(t, y)
@@ -304,6 +323,10 @@ def test_model_terms_follow_a_subclass_that_overrides_the_dynamics():
     _assert_close(terms.inertia_matrix, robot.dynamics_terms(q, qd)[0])
     assert terms.node_jacobians is None
     assert terms.node_poses is None
+    _assert_close(
+        robot.forward_dynamics_from_model_terms(t, y, (u,), terms),
+        robot.forward_dynamics(t, y, (u,)),
+    )
 
 
 @pytest.mark.parametrize("make_robot", NODE_KINEMATICS_SYSTEMS)
@@ -341,3 +364,92 @@ def test_floating_base_provides_no_model_terms():
     robot = _pendulum(floating_base=True)
 
     assert robot.model_terms(jnp.array(0.0), jnp.zeros((robot.state_size,))) is None
+
+
+def _computed_torque_case():
+    robot = _planar_pcs()
+    n = robot.num_internal_dofs
+    reference = ReferenceTrajectory(
+        ts=jnp.array([0.0, 1.0]),
+        x_des_fn=lambda t: 0.2 * jnp.ones((n,)),
+        xd_des_fn=lambda t: jnp.zeros((n,)),
+        xdd_des_fn=lambda t: jnp.zeros((n,)),
+    )
+    tracker = ComputedTorqueTracker(
+        robot, reference, PIDControl(Kp=100.0, Ki=10.0, Kd=20.0)
+    )
+    return robot, tracker, jnp.full((n,), 100.0), 1e-3
+
+
+def _synergistic_case(make_robot, task_selector, dt):
+    # The tip task reads the node kinematics of the terms.
+    robot = make_robot(tendons=True)
+    osd = OperationalSpaceDynamics(
+        robot=robot, s_ps=jnp.array([0.2]), task_selector=task_selector
+    )
+    q_des = 0.1 * jnp.ones((robot.num_internal_dofs,))
+    reference = ReferenceTrajectory(
+        ts=jnp.array([0.0, 1.0]),
+        x_des_fn=lambda t: osd.operational_space_poses(q_des),
+        rotation_representation=osd.rotation_representation,
+        n_points=osd.n_points,
+        is_planar=osd.is_planar,
+    )
+    o = osd.n_operational_space
+    gains = PIDControl(
+        Kp=2.0 * jnp.ones((o,)), Ki=0.5 * jnp.ones((o,)), Kd=jnp.ones((o,))
+    )
+    controller = OperationalSpaceSynergisticController(osd, reference, gains)
+    return robot, controller, jnp.full((o,), 2.0), dt
+
+
+CLOSED_LOOP_CASES = [
+    pytest.param(_computed_torque_case, id="planar-pcs-computed-torque"),
+    pytest.param(
+        lambda: _synergistic_case(_planar_pcs, jnp.array([False, True, True]), 1e-3),
+        id="planar-pcs-synergistic",
+    ),
+    # The short GVS segments with soft joints need a smaller explicit step. The
+    # process peaks at about 5 GB, so CI runs this case in its own process.
+    pytest.param(
+        lambda: _synergistic_case(_gvs, jnp.array([False] * 3 + [True] * 3), 1e-5),
+        id="gvs-synergistic",
+        marks=pytest.mark.memory_intensive,
+    ),
+]
+
+
+@pytest.mark.parametrize("build_case", CLOSED_LOOP_CASES)
+def test_shared_model_terms_closed_loop_matches_unshared(build_case):
+    robot, tracker, kp, dt = build_case()
+    # A Python start time stays concrete under jit for the save-time checks.
+    initial_state = SystemState(
+        t=0.0,
+        y=jnp.zeros((robot.state_size,)),
+        u=jnp.zeros((robot.num_actuators,)),
+        control_state=PIDControllerState.zero(kp.shape[0]),
+    )
+
+    def rollout(kp, share_model_terms):
+        controller = eqx.tree_at(lambda c: c.pid_control.Kp, tracker, kp)
+        return robot.rollout_closed_loop_to(
+            initial_state=initial_state,
+            controller=controller,
+            t1=10 * dt,
+            solver_dt=dt,
+            save_dt=5 * dt,
+            max_steps=16,
+            share_model_terms=share_model_terms,
+        )
+
+    def loss(kp, share_model_terms):
+        output = rollout(kp, share_model_terms)
+        return jnp.sum(output.y[-1] ** 2), output
+
+    # One compiled program per flag gives both the rollout and the gradient.
+    value_and_grad = jax.jit(jax.value_and_grad(loss, has_aux=True), static_argnums=1)
+    (_, shared), shared_gradient = value_and_grad(kp, True)
+    (_, own), own_gradient = value_and_grad(kp, False)
+    _assert_close(shared.y, own.y, rtol=1e-9)
+    _assert_close(shared.u, own.u, rtol=1e-9)
+    _assert_close(shared_gradient, own_gradient, rtol=1e-9)

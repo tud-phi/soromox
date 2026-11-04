@@ -2596,10 +2596,22 @@ class SoftRobot(DynamicalSystem):
             start = stop
         return jnp.concatenate(tuple(efforts))
 
-    def _actuation_force(self, q: Array, u: Array, qd: Array | None = None) -> Array:
-        """Return the protected differentiable JAX generalized actuator force."""
+    def _actuation_force(
+        self,
+        q: Array,
+        u: Array,
+        qd: Array | None = None,
+        *,
+        actuation_matrix: Array | None = None,
+    ) -> Array:
+        """Return the protected differentiable JAX generalized actuator force.
 
-        actuation_matrix = self._actuation_matrix(q)
+        A given ``actuation_matrix``, such as the one of shared model terms,
+        replaces the evaluation of ``A(q)``.
+        """
+
+        if actuation_matrix is None:
+            actuation_matrix = self._actuation_matrix(q)
         coordinate_jacobian = (
             self.actuator_coordinate_jacobian(q)
             if any(
@@ -3162,7 +3174,8 @@ class SoftRobot(DynamicalSystem):
         and elastic forces, the damping matrix, the actuation matrix and, for
         systems whose dynamics pass provides them, the kinematics at the nodes
         of that pass. Model-based controllers read them from
-        ``SystemState.model_terms``.
+        ``SystemState.model_terms``, and :meth:`forward_dynamics_from_model_terms`
+        evaluates the dynamics from them, so one evaluation serves both.
 
         Floating-base systems return ``None``: their controllers act on a
         fixed-base model mounted at the base pose, not on the floating dynamics.
@@ -3234,6 +3247,45 @@ class SoftRobot(DynamicalSystem):
         """
         return self.dynamics_terms(q, qd), None, None
 
+    def _forward_dynamics_inputs(
+        self, y: Array, actuation_args: tuple | None
+    ) -> tuple[Array, Array, Array, Array, Array]:
+        """
+        Split the state and the actuation arguments of the forward dynamics.
+
+        :meth:`forward_dynamics` and :meth:`forward_dynamics_from_model_terms`
+        start from these quantities.
+
+        Args:
+            y: State ``[q, v, auxiliary]`` with shape ``(state_size,)``.
+            actuation_args: ``None``, ``(u,)``, or ``(u, tau_ext)``. Missing
+                values default to zero.
+
+        Returns:
+            Tuple ``(q, qd, auxiliary_state, u, tau_ext)``.
+
+        Raises:
+            ValueError: If ``actuation_args`` has a length other than one or
+                two.
+        """
+        q, qd, auxiliary_state = self.split_state(y)
+
+        if actuation_args is None:
+            u, tau_ext = None, None
+        elif len(actuation_args) == 1:
+            u = actuation_args[0]
+            tau_ext = None
+        elif len(actuation_args) == 2:
+            u, tau_ext = actuation_args
+        else:
+            raise ValueError("actuation_args must be a tuple of length 1 or 2.")
+
+        if u is None:
+            u = jnp.zeros((self.num_actuators,), dtype=q.dtype)
+        if tau_ext is None:
+            tau_ext = jnp.zeros_like(qd)
+        return q, qd, auxiliary_state, u, tau_ext
+
     def forward_dynamics(
         self, t: Array, y: Array, actuation_args: tuple | None = None
     ) -> Array:
@@ -3255,22 +3307,9 @@ class SoftRobot(DynamicalSystem):
         """
         del t
 
-        q, qd, auxiliary_state = self.split_state(y)
-
-        if actuation_args is None:
-            u, tau_ext = None, None
-        elif len(actuation_args) == 1:
-            u = actuation_args[0]
-            tau_ext = None
-        elif len(actuation_args) == 2:
-            u, tau_ext = actuation_args
-        else:
-            raise ValueError("actuation_args must be a tuple of length 1 or 2.")
-
-        if u is None:
-            u = jnp.zeros((self.num_actuators,), dtype=q.dtype)
-        if tau_ext is None:
-            tau_ext = jnp.zeros_like(qd)
+        q, qd, auxiliary_state, u, tau_ext = self._forward_dynamics_inputs(
+            y, actuation_args
+        )
 
         M, Cqd, G = self.dynamics_terms(q, qd)
         K = self.elastic_force(q)
@@ -3279,6 +3318,57 @@ class SoftRobot(DynamicalSystem):
 
         rhs = tau_u + tau_ext - Cqd - G - K - D @ qd
         qdd = self._solve_inertia(M, rhs)
+
+        qdot = self.configuration_derivative(q, qd)
+        if self.num_auxiliary_states == 0:
+            return jnp.concatenate([qdot, qdd])
+        auxiliary_dot = jnp.zeros_like(auxiliary_state)
+        return jnp.concatenate([qdot, qdd, auxiliary_dot])
+
+    def forward_dynamics_from_model_terms(
+        self,
+        t: Array,
+        y: Array,
+        actuation_args: tuple | None,
+        model_terms: ModelTerms,
+    ) -> Array:
+        """
+        Compute the forward dynamics from the model terms at ``y``.
+
+        ``rollout_closed_loop_to`` with ``share_model_terms=True`` calls this
+        method instead of :meth:`forward_dynamics`, with the terms that the
+        controller read. It solves the force balance
+        ``B qdd = tau_u + tau_ext - Cqd - G - K - D qd`` with every model
+        quantity from the terms, the actuation force ``A(q) @ e`` from their
+        actuation matrix, and the inertia system with their stored factor.
+
+        Args:
+            t: Current time (scalar).
+            y: State ``[q, v, auxiliary]`` with shape ``(state_size,)``.
+            actuation_args: ``None``, ``(u,)``, or ``(u, tau_ext)``, as in
+                :meth:`forward_dynamics`.
+            model_terms: Model terms of the system at ``y`` (see
+                :meth:`model_terms`).
+
+        Returns:
+            State derivative ``[qdot, vdot, auxiliary_dot]`` with shape
+            ``(state_size,)``.
+        """
+        del t
+        q, qd, auxiliary_state, u, tau_ext = self._forward_dynamics_inputs(
+            y, actuation_args
+        )
+
+        Cqd = model_terms.coriolis_force
+        G = model_terms.gravitational_force
+        K = model_terms.elastic_force
+        D = model_terms.damping_matrix
+        tau_u = self._actuation_force(
+            q, u, qd, actuation_matrix=model_terms.actuation_matrix
+        )
+
+        rhs = tau_u + tau_ext - Cqd - G - K - D @ qd
+        qdd = model_terms.solve_inertia(rhs)
 
         qdot = self.configuration_derivative(q, qd)
         if self.num_auxiliary_states == 0:

@@ -490,6 +490,29 @@ def test_rollout_closed_loop_to_environment_model_raises_without_initial_environ
         )
 
 
+def test_share_model_terms_requires_system_model_terms():
+    """A floating-base system provides no model terms to share."""
+    import pytest
+
+    robot = Pendulum(_pendulum_params(), floating_base=True)
+    initial_state = SystemState(
+        t=0.0,
+        y=jnp.zeros((robot.state_size,)),
+        u=jnp.zeros((robot.num_actuators,)),
+    )
+    controller = ZeroController(num_actuators=robot.num_actuators)
+
+    with pytest.raises(ValueError, match="share_model_terms"):
+        robot.rollout_closed_loop_to(
+            initial_state=initial_state,
+            controller=controller,
+            t1=0.05,
+            solver_dt=1e-3,
+            save_dt=0.05,
+            share_model_terms=True,
+        )
+
+
 def test_rollout_discrete_control_and_save_steps():
     """Test that control steps and save steps are correct in discrete rollout."""
     robot = Pendulum(_pendulum_params())

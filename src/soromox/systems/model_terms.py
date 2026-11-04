@@ -74,8 +74,11 @@ class ModelTerms(eqx.Module):
 
     A system computes these quantities once per state with
     :meth:`soromox.systems.SoftRobot.model_terms`. A model-based controller reads
-    them from ``SystemState.model_terms``. The terms describe the state at which
-    they were computed and must only be used at that state.
+    them from ``SystemState.model_terms``, and
+    :meth:`soromox.systems.SoftRobot.forward_dynamics_from_model_terms` evaluates
+    the dynamics from them, so the controller and the dynamics share one
+    evaluation of these quantities. The terms describe the state at which they
+    were computed and must only be used at that state.
 
     The constructor computes ``inertia_factor`` from ``inertia_matrix``, so
     changed terms must be constructed again: ``dataclasses.replace`` raises,

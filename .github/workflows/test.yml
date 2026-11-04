@@ -232,6 +232,7 @@ jobs:
           python -m pytest tests/systems/test_gvs.py::test_forward_mode_automatic_differentiability_at_zero_configuration
           python -m pytest tests/systems/test_gvs.py::test_reverse_mode_automatic_differentiability_at_zero_configuration
           python -m pytest tests/systems/test_gvs.py::test_gvs_autodiff_checks
+          python -m pytest "tests/systems/test_model_terms.py::test_shared_model_terms_closed_loop_matches_unshared[gvs-synergistic]"
           for basis_type in monomial legendre chebyshev fourier gaussian imq; do
             python -m pytest "tests/systems/test_gvs.py::test_scaled_rotational_basis_batched_partial_cells_match_scalar_paths[$basis_type]"
           done
@@ -326,6 +327,7 @@ jobs:
           python -m pytest tests/systems/test_gvs.py::test_forward_mode_automatic_differentiability_at_zero_configuration
           python -m pytest tests/systems/test_gvs.py::test_reverse_mode_automatic_differentiability_at_zero_configuration
           python -m pytest tests/systems/test_gvs.py::test_gvs_autodiff_checks
+          python -m pytest "tests/systems/test_model_terms.py::test_shared_model_terms_closed_loop_matches_unshared[gvs-synergistic]"
           for basis_type in monomial legendre chebyshev fourier gaussian imq; do
             python -m pytest "tests/systems/test_gvs.py::test_scaled_rotational_basis_batched_partial_cells_match_scalar_paths[$basis_type]"
           done
