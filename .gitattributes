@@ -13,3 +13,5 @@ paper_results/secVd_control_gain_optimization/outputs/*.gif filter=lfs diff=lfs 
 
 # Unified patches use a leading space for blank context lines.
 tools/open3d/*.patch whitespace=-blank-at-eol
+# Keep the Section Vg full-sample run (every candidate rollout) out of normal Git object history.
+paper_results/secVg_sampling_based_mpc/data/square_icem_seed0.npz filter=lfs diff=lfs merge=lfs -text
