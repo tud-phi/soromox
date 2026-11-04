@@ -9,17 +9,33 @@ Newton dynamics, coupled through newton-cosserat's SAP solver.
 
 ## Environment
 
-Unlike the other sections, this case has its own uv project in
-[`pyproject.toml`](pyproject.toml) rather than a repository-root extra. Run
+Unlike the other sections, this case has its own uv projects rather than a
+repository-root extra, one for the experiments and one for the figures. Run
 every command from this directory:
 
 ```bash
 cd paper_results/secVg_sampling_based_mpc
-uv sync --project .
+uv sync --project env_newton17   # experiments
+uv sync --project .              # renderers and summary figure
 ```
 
-The project uses this checkout's SoRoMoX through `override-dependencies` and
-pins:
+Both projects use this checkout's SoRoMoX through `override-dependencies`.
+
+The experiment project, [`env_newton17/pyproject.toml`](env_newton17/pyproject.toml),
+is the stack the paper data was generated on. It reproduces that stack's
+trajectories bit for bit, while the Newton 1.6 stack below gives different
+contact dynamics:
+
+| Package | Version | Reason |
+| --- | --- | --- |
+| `newton-cosserat` | [`Johannap1/newton-cosserat`](https://github.com/Johannap1/newton-cosserat) `secVg-sampling-based-mpc` | upstream `main` plus only its Newton 1.7 port |
+| `newton` | `1.7.0` | paper data stack |
+| `warp-lang` | `1.18.0` | paper data stack |
+| `jax` | `0.11.1` | paper data stack |
+
+The figure project, [`pyproject.toml`](pyproject.toml), stays on Newton 1.6
+because Newton 1.7's RTX viewer requires `ovrtx` 0.5, which renders the sample
+clouds black:
 
 | Package | Version | Reason |
 | --- | --- | --- |
@@ -37,7 +53,7 @@ Both renderers need an RTX GPU. On a machine without a GPU, set
 Run one closed-loop push with `code/run_experiment.py`:
 
 ```bash
-uv run --project . python code/run_experiment.py --device cuda:0 \
+uv run --project env_newton17 python code/run_experiment.py --device cuda:0 \
   --stop-after-one-square --object-shape box --k-samples 200 100 50 --num-iters 3 --seed 0 \
   --save-path /tmp/soromox-secVg/square_icem_seed0.npz
 ```

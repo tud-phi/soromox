@@ -1,6 +1,7 @@
-# Section V-G environment: the push experiment, summary figure and both RTX renderers, on
-# newton-cosserat upstream main with a Newton 1.6 stack. Run from this folder:
-#   uv run --project . python code/run_experiment.py ...
+# Section V-G figure environment: the summary figure and both RTX renderers, on
+# newton-cosserat upstream main with a Newton 1.6 stack. Experiments run in env_newton17/.
+# Run from this folder:
+#   uv run --project . python code/rendering.py ...
 [project]
 name = "secvg-sampling-based-mpc"
 version = "0.0.0"

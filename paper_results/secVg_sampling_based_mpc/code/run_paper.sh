@@ -7,7 +7,7 @@ DEVICE="${DEVICE:-cuda:0}"
 SEEDS=(0 1 2)
 
 run() {
-  uv run --project "$CODE_DIR/.." python "$CODE_DIR/run_experiment.py" --device "$DEVICE" "$@"
+  uv run --project "$CODE_DIR/../env_newton17" python "$CODE_DIR/run_experiment.py" --device "$DEVICE" "$@"
 }
 
 declare -A MPPI_TEMP=([200]=30 [400]=25 [800]=20 [1600]=15)
