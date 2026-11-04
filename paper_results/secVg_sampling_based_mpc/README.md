@@ -4,14 +4,16 @@ This case runs closed-loop sampling-based MPC, iCEM by default and MPPI with
 `--mppi`, in which a tapered four-tendon soft arm on a kinematically driven
 floating base pushes a box or cylinder around a 10 cm square. The arm is
 defined in `code/four_tendon_soft_arm.py`, and the planner primitives and push
-cost live in `code/smpc.py`. Each replan samples rollouts against the real
-Newton dynamics, coupled through newton-cosserat's SAP solver.
+cost live in `code/smpc.py`. Each replan samples rollouts against the full
+simulation, which runs on [newton-cosserat](https://github.com/tud-phi/newton-cosserat):
+it couples the SoRoMoX Cosserat rod model of the arm to the rigid-body physics
+of [Newton](https://github.com/newton-physics/newton), and resolves the
+arm-object-table contacts with its SAP contact solver.
 
 ## Environment
 
-Unlike the other sections, this case has its own uv projects rather than a
-repository-root extra, one for the experiments and one for the figures. Run
-every command from this directory:
+This case has two uv projects, one for the experiments and one for the
+figures. Run every command from this directory:
 
 ```bash
 cd paper_results/secVg_sampling_based_mpc
@@ -22,27 +24,25 @@ uv sync --project .              # renderers and summary figure
 Both projects use this checkout's SoRoMoX through `override-dependencies`.
 
 The experiment project, [`env_newton17/pyproject.toml`](env_newton17/pyproject.toml),
-is the stack the paper data was generated on. It reproduces that stack's
-trajectories bit for bit, while the Newton 1.6 stack below gives different
-contact dynamics:
+pins the stack the paper data was generated on:
 
-| Package | Version | Reason |
-| --- | --- | --- |
-| `newton-cosserat` | [`Johannap1/newton-cosserat`](https://github.com/Johannap1/newton-cosserat) `secVg-sampling-based-mpc` | upstream `main` plus only its Newton 1.7 port |
-| `newton` | `1.7.0` | paper data stack |
-| `warp-lang` | `1.18.0` | paper data stack |
-| `jax` | `0.11.1` | paper data stack |
+| Package | Version |
+| --- | --- |
+| `newton-cosserat` | [`Johannap1/newton-cosserat`](https://github.com/Johannap1/newton-cosserat) branch `secVg-sampling-based-mpc` (Newton 1.7 port) |
+| `newton` | `1.7.0` |
+| `warp-lang` | `1.18.0` |
+| `jax` | `0.11.1` |
 
 The figure project, [`pyproject.toml`](pyproject.toml), stays on Newton 1.6
 because Newton 1.7's RTX viewer requires `ovrtx` 0.5, which renders the sample
 clouds black:
 
-| Package | Version | Reason |
-| --- | --- | --- |
-| `newton-cosserat` | [`tud-phi/newton-cosserat`](https://github.com/tud-phi/newton-cosserat) `main` | coupled SAP solver |
-| `newton` | `1.6.0.dev0`, git rev `7c677b95` | newton-cosserat's own pin `e3c5fdf4` lacks `log_mesh` opacity |
-| `ovrtx` | `0.4.1` | 0.5.x renders dense translucent sample clouds black |
-| `warp-lang` | `1.16.0` | matches the newton-cosserat lock |
+| Package | Version |
+| --- | --- |
+| `newton-cosserat` | [`tud-phi/newton-cosserat`](https://github.com/tud-phi/newton-cosserat) `main` |
+| `newton` | `1.6.0.dev0`, git rev `7c677b95` (adds `log_mesh` opacity for the sample clouds) |
+| `ovrtx` | `0.4.1` |
+| `warp-lang` | `1.16.0` |
 
 Experiments run on the CPU or a GPU (`--device cpu` or `--device cuda:0`).
 Both renderers need an RTX GPU. On a machine without a GPU, set
@@ -84,12 +84,12 @@ The script runs three parts, each over seeds 0, 1 and 2:
   (`data/square_icem_cylinder.npz`).
 
 The script replaces same-named files in `data/`. Set `RESULTS_DIR` to stage a
-run elsewhere. The committed `data/` copies have the per-sample arrays stripped
-for size, so rerun the seed-0 iCEM square push to render panel A.
+run elsewhere. Of the committed runs, only `data/square_icem_seed0.npz` keeps
+the per-sample arrays; it is stored in Git LFS (`git lfs pull` fetches it).
 
 ## Paper artifacts
 
-Recreate the summary figure from the committed data and frames:
+Recreate the summary figure from the committed data and renders:
 
 ```bash
 uv run --project . python code/plot_smpc_summary.py
@@ -124,6 +124,8 @@ uv run --project . python code/rendering.py --run-path data/square_icem_cylinder
 The renderer reads the saved trajectory without re-simulating and adds a
 decorative Franka FR3 whose end effector follows the arm base; `--franka-base`
 moves it. The numbered PNG frames are kept under `outputs/<stem>_frames/frames/`.
+The committed videos, `outputs/square_icem_{seed0,box100g,cylinder}.{mp4,gif}`,
+are stored in Git LFS.
 Panel C reads frames 75, 189, 318 and 453 directly from
 `outputs/square_icem_seed0_frames/frames/`, so render `data/square_icem_seed0.npz`
 with `--output outputs/square_icem_seed0.mp4` first. Encoding the MP4 and GIF
