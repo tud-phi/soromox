@@ -337,7 +337,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--backbone-points", type=int, default=25, help="Arc-length samples along each drawn tentacle shape.")
     parser.add_argument("--ring-sides", type=int, default=8, help="Cross-section polygon resolution (>=3) for the drawn tubes.")
     parser.add_argument(
-        "--sample-opacity", type=float, default=0.1,
+        "--sample-opacity", type=float, default=0.5,
         help="Display opacity in [0, 1] of the best non-best cloud sample; the others scale down by "
              "cost rank to --sample-opacity * 0.1 at the worst.",
     )

@@ -70,7 +70,7 @@ RENDER_FRAMES_PER_STEP = 10
 WIDTH_RATIOS = [1.0, 1.0]
 HEIGHT_RATIOS = [0.78, 0.72]
 PANEL_WSPACE = 0.26
-PANEL_HSPACE = 0.27
+PANEL_HSPACE = 0.36
 
 
 @dataclasses.dataclass(frozen=True)
@@ -370,10 +370,17 @@ def frame_time_labels(image_paths: list[Path]) -> list[str]:
     return labels
 
 
-def add_panel_label(fig: plt.Figure, cell, label: str) -> None:
-    """Draw a bold panel letter at the top-left corner of a gridspec cell."""
+def add_panel_label(fig: plt.Figure, cell, label: str, ax: plt.Axes | None = None) -> None:
+    """Draw a bold panel letter at the top-left corner of a gridspec cell.
+
+    Pass `ax` when its fixed aspect shrinks it inside the cell, to put the letter at its drawn top.
+    """
     bbox = cell.get_position(fig)
-    fig.text(bbox.x0 - 0.015, bbox.y1 + 0.01, label, fontsize=11, fontweight="bold", va="bottom", ha="left")
+    top = bbox.y1
+    if ax is not None:
+        ax.apply_aspect()
+        top = ax.get_position().y1
+    fig.text(bbox.x0 - 0.015, top + 0.002, label, fontsize=11, fontweight="bold", va="bottom", ha="left")
 
 
 def plot_smpc_summary(
@@ -402,8 +409,9 @@ def plot_smpc_summary(
     )
     add_panel_label(fig, grid[1, 0], "C")
 
-    plot_push_trajectory_xy(trajectories, goal_xy, fig.add_subplot(grid[1, 1]))
-    add_panel_label(fig, grid[1, 1], "D")
+    trajectory_ax = fig.add_subplot(grid[1, 1])
+    plot_push_trajectory_xy(trajectories, goal_xy, trajectory_ax)
+    add_panel_label(fig, grid[1, 1], "D", ax=trajectory_ax)
 
     return fig
 
