@@ -130,10 +130,11 @@ class PotentialCancellationRegulator(PIDController):
         n_a = asd.n_actuated
 
         # Compute gravitational force at current configuration in actuation space
-        G_y = asd.gravitational_force(q)
+        model_terms = self._resolve_model_terms(system_state)
+        G_y = asd.gravitational_force(q, model_terms=model_terms)
 
         # Compute elastic force at current configuration in actuation space
-        tau_el_y = asd.elastic_force(q)
+        tau_el_y = asd.elastic_force(q, model_terms=model_terms)
 
         # Total actuation-space force for potential cancellation
         tau_model_y = G_y + tau_el_y

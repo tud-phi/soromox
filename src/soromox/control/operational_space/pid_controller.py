@@ -97,6 +97,25 @@ class PIDController(OperationalSpaceBaseController, ClosedFormModelBasedControll
             control_state_dot: Time derivative of the PIDControllerState, or None
                 if no control state is being tracked.
         """
+        f_x, control_state_dot, _ = self._feedback_and_task_jacobian(system_state)
+        return f_x, control_state_dot
+
+    def _feedback_and_task_jacobian(
+        self, system_state: SystemState
+    ) -> tuple[Array, PIDControllerState | None, Array]:
+        """
+        Compute the PID feedback term together with the task Jacobian it uses.
+
+        Args:
+            system_state: The current state of the system, as in
+                :meth:`error_based_feedback_term`.
+
+        Returns:
+            f_x: The operational space forcing action, shape (n_o,).
+            control_state_dot: Time derivative of the PIDControllerState, or None
+                if no control state is being tracked.
+            J: Operational space Jacobian, shape (n_o, num_dofs).
+        """
         t = system_state.t
         y = system_state.y
 
@@ -119,11 +138,13 @@ class PIDController(OperationalSpaceBaseController, ClosedFormModelBasedControll
         # (velocity space is where the Jacobian and dynamics operate)
         xd_des = osd.B_task.T @ xd_des_full
 
-        # Compute operational space Jacobian
-        J = osd.jacobian(q)
+        # Compute operational space Jacobian, from the node kinematics of the model
+        # terms when they hold them
+        model_terms = self._resolve_model_terms(system_state)
+        J = osd.jacobian(q, model_terms=model_terms)
 
         # Current operational space FULL pose (for error computation) and task-selected velocity
-        x_full = osd.operational_space_poses(q)
+        x_full = osd.operational_space_poses(q, model_terms=model_terms)
         xd = J @ qd  # Task-selected velocity
 
         # IMPORTANT: For orientation, we use the geometric error (shortest path)
@@ -158,7 +179,7 @@ class PIDController(OperationalSpaceBaseController, ClosedFormModelBasedControll
         else:
             control_state_dot = None
 
-        return f_x, control_state_dot
+        return f_x, control_state_dot, J
 
     def update_gains(self, gains: dict[str, Array]) -> "PIDController":
         """

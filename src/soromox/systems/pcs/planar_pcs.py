@@ -33,6 +33,7 @@ from soromox.execution import (
     dispatch_kinematics_abscissa_batched,
     evaluate_forward_dynamics,
 )
+from soromox.execution.dispatch import _dispatch_dynamics_terms_with_node_kinematics
 from soromox.systems.components import (
     ContinuumLinkParams,
     CrossSectionGeometry,
@@ -46,6 +47,7 @@ from soromox.systems.components.inertia import (
     spatial_mass_action,
     weighted_inertias,
 )
+from soromox.systems.model_terms import ModelTerms
 from soromox.systems.pcs.kinematics import constant_strain_segment_kinematics
 from soromox.systems.pcs.params import PlanarPCSParams
 from soromox.systems.pcs.structures import PlanarPCSStructure
@@ -1037,6 +1039,7 @@ class PlanarPCS(SoftRobot):
         s_ps: Array,
         *,
         backend: ExecutionBackend | None = None,
+        model_terms: ModelTerms | None = None,
     ) -> Array:
         """Compute planar poses at a batch of curvilinear abscissae.
 
@@ -1045,11 +1048,16 @@ class PlanarPCS(SoftRobot):
             s_ps: Curvilinear abscissae with shape ``(N,)``.
             backend: Optional execution override. ``None`` uses the model's
                 configured backend.
+            model_terms: Optional model terms at ``q``. When they hold node
+                kinematics, each pose follows from its segment-base pose with
+                one partial constant-strain cell, and ``backend`` is not used.
 
         Returns:
             Planar poses with shape ``(N, 3)``.
         """
 
+        if model_terms is not None and model_terms.node_poses is not None:
+            return self._node_kinematics_abscissa_batched(q, s_ps, model_terms)[0]
         return dispatch_kinematics_abscissa_batched(
             self,
             q,
@@ -1181,6 +1189,41 @@ class PlanarPCS(SoftRobot):
         chi_ps = vmap(integrate_point)(chi_base_ps, xi_ps, s_local_ps)
 
         return chi_ps
+
+    def _node_kinematics_abscissa_batched(
+        self, q: Array, s_ps: Array, model_terms: ModelTerms
+    ) -> tuple[Array, Array]:
+        """
+        Evaluate poses and body Jacobians from the node kinematics of model terms.
+
+        One partial constant-strain cell from the base of each point's segment
+        gives the pose and the body Jacobian, with the segment-base poses and
+        Jacobians that the dynamics pass formed.
+
+        Args:
+            q: Active generalized coordinates, shape ``(self.num_internal_dofs,)``.
+            s_ps: Backbone coordinates with shape ``(N,)``.
+            model_terms: Model terms at ``q`` holding node kinematics.
+
+        Returns:
+            Tuple ``(chi_ps, J_local_ps)`` with shapes ``(N, 3)`` and
+            ``(N, 3, self.num_internal_dofs)``.
+        """
+        xi = self.strain(q).reshape(self.num_segments, 3)
+        B_xi_segments = self.B_xi.reshape(self.num_segments, 3, self.num_internal_dofs)
+        segment_indices, s_local_ps = vmap(self.classify_segment)(s_ps)
+
+        def partial_cell(i: Array, s_local: Array) -> tuple[Array, Array]:
+            Ad_inv, T = constant_strain_se2._operators(
+                xi[i], s_local, self.global_eps, self.tangent_eps
+            )
+            chi = self._integrate_planar_pose(model_terms.node_poses[i], xi[i], s_local)
+            J_local = (
+                Ad_inv @ model_terms.node_jacobians[i] + (Ad_inv @ T) @ B_xi_segments[i]
+            )
+            return chi, J_local
+
+        return vmap(partial_cell)(segment_indices, s_local_ps)
 
     @eqx.filter_jit
     def _compute_relative_segment_poses(self, chi_tips: Array) -> Array:
@@ -1914,17 +1957,24 @@ class PlanarPCS(SoftRobot):
         return Js
 
     @eqx.filter_jit
-    def jacobian_bodyframe_abscissa_batched(self, q: Array, s_ps: Array) -> Array:
+    def jacobian_bodyframe_abscissa_batched(
+        self, q: Array, s_ps: Array, *, model_terms: ModelTerms | None = None
+    ) -> Array:
         """
         Compute the Jacobian of the forward kinematics at a batch of points s_ps along the robot in the body frame.
 
         Args:
             q (Array): generalized coordinates of shape (num_active_strains,).
             s_ps (Array): point coordinates along the robot in the interval [0, L] of shape (N,).
+            model_terms (ModelTerms | None): model terms at q. When they hold node
+                kinematics, each Jacobian follows from its segment-base Jacobian
+                with one partial constant-strain cell.
 
         Returns:
             J_local_ps (Array): Jacobians evaluated at all points, shape (N, 3, num_active_strains)
         """
+        if model_terms is not None and model_terms.node_jacobians is not None:
+            return self._node_kinematics_abscissa_batched(q, s_ps, model_terms)[1]
         J_local_ps_full = self._J_local_abscissa_batched(
             q, s_ps
         )  # shape (N, 3, num_strains)
@@ -2544,18 +2594,29 @@ class PlanarPCS(SoftRobot):
         return self.jacobian_and_arc_length_derivative_inertialframe(q, s)
 
     @eqx.filter_jit
-    def jacobian_abscissa_batched(self, q: Array, s_ps: Array) -> Array:
+    def jacobian_abscissa_batched(
+        self, q: Array, s_ps: Array, *, model_terms: ModelTerms | None = None
+    ) -> Array:
         """Compute inertial-frame Jacobians at multiple arc-length positions.
 
         Args:
             q: Active generalized strains with shape
                 ``(num_active_strains,)``.
             s_ps: Backbone coordinates with shape ``(num_points,)``.
+            model_terms: Optional model terms at ``q``. When they hold node
+                kinematics, the pose and the body Jacobian at each position
+                follow from its segment base with one partial constant-strain
+                cell.
 
         Returns:
             Inertial-frame Jacobians with shape
             ``(num_points, 3, num_active_strains)``.
         """
+        if model_terms is not None and model_terms.node_jacobians is not None:
+            chi_ps, J_local_ps = self._node_kinematics_abscissa_batched(
+                q, s_ps, model_terms
+            )
+            return vmap(self._body_jacobian_to_inertial)(chi_ps, J_local_ps)
         if self.floating_base:
             _, q_internal = self.split_configuration(q)
             fixed_base_robot = self._fixed_base_robot_at_pose()
@@ -3511,14 +3572,17 @@ class PlanarPCS(SoftRobot):
         convective_only_jd: bool = False,
         jacobian_initial: Array | None = None,
         jacobian_dot_velocity_initial: Array | None = None,
-    ) -> tuple[Array, Array, Array]:
+        pose_initial: Array | None = None,
+    ) -> tuple[Array, Array, Array, Array | None]:
         """
         Propagate active-coordinate local Jacobians to every segment tip.
 
         The recurrence remains in each segment's body frame. It can propagate
         either the complete Jacobian time derivative or only its contraction
         with ``qd``. The returned inverse adjoints let dynamics-only callers
-        propagate local quantities without constructing absolute poses.
+        propagate local quantities without constructing absolute poses. The
+        same recurrence optionally carries the absolute pose of each segment
+        base.
 
         Args:
             xi: Segment strains with shape ``(self.num_segments, 3)``.
@@ -3528,14 +3592,19 @@ class PlanarPCS(SoftRobot):
             qd: Active generalized velocities, shape ``(self.num_internal_dofs,)``.
             convective_only_jd: If true, propagate ``Jd @ qd`` instead of the
                 complete Jacobian time derivative.
+            pose_initial: Optional planar pose ``[theta, x, y]`` of the first
+                segment base. If given, the pose of every segment base is
+                returned.
 
         Returns:
-            Tuple ``(J_tips, Jd_or_Jd_qd_tips, Ad_inv_tips)``. ``J_tips`` has
-            shape ``(self.num_segments, 3, self.num_internal_dofs)``. The second array
+            Tuple ``(J_tips, Jd_or_Jd_qd_tips, Ad_inv_tips, pose_bases)``.
+            ``J_tips`` has shape
+            ``(self.num_segments, 3, self.num_internal_dofs)``. The second array
             has the same shape when ``convective_only_jd`` is false and shape
             ``(self.num_segments, 3)`` otherwise. ``Ad_inv_tips`` contains the
             inverse adjoint of each segment-tip transform with shape
-            ``(self.num_segments, 3, 3)``.
+            ``(self.num_segments, 3, 3)``. ``pose_bases`` has shape
+            ``(self.num_segments, 3)``, or is ``None`` without ``pose_initial``.
         """
         Ad_inv_tips, T_tips, Td_tips = vmap(
             lambda xi_i, xid_i, L_i: constant_strain_se2._operators(
@@ -3558,9 +3627,11 @@ class PlanarPCS(SoftRobot):
             Jd_or_Jd_qd_zeros = zeros
 
         def scan_body(
-            carry: tuple[Array, Array], i: Array
-        ) -> tuple[tuple[Array, Array], tuple[Array, Array]]:
-            J_prev, Jd_or_Jd_qd_prev = carry
+            carry: tuple[Array, Array, Array | None], i: Array
+        ) -> tuple[
+            tuple[Array, Array, Array | None], tuple[Array, Array, Array | None]
+        ]:
+            J_prev, Jd_or_Jd_qd_prev, pose_prev = carry
 
             xid_i = lax.dynamic_index_in_dim(xid, i, axis=0, keepdims=False)
             B_xi_i = lax.dynamic_index_in_dim(B_xi_segments, i, axis=0, keepdims=False)
@@ -3589,14 +3660,24 @@ class PlanarPCS(SoftRobot):
                 Jd_next = Ad_inv_i @ Jd_or_Jd_qd_prev + Ad_inv_dot @ J_prev + Jd_segment
                 Jd_or_Jd_qd_next = Jd_next
 
-            return (J_next, Jd_or_Jd_qd_next), (J_next, Jd_or_Jd_qd_next)
+            pose_next = None
+            if pose_prev is not None:
+                xi_i = lax.dynamic_index_in_dim(xi, i, axis=0, keepdims=False)
+                L_i = lax.dynamic_index_in_dim(self.L, i, axis=0, keepdims=False)
+                pose_next = self._integrate_planar_pose(pose_prev, xi_i, L_i)
+
+            return (J_next, Jd_or_Jd_qd_next, pose_next), (
+                J_next,
+                Jd_or_Jd_qd_next,
+                pose_prev,
+            )
 
         indices = jnp.arange(self.num_segments, dtype=jnp.int32)
-        (_, _), (J_tips, Jd_or_Jd_qd_tips) = lax.scan(
-            scan_body, (zeros, Jd_or_Jd_qd_zeros), indices
+        _, (J_tips, Jd_or_Jd_qd_tips, pose_bases) = lax.scan(
+            scan_body, (zeros, Jd_or_Jd_qd_zeros, pose_initial), indices
         )
 
-        return J_tips, Jd_or_Jd_qd_tips, Ad_inv_tips
+        return J_tips, Jd_or_Jd_qd_tips, Ad_inv_tips, pose_bases
 
     @eqx.filter_jit
     def integration_kinematics(self, q: Array, qd: Array) -> tuple[Array, Array, Array]:
@@ -3732,7 +3813,7 @@ class PlanarPCS(SoftRobot):
 
         g_ps = vmap(segment_poses)(g_bases, xi, s_local)
 
-        J_tips, Jd_or_Jd_qd_tips, _ = self._active_J_Jd_local_tips_from_strain(
+        J_tips, Jd_or_Jd_qd_tips, _, _ = self._active_J_Jd_local_tips_from_strain(
             xi,
             xid,
             B_xi_segments,
@@ -3800,19 +3881,22 @@ class PlanarPCS(SoftRobot):
 
     @eqx.filter_jit
     def _dynamics_integration_kinematics(
-        self, q: Array, qd: Array
-    ) -> tuple[Array, Array, Array, Array]:
+        self, q: Array, qd: Array, with_node_kinematics: bool = False
+    ) -> tuple[Array, ...]:
         """
         Return dynamics-only quadrature kinematics in local body frames.
 
         Unlike :meth:`_integration_kinematics`, this path does not construct
-        absolute SE(2) poses. It propagates gravity between segment frames with
-        inverse adjoints and directly computes the convective contraction
-        ``Jd @ qd`` needed by :meth:`dynamics_terms`.
+        absolute SE(2) poses unless node kinematics are requested. It propagates
+        gravity between segment frames with inverse adjoints and directly
+        computes the convective contraction ``Jd @ qd`` needed by
+        :meth:`dynamics_terms`.
 
         Args:
             q: Active generalized coordinates, shape ``(self.num_internal_dofs,)``.
             qd: Active generalized velocities, shape ``(self.num_internal_dofs,)``.
+            with_node_kinematics: If true, also return the body Jacobian and the
+                planar pose at every segment base. Supported for a fixed base.
 
         Returns:
             Tuple ``(weights, gravity, jacobians, jacobian_dot_qd)``.
@@ -3822,6 +3906,9 @@ class PlanarPCS(SoftRobot):
             ``(self.num_segments, self.num_gauss_points, 3)``; and
             ``jacobians`` has shape
             ``(self.num_segments, self.num_gauss_points, 3, self.num_internal_dofs)``.
+            With node kinematics, the tuple ends with the segment-base Jacobians,
+            shape ``(self.num_segments, 3, self.num_internal_dofs)``, and the
+            segment-base poses, shape ``(self.num_segments, 3)``.
         """
         # Preserve the exact fixed-base hot path from PR #183. This static
         # branch returns before any augmented operands or shapes are created.
@@ -3842,12 +3929,19 @@ class PlanarPCS(SoftRobot):
             )
             s_local = Xs_scaled - self.L_cum[:-1, None]
 
-            J_tips, Jd_qd_tips, Ad_inv_tips = self._active_J_Jd_local_tips_from_strain(
-                xi,
-                xid,
-                B_xi_segments,
-                qd,
-                convective_only_jd=True,
+            J_tips, Jd_qd_tips, Ad_inv_tips, pose_bases = (
+                self._active_J_Jd_local_tips_from_strain(
+                    xi,
+                    xid,
+                    B_xi_segments,
+                    qd,
+                    convective_only_jd=True,
+                    pose_initial=(
+                        self._base_planar_pose(xi.dtype)
+                        if with_node_kinematics
+                        else None
+                    ),
+                )
             )
             J_bases = jnp.concatenate([jnp.zeros_like(J_tips[:1]), J_tips[:-1]], axis=0)
             Jd_qd_bases = jnp.concatenate(
@@ -3921,6 +4015,8 @@ class PlanarPCS(SoftRobot):
                 Ws_scaled = jnp.concatenate(
                     (Ws_scaled, jnp.ones((self.num_segments, 1))), axis=1
                 )
+            if with_node_kinematics:
+                return Ws_scaled, gravity_ps, J_ps, Jd_qd_ps, J_bases, pose_bases
             return Ws_scaled, gravity_ps, J_ps, Jd_qd_ps
 
         q = self.normalize_configuration(q)
@@ -3951,7 +4047,7 @@ class PlanarPCS(SoftRobot):
         )
         s_local = Xs_scaled - self.L_cum[:-1, None]
 
-        J_tips, Jd_qd_tips, Ad_inv_tips = self._active_J_Jd_local_tips_from_strain(
+        J_tips, Jd_qd_tips, Ad_inv_tips, _ = self._active_J_Jd_local_tips_from_strain(
             xi,
             xid,
             B_xi_segments,
@@ -4073,6 +4169,30 @@ class PlanarPCS(SoftRobot):
             warp_supported=type(self) is PlanarPCS,
         )
 
+    def _dynamics_terms_and_node_kinematics(
+        self, q: Array, qd: Array
+    ) -> tuple[tuple[Array, Array, Array], Array | None, Array | None]:
+        """
+        Return the dynamics terms and the segment-base kinematics of their pass.
+
+        Args:
+            q: Active generalized coordinates, shape ``(self.num_internal_dofs,)``.
+            qd: Active generalized velocities, shape ``(self.num_internal_dofs,)``.
+
+        Returns:
+            Tuple ``((B, Cqd, G), node_jacobians, node_poses)``. The node entries
+            are ``None`` when the dynamics run on Warp, and when a subclass
+            overrides ``dynamics_terms`` or ``_assemble_dynamics_terms``.
+        """
+        return _dispatch_dynamics_terms_with_node_kinematics(
+            self,
+            q,
+            qd,
+            family=PlanarPCS,
+            capabilities=PCS_DYNAMICS,
+            warp_supported=type(self) is PlanarPCS,
+        )
+
     @eqx.filter_jit
     def _assemble_dynamics_terms(
         self, q: Array, qd: Array
@@ -4094,9 +4214,62 @@ class PlanarPCS(SoftRobot):
             ``(self.num_internal_dofs,)``. ``G`` is the active generalized gravity
             vector with shape ``(self.num_internal_dofs,)``.
         """
-        weights, gravity, jacobians, jacobian_dot_qd = (
-            self._dynamics_integration_kinematics(q, qd)
+        _, gravity, jacobians, jacobian_dot_qd = self._dynamics_integration_kinematics(
+            q, qd
         )
+        return self._assemble_dynamics_terms_from_kinematics(
+            qd, gravity, jacobians, jacobian_dot_qd
+        )
+
+    @eqx.filter_jit
+    def _assemble_dynamics_terms_and_node_kinematics(
+        self, q: Array, qd: Array
+    ) -> tuple[tuple[Array, Array, Array], Array, Array]:
+        """
+        Assemble forward-dynamics terms with the segment-base kinematics of their pass.
+
+        Args:
+            q: Active generalized coordinates, shape ``(self.num_internal_dofs,)``.
+            qd: Active generalized velocities, shape ``(self.num_internal_dofs,)``.
+
+        Returns:
+            Tuple ``((B, Cqd, G), node_jacobians, node_poses)``: the terms of
+            :meth:`_assemble_dynamics_terms`, the body Jacobian at every segment
+            base with shape ``(self.num_segments, 3, self.num_internal_dofs)``,
+            and the planar pose ``[theta, x, y]`` of every segment base with
+            shape ``(self.num_segments, 3)``.
+        """
+        _, gravity, jacobians, jacobian_dot_qd, node_jacobians, node_poses = (
+            self._dynamics_integration_kinematics(q, qd, with_node_kinematics=True)
+        )
+        terms = self._assemble_dynamics_terms_from_kinematics(
+            qd, gravity, jacobians, jacobian_dot_qd
+        )
+        return terms, node_jacobians, node_poses
+
+    def _assemble_dynamics_terms_from_kinematics(
+        self,
+        qd: Array,
+        gravity: Array,
+        jacobians: Array,
+        jacobian_dot_qd: Array,
+    ) -> tuple[Array, Array, Array]:
+        """
+        Contract sample kinematics into the forward-dynamics terms.
+
+        The samples of each segment are its quadrature points, followed by its
+        tip when the robot has custom inertia. :attr:`weighted_inertias` holds
+        the matching weighted spatial inertias.
+
+        Args:
+            qd: Active generalized velocities, shape ``(self.num_internal_dofs,)``.
+            gravity: Local gravity at the samples.
+            jacobians: Body Jacobians at the samples.
+            jacobian_dot_qd: Convective contraction ``Jd @ qd`` at the samples.
+
+        Returns:
+            Tuple ``(B, Cqd, G)`` as returned by :meth:`_assemble_dynamics_terms`.
+        """
         inertia = jnp.zeros(
             (self.num_velocities, self.num_velocities), dtype=jacobians.dtype
         )

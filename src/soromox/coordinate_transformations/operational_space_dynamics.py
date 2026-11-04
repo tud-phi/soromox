@@ -4,6 +4,7 @@ import equinox as eqx
 from jax import Array, vmap
 from jax import numpy as jnp
 
+from soromox.systems.model_terms import ModelTerms
 from soromox.systems.soft_robot import SoftRobot
 from soromox.utils.geometry.errors import (
     angle_geodesic_error,
@@ -455,7 +456,9 @@ class OperationalSpaceDynamics(eqx.Module):
         return B_task_pose
 
     @eqx.filter_jit
-    def _stacked_jacobian_full(self, q: Array) -> Array:
+    def _stacked_jacobian_full(
+        self, q: Array, model_terms: ModelTerms | None = None
+    ) -> Array:
         """
         Compute the full stacked Jacobian for all points (before task selection).
 
@@ -467,12 +470,20 @@ class OperationalSpaceDynamics(eqx.Module):
 
         Args:
             q: Generalized coordinates of shape (num_dofs,).
+            model_terms: Optional model terms of the robot at ``q``. When they hold
+                node kinematics, the robot evaluates the Jacobians from them.
 
         Returns:
             J_full: Stacked Jacobian of shape (n_points * n_velocity_dim, num_dofs).
         """
-        # Use batched method from the robot
-        J_ps = self.fixed_base_robot.jacobian_abscissa_batched(q, self.s_ps)
+        # Use batched method from the robot. Only robots whose terms hold node
+        # kinematics accept the model_terms keyword (PlanarPCS and GVS).
+        if model_terms is not None and model_terms.node_jacobians is not None:
+            J_ps = self.fixed_base_robot.jacobian_abscissa_batched(
+                q, self.s_ps, model_terms=model_terms
+            )
+        else:
+            J_ps = self.fixed_base_robot.jacobian_abscissa_batched(q, self.s_ps)
         # J_ps has shape (n_points, n_velocity_dim, num_dofs)
 
         # Stack to get (n_points * n_velocity_dim, num_dofs)
@@ -810,7 +821,9 @@ class OperationalSpaceDynamics(eqx.Module):
         return self.B_task_pose.T @ pose_full
 
     @eqx.filter_jit
-    def operational_space_poses(self, q: Array) -> Array:
+    def operational_space_poses(
+        self, q: Array, *, model_terms: ModelTerms | None = None
+    ) -> Array:
         """
         Compute the FULL operational space poses without task selection.
 
@@ -829,6 +842,8 @@ class OperationalSpaceDynamics(eqx.Module):
 
         Args:
             q: Generalized coordinates of shape (num_dofs,).
+            model_terms: Optional model terms of the robot at ``q``. When they hold
+                node kinematics, the robot evaluates the poses from them.
 
         Returns:
             poses: Full operational space poses of shape (n_points * n_pose_dim,).
@@ -838,10 +853,16 @@ class OperationalSpaceDynamics(eqx.Module):
             compute_pose_error: Returns full pose error.
             compute_task_pose_error: Returns task-selected pose error.
         """
-        # Compute forward kinematics at all points
-        fk_results = self.fixed_base_robot.forward_kinematics_abscissa_batched(
-            q, self.s_ps
-        )
+        # Compute forward kinematics at all points. Only robots whose terms hold
+        # node kinematics accept the model_terms keyword (PlanarPCS and GVS).
+        if model_terms is not None and model_terms.node_poses is not None:
+            fk_results = self.fixed_base_robot.forward_kinematics_abscissa_batched(
+                q, self.s_ps, model_terms=model_terms
+            )
+        else:
+            fk_results = self.fixed_base_robot.forward_kinematics_abscissa_batched(
+                q, self.s_ps
+            )
 
         # Extract pose vectors from forward kinematics results
         poses = vmap(self._extract_pose_from_fk)(fk_results)
@@ -874,7 +895,7 @@ class OperationalSpaceDynamics(eqx.Module):
         return J @ qd
 
     @eqx.filter_jit
-    def jacobian(self, q: Array) -> Array:
+    def jacobian(self, q: Array, *, model_terms: ModelTerms | None = None) -> Array:
         """
         Compute the operational space Jacobian (with task selection applied).
 
@@ -887,11 +908,13 @@ class OperationalSpaceDynamics(eqx.Module):
 
         Args:
             q: Generalized coordinates of shape (num_dofs,).
+            model_terms: Optional model terms of the robot at ``q``. When they hold
+                node kinematics, the robot evaluates the Jacobian from them.
 
         Returns:
             J: Operational space Jacobian of shape (n_operational_space, num_dofs).
         """
-        J_full = self._stacked_jacobian_full(q)
+        J_full = self._stacked_jacobian_full(q, model_terms)
         # Apply task selection: J = B_task^T @ J_full
         J = self.B_task.T @ J_full
         return J

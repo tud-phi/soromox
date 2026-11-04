@@ -331,6 +331,62 @@ def dispatch_dynamics_terms(
     return jax.vmap(warp_evaluator, in_axes=(None, 0, 0))(model, q, qd)
 
 
+def _dispatch_dynamics_terms_with_node_kinematics(
+    model: DynamicsModel,
+    q: Array,
+    qd: Array,
+    *,
+    family: type,
+    capabilities: DynamicsCapabilities,
+    warp_supported: bool = True,
+) -> tuple[DynamicsTerms, Array | None, Array | None]:
+    """Invoke one system's dynamics assembly together with its node kinematics.
+
+    The JAX assembly returns, from the same pass, the body Jacobians and poses
+    at the nodes of its kinematic recurrence. The Warp executors return only
+    the dynamics terms, so the node kinematics are ``None`` when Warp is
+    selected. The pass would bypass a subclass's ``dynamics_terms`` or
+    ``_assemble_dynamics_terms``, so a model whose class overrides either
+    method of ``family`` gets its terms from its own ``dynamics_terms`` and no
+    node kinematics.
+
+    Args:
+        model: Fixed-base system implementing
+            ``_assemble_dynamics_terms_and_node_kinematics`` for one environment.
+        q: Generalized coordinates with shape ``(num_coordinates,)``.
+        qd: Generalized velocities with shape ``(num_velocities,)``.
+        family: System class whose dynamics pass provides the node kinematics.
+        capabilities: Static support declared for the system family.
+        warp_supported: Whether this concrete model instance can use the family
+            Warp executor.
+
+    Returns:
+        Tuple ``((B, Cqd, G), node_jacobians, node_poses)``.
+    """
+    if any(
+        getattr(type(model), name) is not getattr(family, name)
+        for name in ("dynamics_terms", "_assemble_dynamics_terms")
+    ):
+        return model.dynamics_terms(q, qd), None, None
+    selected = _select_backend(
+        model,
+        None,
+        capabilities,
+        warp_supported=warp_supported,
+    )
+    if selected == "jax":
+        return model._assemble_dynamics_terms_and_node_kinematics(q, qd)
+    terms = dispatch_dynamics_terms(
+        model,
+        q,
+        qd,
+        backend=None,
+        capabilities=capabilities,
+        warp_supported=warp_supported,
+    )
+    return terms, None, None
+
+
 def _kinematics_result(
     model: KinematicsModel,
     q: Array,

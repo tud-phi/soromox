@@ -7,6 +7,7 @@ import jax
 from jax import Array
 from jax import numpy as jnp
 
+from soromox.systems.model_terms import ModelTerms
 from soromox.systems.soft_robot import SoftRobot
 
 if TYPE_CHECKING:
@@ -368,7 +369,9 @@ class ActuationSpaceDynamics(eqx.Module):
     # =========================================================================
 
     @eqx.filter_jit
-    def inertia_matrix(self, q: Array) -> Array:
+    def inertia_matrix(
+        self, q: Array, *, model_terms: ModelTerms | None = None
+    ) -> Array:
         """
         Compute the actuation space inertia matrix.
 
@@ -380,12 +383,18 @@ class ActuationSpaceDynamics(eqx.Module):
 
         Args:
             q: Generalized coordinates of shape (num_dofs,).
+            model_terms: Optional model terms of the robot at ``q`` (see
+                :meth:`SoftRobot.model_terms`). When given, the robot quantities
+                at ``q`` are read from them instead of being computed.
 
         Returns:
             M_y: Actuation space inertia matrix of shape (num_dofs, num_dofs).
         """
         J_inv = self.jacobian_inverse(q)
-        M = self.fixed_base_robot.inertia_matrix(q)
+        if model_terms is None:
+            M = self.fixed_base_robot.inertia_matrix(q)
+        else:
+            M = model_terms.inertia_matrix
 
         # M_y = J^{-T} @ M @ J^{-1}
         M_y = J_inv.T @ M @ J_inv
@@ -406,6 +415,9 @@ class ActuationSpaceDynamics(eqx.Module):
             - M is the configuration space inertia matrix
             - C is the configuration space Coriolis matrix
 
+        Since M_y = J_y^{-T} @ M @ J_y^{-1}, the inertia matrix cancels, and the
+        matrix is evaluated as eta_y = J_y^{-T} @ C @ J_y^{-1}.
+
         Args:
             q: Generalized coordinates of shape (num_dofs,).
             qd: Generalized velocities of shape (num_dofs,).
@@ -413,17 +425,11 @@ class ActuationSpaceDynamics(eqx.Module):
         Returns:
             eta_y: Actuation space Coriolis matrix of shape (num_dofs, num_dofs).
         """
-        J = self.jacobian(q)
-        J_inv = jnp.linalg.inv(J)
-        M = self.fixed_base_robot.inertia_matrix(q)
-        M_inv = jnp.linalg.inv(M)
+        J_inv = self.jacobian_inverse(q)
         C = self.fixed_base_robot.coriolis_matrix(q, qd)
 
-        # Actuation space inertia
-        M_y = J_inv.T @ M @ J_inv
-
-        # Coriolis matrix: eta_y = M_y @ (J @ M^{-1} @ C) @ J^{-1}
-        eta_y = M_y @ (J @ M_inv @ C) @ J_inv
+        # eta_y = M_y @ (J @ M^{-1} @ C) @ J^{-1} = J^{-T} @ C @ J^{-1}
+        eta_y = J_inv.T @ C @ J_inv
 
         return eta_y
 
@@ -449,7 +455,9 @@ class ActuationSpaceDynamics(eqx.Module):
         return eta_y @ yd
 
     @eqx.filter_jit
-    def damping_matrix(self, q: Array) -> Array:
+    def damping_matrix(
+        self, q: Array, *, model_terms: ModelTerms | None = None
+    ) -> Array:
         """
         Compute the actuation space damping matrix.
 
@@ -460,12 +468,18 @@ class ActuationSpaceDynamics(eqx.Module):
 
         Args:
             q: Generalized coordinates of shape (num_dofs,).
+            model_terms: Optional model terms of the robot at ``q`` (see
+                :meth:`SoftRobot.model_terms`). When given, the robot quantities
+                at ``q`` are read from them instead of being computed.
 
         Returns:
             D_y: Actuation space damping matrix of shape (num_dofs, num_dofs).
         """
         J_inv = self.jacobian_inverse(q)
-        D = self.fixed_base_robot.damping_matrix(q)
+        if model_terms is None:
+            D = self.fixed_base_robot.damping_matrix(q)
+        else:
+            D = model_terms.damping_matrix
 
         # D_y = J^{-T} @ D @ J^{-1}
         D_y = J_inv.T @ D @ J_inv
@@ -497,7 +511,9 @@ class ActuationSpaceDynamics(eqx.Module):
         return J_inv.T @ D @ qd
 
     @eqx.filter_jit
-    def elastic_force(self, q: Array) -> Array:
+    def elastic_force(
+        self, q: Array, *, model_terms: ModelTerms | None = None
+    ) -> Array:
         """
         Compute the actuation space elastic force.
 
@@ -508,17 +524,25 @@ class ActuationSpaceDynamics(eqx.Module):
 
         Args:
             q: Generalized coordinates of shape (num_dofs,).
+            model_terms: Optional model terms of the robot at ``q`` (see
+                :meth:`SoftRobot.model_terms`). When given, the robot quantities
+                at ``q`` are read from them instead of being computed.
 
         Returns:
             tau_el_y: Actuation space elastic force of shape (num_dofs,).
         """
         J_inv = self.jacobian_inverse(q)
-        tau_el = self.fixed_base_robot.elastic_force(q)
+        if model_terms is None:
+            tau_el = self.fixed_base_robot.elastic_force(q)
+        else:
+            tau_el = model_terms.elastic_force
 
         return J_inv.T @ tau_el
 
     @eqx.filter_jit
-    def gravitational_force(self, q: Array) -> Array:
+    def gravitational_force(
+        self, q: Array, *, model_terms: ModelTerms | None = None
+    ) -> Array:
         """
         Compute the actuation space gravitational force.
 
@@ -529,12 +553,18 @@ class ActuationSpaceDynamics(eqx.Module):
 
         Args:
             q: Generalized coordinates of shape (num_dofs,).
+            model_terms: Optional model terms of the robot at ``q`` (see
+                :meth:`SoftRobot.model_terms`). When given, the robot quantities
+                at ``q`` are read from them instead of being computed.
 
         Returns:
             G_y: Actuation space gravitational force of shape (num_dofs,).
         """
         J_inv = self.jacobian_inverse(q)
-        G = self.fixed_base_robot.gravitational_force(q)
+        if model_terms is None:
+            G = self.fixed_base_robot.gravitational_force(q)
+        else:
+            G = model_terms.gravitational_force
 
         return J_inv.T @ G
 

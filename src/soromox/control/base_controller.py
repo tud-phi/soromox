@@ -8,6 +8,7 @@ from jax import Array
 from jax import numpy as jnp
 
 from soromox.control.reference_trajectory import ReferenceTrajectory
+from soromox.systems.model_terms import ModelTerms
 from soromox.systems.soft_robot import SoftRobot
 from soromox.systems.system_state import SystemState
 
@@ -85,6 +86,26 @@ class BaseController(eqx.Module, ABC):
             )
         return dynamics, q_internal, qd_internal
 
+    def _resolve_model_terms(self, system_state: SystemState) -> ModelTerms:
+        """
+        Return the model terms at the current state.
+
+        These are the terms that the state carries, such as those that the
+        computed-torque tracker passes to both of its terms, or else the terms of
+        the controller's own model: the fixed-base robot of
+        :meth:`_controller_robot_and_state`, mounted at the base pose.
+
+        Args:
+            system_state: Current state of the system.
+
+        Returns:
+            The model terms at ``(system_state.t, system_state.y)``.
+        """
+        if system_state.model_terms is not None:
+            return system_state.model_terms
+        robot, q, qd = self._controller_robot_and_state(system_state.y)
+        return robot._model_terms(q, qd)
+
     @staticmethod
     def _apply_gain(gain: Array, x: Array) -> Array:
         """
@@ -132,6 +153,10 @@ class BaseController(eqx.Module, ABC):
                 - u (Optional[Array]): Previous actuation input (optional)
                 - control_state (Optional[Any]): Internal controller state (optional)
                 - environment_state (Optional[Any]): Environment state (optional)
+                - model_terms (Optional[ModelTerms]): Model terms at the current
+                  state (optional). Model-based controllers read their quantities
+                  at the current state from them; without them, they compute the
+                  terms of their own model (see ``_resolve_model_terms``).
 
         Returns:
             u_control (Array): The control input to apply, shape (num_actuators,).

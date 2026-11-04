@@ -339,6 +339,13 @@ also keeps derivative-based APIs consistent. If you override an optimized
 `dynamics_terms(q, qd)` method, its returned `Cqd` vector must equal the
 convective force `C(q, qd) @ qd` for this same convention.
 
+**Model terms:** `model_terms(t, y)` reads the dynamics terms through the hook
+`_dynamics_terms_and_node_kinematics(q, qd)`, which PlanarPCS and GVS override to
+return the node kinematics of the same pass. A subclass that overrides
+`dynamics_terms` or `_assemble_dynamics_terms` gets its terms from its own
+`dynamics_terms`, without node kinematics. The terms hold quantities at
+`(q, qd)` only.
+
 #### 6. Implement Energy Methods (Optional but Recommended)
 
 Energy methods are useful for analysis and energy-based control:
@@ -946,6 +953,13 @@ class ClosedFormModelBasedController(BaseController):
         # Default: returns zero (override in subclass)
         return jnp.zeros((self.robot.num_actuators,)), None
 ```
+
+A term method reads its quantities at the current state with
+`self._resolve_model_terms(system_state)`, which returns the terms in
+`system_state.model_terms` or computes those of the controller's own model. A
+controller whose two term methods both read the terms computes them once in
+`__call__` and passes them in `system_state.model_terms`, as the computed-torque
+tracker does (see [Model Terms](../api/control/index.md#model-terms)).
 
 ### Step-by-Step: Implementing a Custom Controller
 

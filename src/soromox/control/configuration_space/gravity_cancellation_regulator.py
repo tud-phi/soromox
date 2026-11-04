@@ -134,7 +134,8 @@ class GravityCancellationRegulator(PIDController):
         q_des = self.reference_trajectory.x_des_fn(t)
 
         # Compute gravitational force at current configuration
-        tau_gravity = robot.gravitational_force(q)
+        model_terms = self._resolve_model_terms(system_state)
+        tau_gravity = model_terms.gravitational_force
 
         # Compute elastic force at desired configuration
         tau_elastic = robot.elastic_force(q_des)
@@ -143,7 +144,7 @@ class GravityCancellationRegulator(PIDController):
         tau_model = tau_gravity + tau_elastic
 
         # Get the actuation matrix at current configuration
-        A = robot.actuation_matrix(q)
+        A = model_terms.actuation_matrix
 
         # Compute actuator input using inverse (or pseudo-inverse) of actuation matrix
         # Use standard inverse if A is square, otherwise use pseudo-inverse

@@ -142,19 +142,20 @@ class PotentialCancellationRegulator(PIDController):
         y = system_state.y
 
         # Get current configuration
-        robot, q, _ = self._controller_robot_and_state(y)
+        _, q, _ = self._controller_robot_and_state(y)
 
         # Compute gravitational force at current configuration
-        tau_gravity = robot.gravitational_force(q)
+        model_terms = self._resolve_model_terms(system_state)
+        tau_gravity = model_terms.gravitational_force
 
         # Compute elastic force at current configuration
-        tau_elastic = robot.elastic_force(q)
+        tau_elastic = model_terms.elastic_force
 
         # Total generalized torque for potential cancellation
         tau_model = tau_gravity + tau_elastic
 
         # Get the actuation matrix at current configuration
-        A = robot.actuation_matrix(q)
+        A = model_terms.actuation_matrix
 
         # Compute actuator input using inverse (or pseudo-inverse) of actuation matrix
         # Use standard inverse if A is square, otherwise use pseudo-inverse

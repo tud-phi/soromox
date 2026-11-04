@@ -32,6 +32,7 @@ from soromox.execution import (
     dispatch_kinematics_abscissa_batched,
     evaluate_forward_dynamics,
 )
+from soromox.execution.dispatch import _dispatch_dynamics_terms_with_node_kinematics
 from soromox.systems.components import (
     ContinuumLinkParams,
     IsotropicMaterialParams,
@@ -83,6 +84,7 @@ from soromox.systems.gvs.structures import (
     GVSStrainBasisStructure,
     GVSStructure,
 )
+from soromox.systems.model_terms import ModelTerms
 from soromox.systems.soft_robot import SoftRobot
 from soromox.utils.geometry import poses
 from soromox.utils.integration import gauss_quadrature
@@ -2480,6 +2482,7 @@ class GVS(SoftRobot):
         s_ps: Array,
         *,
         backend: ExecutionBackend | None = None,
+        model_terms: ModelTerms | None = None,
     ) -> Array:
         """Compute SE(3) poses at a batch of curvilinear abscissae.
 
@@ -2488,11 +2491,19 @@ class GVS(SoftRobot):
             s_ps: Curvilinear abscissae with shape ``(N,)``.
             backend: Optional execution override. ``None`` uses the model's
                 configured backend.
+            model_terms: Optional model terms at ``q``. When they hold node
+                kinematics, each pose follows from the transform at the last
+                integration node at or before it with one partial Magnus cell,
+                and ``backend`` is not used.
 
         Returns:
             Homogeneous transforms with shape ``(N, 4, 4)``.
         """
 
+        if model_terms is not None and model_terms.node_poses is not None:
+            return self._forward_kinematics_abscissa_batched(
+                q, s_ps, node_poses=model_terms.node_poses
+            )
         return dispatch_kinematics_abscissa_batched(
             self,
             q,
@@ -2845,19 +2856,28 @@ class GVS(SoftRobot):
         return self._forward_kinematics_gauss(q_gathered)[:, -1]
 
     @eqx.filter_jit
-    def _forward_kinematics_abscissa_batched(self, q: Array, s_ps: Array) -> Array:
+    def _forward_kinematics_abscissa_batched(
+        self, q: Array, s_ps: Array, node_poses: Array | None = None
+    ) -> Array:
         """
         Compute the forward kinematics of the robot at a batch of points along the backbone.
 
         Args:
             q (Array): generalized coordinates of shape (num_active_strains,).
             s_ps (Array): points along the robot arclength in the interval [0, L], shape (N,).
+            node_poses (Array | None): transforms at the integration nodes with
+                shape (num_segments, max_num_integration_points, 4, 4), as the
+                dynamics pass forms them. If None, they are computed here.
 
         Returns:
             Array: shape (N, 4, 4) with the homogeneous transforms evaluated at each ``s``.
         """
         q_gathered = self._min_size_gathered(q)
-        g_gauss = self._forward_kinematics_gauss(q_gathered)
+        g_gauss = (
+            self._forward_kinematics_gauss(q_gathered)
+            if node_poses is None
+            else node_poses
+        )
         s_flat = jnp.asarray(s_ps).reshape(-1)
 
         def fk_single(s_val: Array) -> Array:
@@ -2886,6 +2906,11 @@ class GVS(SoftRobot):
             distances = jnp.abs(Xs_i - x_norm)
             closest_idx = jnp.argmin(distances)
             base_idx = jnp.minimum(closest_idx, cell_idx)
+            # A point at a node starts from that node, and its partial cell is
+            # empty; at a segment tip, the cell start would redo the last cell.
+            base_idx = jnp.where(
+                jnp.min(distances) <= self.global_eps, closest_idx, base_idx
+            )
 
             g_base = g_nodes[base_idx]
             x_base = Xs_i[base_idx]
@@ -3547,19 +3572,27 @@ class GVS(SoftRobot):
         return Js
 
     @eqx.filter_jit
-    def jacobian_bodyframe_abscissa_batched(self, q: Array, s_ps: Array) -> Array:
+    def jacobian_bodyframe_abscissa_batched(
+        self, q: Array, s_ps: Array, *, model_terms: ModelTerms | None = None
+    ) -> Array:
         """
         Compute the body-frame Jacobian at multiple arclength locations.
 
         Args:
             q (Array): generalized coordinates of shape (num_active_strains,).
             s_ps (Array): points along the backbone in [0, L], shape (N,).
+            model_terms (ModelTerms | None): model terms at q. When they hold node
+                kinematics, each Jacobian follows from the Jacobian at the last
+                integration node at or before it with one partial Magnus cell.
 
         Returns:
             Array: Jacobians with shape (N, 6, num_active_strains).
         """
         q_gathered = self._min_size_gathered(q)
-        J_gauss_full = self._jacobian_gauss(q_gathered)
+        node_jacobians = None if model_terms is None else model_terms.node_jacobians
+        J_gauss_full = (
+            self._jacobian_gauss(q_gathered) if node_jacobians is None else None
+        )
 
         s_flat = jnp.asarray(s_ps).reshape(-1)
 
@@ -3575,7 +3608,7 @@ class GVS(SoftRobot):
             )
 
             Xs_i = self.integration_points[i]
-            J_nodes = J_gauss_full[i]
+            J_nodes = None if J_gauss_full is None else J_gauss_full[i]
             q_link = q_gathered[i, 1]
             xi_ref_Z1_i = self.xi_ref_Z1[i]
             xi_ref_Z2_i = self.xi_ref_Z2[i]
@@ -3589,8 +3622,18 @@ class GVS(SoftRobot):
             distances = jnp.abs(Xs_i - x_norm)
             closest_idx = jnp.argmin(distances)
             base_idx = jnp.minimum(closest_idx, cell_idx)
+            # A point at a node starts from that node, and its partial cell is
+            # empty; at a segment tip, the cell start would redo the last cell.
+            base_idx = jnp.where(
+                jnp.min(distances) <= self.global_eps, closest_idx, base_idx
+            )
 
-            J_base_flat = J_nodes[base_idx]
+            if J_nodes is not None:
+                J_base_flat = J_nodes[base_idx]
+            else:
+                # The pass keeps active coordinates; the partial cell acts on the
+                # padded layout, which the active-DOF basis maps one to one.
+                J_base_flat = node_jacobians[i, base_idx] @ self.active_dof_map.T
             J_blocks_base = self._flat_jacobian_to_blocks(J_base_flat)
             x_base = Xs_i[base_idx]
 
@@ -3685,6 +3728,11 @@ class GVS(SoftRobot):
             distances = jnp.abs(Xs_i - x_norm)
             closest_idx = jnp.argmin(distances)
             base_idx = jnp.minimum(closest_idx, cell_idx)
+            # A point at a node starts from that node, and its partial cell is
+            # empty; at a segment tip, the cell start would redo the last cell.
+            base_idx = jnp.where(
+                jnp.min(distances) <= self.global_eps, closest_idx, base_idx
+            )
 
             J_base_flat = J_nodes[base_idx]
             Jd_base_flat = Jd_nodes[base_idx]
@@ -3986,26 +4034,43 @@ class GVS(SoftRobot):
         return vmap(self._body_jacobian_to_inertial)(g_tips, J_local_tips)
 
     @eqx.filter_jit
-    def _jacobian_inertialframe_abscissa_batched(self, q: Array, s_ps: Array) -> Array:
+    def _jacobian_inertialframe_abscissa_batched(
+        self, q: Array, s_ps: Array, model_terms: ModelTerms | None = None
+    ) -> Array:
         """
         Compute the inertial-frame Jacobian at multiple arclength locations.
 
         Args:
             q (Array): generalized coordinates of shape (num_active_strains,).
             s_ps (Array): points along the backbone in [0, L], shape (N,).
+            model_terms (ModelTerms | None): model terms at q, whose node
+                kinematics are used when present.
 
         Returns:
             Array: Jacobians with shape (N, 6, num_active_strains).
         """
-        J_body = self.jacobian_bodyframe_abscissa_batched(
-            q, s_ps
-        )  # (N, 6, num_active_strains)
-        g_ps = self._forward_kinematics_abscissa_batched(q, s_ps)  # (N, 4, 4)
+        # Without node kinematics, the calls keep the signatures without the terms,
+        # so subclasses that override these methods keep working and the jitted
+        # methods are traced once.
+        if model_terms is None or model_terms.node_poses is None:
+            J_body = self.jacobian_bodyframe_abscissa_batched(
+                q, s_ps
+            )  # (N, 6, num_active_strains)
+            g_ps = self._forward_kinematics_abscissa_batched(q, s_ps)  # (N, 4, 4)
+        else:
+            J_body = self.jacobian_bodyframe_abscissa_batched(
+                q, s_ps, model_terms=model_terms
+            )
+            g_ps = self._forward_kinematics_abscissa_batched(
+                q, s_ps, node_poses=model_terms.node_poses
+            )
 
         return vmap(self._body_jacobian_to_inertial)(g_ps, J_body)
 
     @eqx.filter_jit
-    def jacobian_abscissa_batched(self, q: Array, s_ps: Array) -> Array:
+    def jacobian_abscissa_batched(
+        self, q: Array, s_ps: Array, *, model_terms: ModelTerms | None = None
+    ) -> Array:
         """
         Compute inertial-frame Jacobians at multiple arclength locations.
 
@@ -4017,6 +4082,10 @@ class GVS(SoftRobot):
                 ``(num_active_strains,)``.
             s_ps (Array): arclength locations in ``[0, self.segment_lengths]``, shape
                 ``(N,)``.
+            model_terms (ModelTerms | None): model terms at q. When they hold node
+                kinematics, the pose and the body Jacobian at each location follow
+                from the last integration node at or before it with one partial
+                Magnus cell.
 
         Returns:
             J_global (Array): inertial-frame Jacobians with shape
@@ -4034,7 +4103,11 @@ class GVS(SoftRobot):
             return self._floating_inertial_jacobians(
                 q, relative_poses, jacobians_internal
             )
-        return self._jacobian_inertialframe_abscissa_batched(q, s_ps)
+        if model_terms is None or model_terms.node_poses is None:
+            return self._jacobian_inertialframe_abscissa_batched(q, s_ps)
+        return self._jacobian_inertialframe_abscissa_batched(
+            q, s_ps, model_terms=model_terms
+        )
 
     @eqx.filter_jit
     def _jacobian_time_derivative_gauss(
@@ -5027,6 +5100,29 @@ class GVS(SoftRobot):
             capabilities=GVS_DYNAMICS,
         )
 
+    def _dynamics_terms_and_node_kinematics(
+        self, q: Array, qd: Array
+    ) -> tuple[tuple[Array, Array, Array], Array | None, Array | None]:
+        """
+        Return the dynamics terms and the integration-node kinematics of their pass.
+
+        Args:
+            q: Active generalized coordinates, shape ``(self.num_internal_dofs,)``.
+            qd: Active generalized velocities, shape ``(self.num_internal_dofs,)``.
+
+        Returns:
+            Tuple ``((B, Cqd, G), node_jacobians, node_poses)``. The node entries
+            are ``None`` when the dynamics run on Warp, and when a subclass
+            overrides ``dynamics_terms`` or ``_assemble_dynamics_terms``.
+        """
+        return _dispatch_dynamics_terms_with_node_kinematics(
+            self,
+            q,
+            qd,
+            family=GVS,
+            capabilities=GVS_DYNAMICS,
+        )
+
     def _assemble_dynamics_terms_impl(
         self,
         q: Array,
@@ -5036,7 +5132,8 @@ class GVS(SoftRobot):
         base_jacobian_dot_velocity: Array | None = None,
         base_velocity: Array | None = None,
         base_gravity: Array | None = None,
-    ) -> tuple[Array, Array, Array]:
+        with_node_kinematics: bool = False,
+    ) -> tuple[Array, Array, Array] | tuple[tuple[Array, Array, Array], Array, Array]:
         """
         Assemble forward-dynamics terms with fixed-shape segment recurrences.
 
@@ -5060,13 +5157,24 @@ class GVS(SoftRobot):
                 ``(self.num_internal_dofs,)``.
             qd: Active generalized velocities, shape
                 ``(self.num_internal_dofs,)``.
+            with_node_kinematics: If true, the recurrences also compose the
+                homogeneous transform from the joint and cell transforms they
+                evaluate, and the body Jacobian and transform at every
+                integration node are returned. Supported for a fixed base.
 
         Returns:
             Tuple ``(B, Cqd, G)``. ``B`` is the active inertia matrix with shape
             ``(self.num_internal_dofs, self.num_internal_dofs)``. ``Cqd`` is the
             active convective force vector with shape ``(self.num_internal_dofs,)``.
             ``G`` is the active generalized gravity vector with shape
-            ``(self.num_internal_dofs,)``.
+            ``(self.num_internal_dofs,)``. With node kinematics, the tuple
+            ``((B, Cqd, G), node_jacobians, node_poses)`` instead: the body
+            Jacobians, shape ``(self.num_segments,
+            self.max_num_integration_points, 6, self.num_internal_dofs)``, and
+            the transforms, shape ``(self.num_segments,
+            self.max_num_integration_points, 4, 4)``, at the integration nodes of
+            every segment (the base after the joint, the interior Gauss points
+            and the tip).
         """
         dtype = q.dtype
         floating = base_jacobian is not None
@@ -5079,9 +5187,9 @@ class GVS(SoftRobot):
 
         def evaluate_joint(
             segment_index: Array,
-        ) -> tuple[Array, Array, Array, Array, Array]:
+        ) -> tuple[tuple[Array, Array, Array, Array, Array], Array | None]:
             (
-                _,
+                joint_transform,
                 adjoint_inverse,
                 adjoint_inverse_dot,
                 tangent_basis,
@@ -5093,28 +5201,29 @@ class GVS(SoftRobot):
                 q_blocks[segment_index, 0],
                 qd_blocks[segment_index, 0],
             )
-            return (
+            terms = (
                 adjoint_inverse,
                 adjoint_inverse_dot,
                 tangent_basis,
                 tangent_basis_dot,
                 velocity,
             )
+            return terms, joint_transform if with_node_kinematics else None
 
-        joint_terms = jax.vmap(evaluate_joint)(segment_indices)
+        joint_terms, joint_transforms = jax.vmap(evaluate_joint)(segment_indices)
 
         def evaluate_segment_cells(
             segment_index: Array,
-        ) -> tuple[Array, Array, Array, Array, Array]:
+        ) -> tuple[tuple[Array, Array, Array, Array, Array], Array | None]:
             def evaluate_cell(
                 cell_index: Array,
-            ) -> tuple[Array, Array, Array, Array, Array]:
+            ) -> tuple[tuple[Array, Array, Array, Array, Array], Array | None]:
                 cell_width = (
                     self.integration_points[segment_index, cell_index + 1]
                     - self.integration_points[segment_index, cell_index]
                 )
                 (
-                    _,
+                    cell_transform,
                     tangent,
                     tangent_dot,
                     adjoint_inverse,
@@ -5131,19 +5240,24 @@ class GVS(SoftRobot):
                     self.xi_ref_Z1[segment_index, cell_index],
                     self.xi_ref_Z2[segment_index, cell_index],
                 )
-                return (
+                terms = (
                     tangent,
                     tangent_dot,
                     adjoint_inverse,
                     magnus_basis,
                     magnus_basis_dot,
                 )
+                return terms, cell_transform if with_node_kinematics else None
 
             return jax.vmap(evaluate_cell)(cell_indices)
 
-        cell_terms = jax.vmap(evaluate_segment_cells)(segment_indices)
-        interior_cell_terms = jax.tree.map(lambda value: value[:, :-1], cell_terms)
-        tip_cell_terms = jax.tree.map(lambda value: value[:, -1], cell_terms)
+        cell_terms, cell_transforms = jax.vmap(evaluate_segment_cells)(segment_indices)
+        interior_cell_terms, interior_cell_transforms = jax.tree.map(
+            lambda value: value[:, :-1], (cell_terms, cell_transforms)
+        )
+        tip_cell_terms, tip_cell_transforms = jax.tree.map(
+            lambda value: value[:, -1], (cell_terms, cell_transforms)
+        )
         custom_inertia = has_custom_inertia(self.params.link)
 
         jacobian_initial = (
@@ -5228,14 +5342,20 @@ class GVS(SoftRobot):
             return jnp.zeros_like(jacobian_initial).at[:, indices].add(masked_basis)
 
         def body_segment(
-            carry: tuple[Array, Array, Array, Array, Array, Array, Array],
+            carry: tuple[Array, Array, Array, Array, Array, Array, Array, Array | None],
             segment_input: tuple[
                 Array,
                 tuple[Array, Array, Array, Array, Array],
                 tuple[Array, Array, Array, Array, Array],
                 tuple[Array, Array, Array, Array, Array],
+                Array | None,
+                Array | None,
+                Array | None,
             ],
-        ) -> tuple[tuple[Array, Array, Array, Array, Array, Array, Array], None]:
+        ) -> tuple[
+            tuple[Array, Array, Array, Array, Array, Array, Array, Array | None],
+            tuple[Array, Array] | None,
+        ]:
             (
                 jacobian_tip,
                 jacobian_dot_qd_tip,
@@ -5244,12 +5364,16 @@ class GVS(SoftRobot):
                 inertia,
                 coriolis_qd,
                 gravity_force,
+                pose_tip,
             ) = carry
             (
                 segment_index,
                 joint_terms_i,
                 interior_cell_terms_i,
                 tip_cell_terms_i,
+                joint_transform_i,
+                interior_cell_transforms_i,
+                tip_cell_transform_i,
             ) = segment_input
             (
                 joint_adjoint_inverse,
@@ -5271,6 +5395,7 @@ class GVS(SoftRobot):
             )
             velocity_joint = joint_adjoint_inverse @ (velocity_tip + joint_velocity)
             gravity_joint = joint_adjoint_inverse @ gravity_tip
+            pose_joint = None if pose_tip is None else pose_tip @ joint_transform_i
 
             def advance_cell(
                 kinematics: tuple[Array, Array, Array, Array],
@@ -5315,24 +5440,38 @@ class GVS(SoftRobot):
                 )
 
             def body_cell(
-                kinematics: tuple[Array, Array, Array, Array],
-                local_terms: tuple[Array, Array, Array, Array, Array],
+                cell_carry: tuple[tuple[Array, Array, Array, Array], Array | None],
+                cell_input: tuple[
+                    tuple[Array, Array, Array, Array, Array], Array | None
+                ],
             ) -> tuple[
-                tuple[Array, Array, Array, Array],
-                tuple[Array, Array, Array, Array],
+                tuple[tuple[Array, Array, Array, Array], Array | None],
+                tuple[tuple[Array, Array, Array, Array], Array | None],
             ]:
+                kinematics, pose = cell_carry
+                local_terms, cell_transform = cell_input
                 kinematics_next = advance_cell(kinematics, local_terms)
-                return kinematics_next, kinematics_next
+                pose_next = None if pose is None else pose @ cell_transform
+                return (kinematics_next, pose_next), (kinematics_next, pose_next)
 
-            kinematics_last_quad, quadrature_kinematics = lax.scan(
+            (
+                (kinematics_last_quad, pose_last_quad),
+                (
+                    quadrature_kinematics,
+                    quadrature_poses,
+                ),
+            ) = lax.scan(
                 body_cell,
                 (
-                    jacobian_joint,
-                    jacobian_dot_qd_joint,
-                    velocity_joint,
-                    gravity_joint,
+                    (
+                        jacobian_joint,
+                        jacobian_dot_qd_joint,
+                        velocity_joint,
+                        gravity_joint,
+                    ),
+                    pose_joint,
                 ),
-                interior_cell_terms_i,
+                (interior_cell_terms_i, interior_cell_transforms_i),
             )
             (
                 jacobians,
@@ -5342,6 +5481,23 @@ class GVS(SoftRobot):
             ) = quadrature_kinematics
 
             kinematics_tip = advance_cell(kinematics_last_quad, tip_cell_terms_i)
+            pose_tip_next = (
+                None
+                if pose_last_quad is None
+                else pose_last_quad @ tip_cell_transform_i
+            )
+            # The nodes are the joint, the quadrature points and the tip; read
+            # them before custom inertia appends the tip to the samples.
+            node_kinematics = None
+            if with_node_kinematics:
+                node_kinematics = (
+                    jnp.concatenate(
+                        [jacobian_joint[None], jacobians, kinematics_tip[0][None]]
+                    ),
+                    jnp.concatenate(
+                        [pose_joint[None], quadrature_poses, pose_tip_next[None]]
+                    ),
+                )
             if custom_inertia:
                 jacobians, jacobians_dot_qd, velocities, gravities = jax.tree.map(
                     lambda samples, tip: jnp.concatenate((samples, tip[None]), axis=0),
@@ -5371,7 +5527,8 @@ class GVS(SoftRobot):
                 inertia + inertia_segment,
                 coriolis_qd + coriolis_segment,
                 gravity_force + gravity_segment,
-            ), None
+                pose_tip_next,
+            ), node_kinematics
 
         (
             (
@@ -5382,8 +5539,9 @@ class GVS(SoftRobot):
                 inertia,
                 coriolis_qd,
                 gravity_force,
+                _pose_tip,
             ),
-            _,
+            node_kinematics,
         ) = lax.scan(
             body_segment,
             (
@@ -5394,14 +5552,21 @@ class GVS(SoftRobot):
                 inertia_initial,
                 generalized_vector_initial,
                 generalized_vector_initial,
+                self.g0 if with_node_kinematics else None,
             ),
             (
                 segment_indices,
                 joint_terms,
                 interior_cell_terms,
                 tip_cell_terms,
+                joint_transforms,
+                interior_cell_transforms,
+                tip_cell_transforms,
             ),
         )
+        if with_node_kinematics:
+            node_jacobians, node_poses = node_kinematics
+            return (inertia, coriolis_qd, gravity_force), node_jacobians, node_poses
         return inertia, coriolis_qd, gravity_force
 
     @eqx.filter_jit
@@ -5442,6 +5607,25 @@ class GVS(SoftRobot):
                 base_gravity=base_gravity,
             )
         return self._assemble_dynamics_terms_impl(q, qd)
+
+    @eqx.filter_jit
+    def _assemble_dynamics_terms_and_node_kinematics(
+        self, q: Array, qd: Array
+    ) -> tuple[tuple[Array, Array, Array], Array, Array]:
+        """
+        Assemble fixed-base GVS dynamics with the integration-node kinematics.
+
+        Args:
+            q: Internal generalized coordinates with shape
+                ``(num_internal_dofs,)``.
+            qd: Internal generalized velocities with shape
+                ``(num_internal_dofs,)``.
+
+        Returns:
+            Tuple ``((M, Cv, G), node_jacobians, node_poses)`` as returned by
+            :meth:`_assemble_dynamics_terms_impl` with node kinematics.
+        """
+        return self._assemble_dynamics_terms_impl(q, qd, with_node_kinematics=True)
 
     # ===========================================
     # Dynamical matrices computation

@@ -48,6 +48,11 @@ Describe the delta from the last release, not intermediate development changes.
   [PR #229](https://github.com/tud-phi/soromox/pull/229).
 - Python 3.15 support, with numerical tests and patched Open3D source-build
   and rendering checks in Ubuntu CI.
+- `ModelTerms` and `SoftRobot.model_terms(t, y)`: the model quantities of a
+  fixed-base system at one state, with the node kinematics of PlanarPCS and
+  GVS on the JAX backend, and the optional field `SystemState.model_terms`
+  that carries them to a controller; see
+  [Model Terms](../api/control/index.md#model-terms).
 
 ### Changed
 
@@ -59,12 +64,52 @@ Describe the delta from the last release, not intermediate development changes.
 - Refreshed the numerical and rendering dependency lock for Python 3.15,
   including compatible Viser, `rpds-py`, Matplotlib, `msgspec`, Numba, and
   llvmlite releases.
+- Model-based controllers that use the dynamics at the current state read the
+  quantities of `ModelTerms` from one evaluation per call instead of evaluating
+  them one by one: the computed-torque tracker reads the inertia and actuation
+  matrices once for both of its terms, the synergistic controller evaluates the
+  task Jacobian once and replaces explicit inverses by linear solves, and the
+  impedance control tracker computes the task Jacobian, its time derivative,
+  and the task-space inertia once.
+  `ActuationSpaceDynamics.coriolis_matrix` evaluates the equivalent form
+  `J_y^{-T} C J_y^{-1}` without the inertia matrix. Results change at rounding
+  level.
+- These controllers evaluate the actuation matrix with the backend request of
+  the forward dynamics, so an explicit Warp backend falls back to automatic
+  selection instead of raising for an unsupported operation. The synergistic
+  controller evaluates its model on the mounted fixed-base robot, as the other
+  model-based controllers do, and no longer raises for a floating-base robot.
+- `SynergisticController.__call__` computes the operational-space feedback
+  together with the task Jacobian that it reuses, so an override of
+  `error_based_feedback_term` no longer changes its control input.
+  `ImpedanceControlTracker` computes the task-space inertia, the dynamically
+  consistent pseudoinverse, and the task-space Coriolis term from one task
+  Jacobian instead of calling `OperationalSpaceDynamics.inertia_matrix`,
+  `dynamically_consistent_pseudoinverse`, and `mu_x`.
+- GVS poses, Jacobians and Jacobian time derivatives at a point that lies on an
+  integration node, such as a segment tip, start from that node instead of
+  integrating the last cell again; the results change at rounding level. The
+  Warp kernels keep the previous rule.
 
 ### Performance
+
+- Model-based controllers that read the model at the current state evaluate
+  it once per call. FP64 measurements on an AMD Ryzen Threadripper PRO 5975WX
+  (JAX 0.10.1, two cores per process) used a spatial `PCS` with four segments
+  and Tsit5 at a 0.1 ms step. The nine such controllers ran their continuous
+  closed loops 1.18–2.09× faster, their gradients 1.36–2.09× faster, and
+  their discrete closed loops with a 0.2 ms control period 1.04–1.30× faster;
+  the other six controllers compile to the previous programs.
 
 ### Deprecated
 
 ### Breaking changes
+
+- Custom operational-space dynamics objects used with the impedance control
+  tracker or the synergistic controller must accept the keyword `model_terms`
+  in `jacobian` and `operational_space_poses`, and duck-typed robots used with
+  the controllers that read `ModelTerms` must provide `_model_terms(q, qd)`, as
+  `SoftRobot` does.
 
 - Replaced `Transmission.moment_matrix(...)` with `coordinate_jacobian(...)`
   and `actuation_matrix(...)`, and added `SoftRobot.actuator_coordinate_jacobian(...)`.

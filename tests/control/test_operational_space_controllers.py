@@ -13,22 +13,13 @@ class FakeOperationalSpaceDynamics:
         self.B_task = jnp.eye(2)
 
     def jacobian_and_time_derivative(self, q, qd):
-        return jnp.eye(2), jnp.zeros((2, 2))
+        return jnp.array([[1.0, 0.5], [0.0, 2.0]]), jnp.array([[0.1, 0.0], [0.2, -0.1]])
 
-    def dynamically_consistent_pseudoinverse(self, q):
-        return jnp.eye(2)
-
-    def inertia_matrix(self, q):
-        return self.robot.inertia_matrix(q)
-
-    def operational_space_poses(self, q):
+    def operational_space_poses(self, q, *, model_terms=None):
         return q
 
     def compute_task_pose_error(self, x_full, x_des_full):
         return x_des_full - x_full
-
-    def mu_x(self, q, qd):
-        return jnp.array([[0.0, 1.0], [-1.0, 0.0]])
 
 
 @pytest.mark.parametrize("feedback_linearization", ["full", "partial"])
@@ -58,8 +49,11 @@ def test_impedance_control_tracker_computes_operational_space_control(
     u_control, control_state_dot = controller(state)
 
     q, qd = jnp.split(state.y, 2)
-    J, _ = osd.jacobian_and_time_derivative(q, qd)
-    J_bar = osd.dynamically_consistent_pseudoinverse(q)
+    J, Jd = osd.jacobian_and_time_derivative(q, qd)
+    M_inv = jnp.linalg.inv(robot.inertia_matrix(q))
+    Lambda = jnp.linalg.inv(J @ M_inv @ J.T)
+    J_bar = M_inv @ J.T @ Lambda
+    mu_x = Lambda @ (J @ M_inv @ robot.coriolis_matrix(q, qd) - Jd)
     tau_task_forces = robot.elastic_force(q) + robot.damping_matrix(q) @ qd
     tau_cancel_task = J.T @ (J_bar.T @ tau_task_forces)
     if feedback_linearization == "full":
@@ -67,9 +61,9 @@ def test_impedance_control_tracker_computes_operational_space_control(
     else:
         null_space_projector = jnp.eye(robot.num_internal_dofs) - J_bar @ J
         qd_coriolis = null_space_projector @ qd
-    tau_cancel_coriolis = J.T @ (osd.mu_x(q, qd) @ qd_coriolis)
+    tau_cancel_coriolis = J.T @ (mu_x @ qd_coriolis)
     xdd_des = osd.B_task.T @ reference.xdd_des_fn(state.t)
-    tau_feedforward = J.T @ (osd.inertia_matrix(q) @ xdd_des)
+    tau_feedforward = J.T @ (Lambda @ xdd_des)
     e_x = osd.compute_task_pose_error(q, reference.x_des_fn(state.t))
     ed_x = reference.xd_des_fn(state.t) - J @ qd
     tau_pd = J.T @ (

@@ -1,6 +1,7 @@
 __all__ = ["ComputedTorqueTracker"]
 
 import warnings
+from dataclasses import replace
 from typing import Any
 
 import jax.numpy as jnp
@@ -173,6 +174,25 @@ class ComputedTorqueTracker(ClosedFormModelBasedController):
 
         return scenario
 
+    def __call__(self, system_state: SystemState) -> tuple[Array, Any | None]:
+        """
+        Compute the control input with one evaluation of the model terms.
+
+        Both terms read the inertia and actuation matrices at the current
+        state, so the model terms are computed here once and passed to both,
+        unless the state already carries them.
+
+        Args:
+            system_state: The current state of the system.
+
+        Returns:
+            Tuple ``(u_control, control_state_dot)`` of
+            :meth:`ClosedFormModelBasedController.__call__`.
+        """
+        return super().__call__(
+            replace(system_state, model_terms=self._resolve_model_terms(system_state))
+        )
+
     def model_based_term(self, system_state: SystemState) -> tuple[Array, Any | None]:
         """
         Compute the model-based feedforward control term for computed torque control.
@@ -194,24 +214,27 @@ class ComputedTorqueTracker(ClosedFormModelBasedController):
         y = system_state.y
 
         # Get current configuration and velocity
-        robot, q, qd = self._controller_robot_and_state(y)
+        _, q, qd = self._controller_robot_and_state(y)
 
         # Get desired trajectory at current time
         assert self.reference_trajectory.xdd_des_fn is not None
         qdd_des = self.reference_trajectory.xdd_des_fn(t)
 
-        # Compute the coupled dynamics terms at the current state. The returned
-        # Coriolis term is already contracted with the supplied velocity.
-        M, Cqd, G = robot.dynamics_terms(q, qd)
-        tau_el = robot.elastic_force(q)
-        D = robot.damping_matrix(q)
+        # Read the dynamics terms at the current state from the model terms. The
+        # Coriolis term is already contracted with the current velocity.
+        model_terms = self._resolve_model_terms(system_state)
+        M = model_terms.inertia_matrix
+        Cqd = model_terms.coriolis_force
+        G = model_terms.gravitational_force
+        tau_el = model_terms.elastic_force
+        D = model_terms.damping_matrix
 
         # Compute the inverse dynamics: cancel all forces and apply desired acceleration
         # tau = M(q) @ qdd_des + C(q, qd) @ qd + G(q) + tau_el(q) + D(q) @ qd
         tau_model = M @ qdd_des + Cqd + G + tau_el + D @ qd
 
         # Get the actuation matrix at current configuration
-        A = robot.actuation_matrix(q)
+        A = model_terms.actuation_matrix
 
         # Compute actuator input using inverse (or pseudo-inverse for overactuation)
         if self._actuation_scenario == ActuationScenario.OVERACTUATION:
@@ -253,7 +276,7 @@ class ComputedTorqueTracker(ClosedFormModelBasedController):
         y = system_state.y
 
         # Split state into configuration and velocity
-        robot, q, qd = self._controller_robot_and_state(y)
+        _, q, qd = self._controller_robot_and_state(y)
 
         # Get reference trajectory at current time
         assert self.reference_trajectory.x_des_fn is not None
@@ -275,14 +298,15 @@ class ComputedTorqueTracker(ClosedFormModelBasedController):
         # Compute PID output: this gives an acceleration correction qdd_fb
         qdd_fb, integral_error_dot = self.pid_control(e, ed, integral_error)
 
-        # Get inertia matrix at current configuration
-        M = robot.inertia_matrix(q)
+        # Read the inertia and actuation matrices at the current configuration
+        model_terms = self._resolve_model_terms(system_state)
+        M = model_terms.inertia_matrix
 
         # Compute feedback torque: tau_fb = M(q) @ qdd_fb
         tau_fb = M @ qdd_fb
 
         # Get the actuation matrix and compute actuator input
-        A = robot.actuation_matrix(q)
+        A = model_terms.actuation_matrix
         if self._actuation_scenario == ActuationScenario.OVERACTUATION:
             u_feedback = jnp.linalg.pinv(A) @ tau_fb
         else:

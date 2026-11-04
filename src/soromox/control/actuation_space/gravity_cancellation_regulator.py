@@ -158,7 +158,8 @@ class GravityCancellationRegulator(PIDController):
         q_des = ref_config.x_des_fn(t)
 
         # Compute gravitational force at CURRENT configuration in actuation space
-        G_y = asd.gravitational_force(q)
+        model_terms = self._resolve_model_terms(system_state)
+        G_y = asd.gravitational_force(q, model_terms=model_terms)
 
         # Compute elastic force at DESIRED configuration in actuation space
         tau_el_y = asd.elastic_force(q_des)

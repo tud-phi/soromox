@@ -7,6 +7,7 @@ import jax.numpy as jnp
 import pytest
 
 from soromox.control import ReferenceTrajectory
+from soromox.systems import ModelTerms
 
 
 class FakeRobot:
@@ -55,6 +56,17 @@ class FakeDynamicsRobot(FakeRobot):
     def dynamics_terms(self, q, qd):
         self.dynamics_terms_calls += 1
         return self._M, self._C @ qd, self._G
+
+    def _model_terms(self, q, qd):
+        M, Cqd, G = self.dynamics_terms(q, qd)
+        return ModelTerms(
+            inertia_matrix=M,
+            coriolis_force=Cqd,
+            gravitational_force=G,
+            elastic_force=self.elastic_force(q),
+            damping_matrix=self.damping_matrix(q),
+            actuation_matrix=self.actuation_matrix(q),
+        )
 
 
 def make_reference(x_des, xd_des, xdd_des=None):

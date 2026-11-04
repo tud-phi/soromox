@@ -169,6 +169,10 @@ The [Feedforward Compensation Tracker](actuation-space.md#feedforwardcompensatio
 
 This clean separation means the two terms can be designed, tuned, and analyzed independently.
 
+### Model Terms
+
+Model-based controllers that use the dynamics at the current state read it from one block of [`ModelTerms`](../systems/index.md#modelterms): the inertia matrix $B(q)$ and its factor, the Coriolis force $C(q, \dot{q})\dot{q}$, the gravitational, elastic, and damping terms $G(q)$, $\tau_\mathrm{el}(q)$, and $D(q)$, the actuation matrix $A(q)$, and, for PlanarPCS and GVS on the JAX backend, the kinematics at the nodes of the dynamics pass, from which the task poses and Jacobians follow. These are the computed-torque tracker, the mixed-state feedback trackers, the gravity and potential cancellation regulators, the impedance control tracker, and the synergistic controller. A controller computes the block from its own model once per call, and the computed-torque tracker and the synergistic controller pass it to both parts of their control law; a state that already carries terms in `system_state.model_terms` is used as it is. The PID controllers and the feedforward and potential compensation controllers do not read the block and evaluate their model as before. Quantities at other states, such as the desired state, and quantities outside the block, such as the full Coriolis matrix, the time derivative of the task Jacobian, and the actuator-coordinate Jacobian, are evaluated on the controller's model. Inside `jax.jit`, XLA removes the parts of the block that a controller does not read; an eager call evaluates the whole block.
+
 ---
 
 ## Available Controllers

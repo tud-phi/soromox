@@ -144,7 +144,11 @@ The selected dynamics backend is used by:
 - `dynamics_terms(q, qd)`, which returns `(B, Cqd, G)`;
 - `forward_dynamics(t, y, actuation_args)`;
 - `rollout_to(...)` and `rollout_closed_loop_to(...)`, through their calls to
-  `forward_dynamics`.
+  `forward_dynamics`;
+- `model_terms(t, y)`, which returns the `ModelTerms` that model-based
+  controllers read. The node kinematics in the terms of PlanarPCS and
+  GVS come from the JAX dynamics only; with Warp dynamics they are `None`, and
+  the controllers compute the task kinematics themselves.
 
 The selected kinematics backend is used by:
 

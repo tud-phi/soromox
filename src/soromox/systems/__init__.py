@@ -29,6 +29,7 @@ from soromox.systems.gvs.structures import (
     GVSStrainBasisStructure,
     GVSStructure,
 )
+from soromox.systems.model_terms import ModelTerms
 from soromox.systems.params import (
     DEFAULT_GRAVITY_MAGNITUDE,
     BaseArticulatedSoftRobotParams,
@@ -87,6 +88,7 @@ __all__ = [
     "JointSpec",
     "shear_modulus_from_poisson_ratio",
     "SystemState",
+    "ModelTerms",
     "custom_jvp_enabled",
     "custom_jvp_mode",
     "set_custom_jvp_enabled",

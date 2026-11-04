@@ -66,6 +66,19 @@ The `SystemState` class is a container for the robot state used throughout SoRoM
       docstring_section_style: table
       members_order: source
 
+### ModelTerms
+
+The `ModelTerms` class holds the model quantities of a fixed-base system at one state. `SoftRobot.model_terms(t, y)` computes them once. Model-based controllers read them from `SystemState.model_terms` (see [Model Terms](../control/index.md#model-terms)).
+
+::: soromox.systems.ModelTerms
+    options:
+      show_root_heading: true
+      show_source: false
+      heading_level: 3
+      group_by_category: true
+      docstring_section_style: table
+      members_order: source
+
 ---
 
 ## System Categories

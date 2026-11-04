@@ -5,6 +5,8 @@ from typing import Any, TypeAlias
 import jax
 from jax import Array
 
+from soromox.systems.model_terms import ModelTerms
+
 EnvironmentState: TypeAlias = Any
 """Type alias for an environment state PyTree.
 
@@ -33,6 +35,14 @@ class SystemState:
         u: Actuation input applied at the current time.
         control_state: Additional controller state as a PyTree (e.g., integrator terms).
         environment_state: Additional environment state as a PyTree (e.g., contact state).
+        model_terms: Model terms of the robot at ``(t, y)`` (see
+            ``SoftRobot.model_terms``), or None. Model-based controllers read their
+            quantities at the current state from them; without them, a controller
+            computes the terms of its own model. The computed-torque tracker and
+            the synergistic controller set their own terms for both parts of their
+            control law. A controller that changes ``y`` before calling another
+            controller must set this field to None. Rollout outputs never carry
+            terms.
     """
 
     t: Array
@@ -40,6 +50,7 @@ class SystemState:
     u: Array | None = None
     control_state: Any | None = None
     environment_state: Any | None = None
+    model_terms: ModelTerms | None = None
 
     def tree_flatten(self):
         children = [self.t, self.y]
@@ -47,6 +58,7 @@ class SystemState:
             "has_u": self.u is not None,
             "has_control_state": self.control_state is not None,
             "has_environment_state": self.environment_state is not None,
+            "has_model_terms": self.model_terms is not None,
         }
         if self.u is not None:
             children.append(self.u)
@@ -54,6 +66,8 @@ class SystemState:
             children.append(self.control_state)
         if self.environment_state is not None:
             children.append(self.environment_state)
+        if self.model_terms is not None:
+            children.append(self.model_terms)
         return tuple(children), aux
 
     @classmethod
@@ -68,10 +82,14 @@ class SystemState:
             idx += 1
         has_environment_state = aux.get("has_environment_state", False)
         environment_state = rest[idx] if has_environment_state else None
+        if has_environment_state:
+            idx += 1
+        model_terms = rest[idx] if aux.get("has_model_terms", False) else None
         return cls(
             t=t,
             y=y,
             u=u,
             control_state=control_state,
             environment_state=environment_state,
+            model_terms=model_terms,
         )

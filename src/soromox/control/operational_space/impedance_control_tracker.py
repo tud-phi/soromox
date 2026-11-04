@@ -280,20 +280,25 @@ class ImpedanceControlTracker(OperationalSpaceBaseController):
         xd_des = osd.B_task.T @ xd_des_full
         xdd_des = osd.B_task.T @ xdd_des_full
 
-        # Compute operational space quantities
-        J, _ = osd.jacobian_and_time_derivative(q, qd)
-        J_bar = osd.dynamically_consistent_pseudoinverse(q)
-        Lambda = osd.inertia_matrix(q)
+        # Compute operational space quantities once: the Jacobian and its time
+        # derivative, the operational space inertia Lambda = (J M^-1 J^T)^-1 and
+        # the dynamically consistent pseudoinverse J_bar = M^-1 J^T Lambda, with
+        # M^-1 applied through the inertia factor of the model terms
+        model_terms = self._resolve_model_terms(system_state)
+        J, Jd = osd.jacobian_and_time_derivative(q, qd)
+        M_inv_J_T = model_terms.solve_inertia(J.T)
+        Lambda = jnp.linalg.inv(J @ M_inv_J_T)
+        J_bar = M_inv_J_T @ Lambda
 
         # Current operational space FULL pose (for error computation) and task-selected velocity
-        x_full = osd.operational_space_poses(q)
+        x_full = osd.operational_space_poses(q, model_terms=model_terms)
         xd = J @ qd  # Task-selected velocity
 
         # Configuration-space forces
         robot = getattr(osd, "fixed_base_robot", osd.robot)
-        tau_el = robot.elastic_force(q)  # Elastic force
-        D_config = robot.damping_matrix(q)  # Damping matrix
-        G = robot.gravitational_force(q)  # Gravitational force
+        tau_el = model_terms.elastic_force  # Elastic force
+        D_config = model_terms.damping_matrix  # Damping matrix
+        G = model_terms.gravitational_force  # Gravitational force
 
         # ===== Compute control torque components =====
 
@@ -310,7 +315,9 @@ class ImpedanceControlTracker(OperationalSpaceBaseController):
         # 3. Select the Coriolis/centrifugal cancellation. Partial feedback
         # linearization removes only the null-space velocity contribution,
         # whereas full feedback linearization removes the complete task force.
-        mu_x = osd.mu_x(q, qd)
+        # mu_x = Lambda @ (J @ M^-1 @ C - Jd)
+        C = robot.coriolis_matrix(q, qd)
+        mu_x = Lambda @ (J @ model_terms.solve_inertia(C) - Jd)
         if self.feedback_linearization == "full":
             qd_coriolis = qd
         else:
@@ -355,7 +362,7 @@ class ImpedanceControlTracker(OperationalSpaceBaseController):
         )
 
         # Get the actuation matrix and compute actuator input
-        A = robot.actuation_matrix(q)
+        A = model_terms.actuation_matrix
         u_control = jnp.linalg.solve(A, tau_control)
 
         return u_control, None

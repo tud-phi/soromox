@@ -10,9 +10,8 @@ from typing import Any, Self
 import equinox as eqx
 import jax
 import numpy as np
-from jax import Array, grad, jacfwd, jvp, lax, vmap
+from jax import Array, grad, jacfwd, jvp, vmap
 from jax import numpy as jnp
-from jax.scipy.linalg import cho_solve
 
 from soromox.actuation.core import (
     Actuator,
@@ -22,6 +21,11 @@ from soromox.actuation.core import (
 )
 from soromox.autodiff import custom_jvp_enabled
 from soromox.systems.dynamical_system import DynamicalSystem
+from soromox.systems.model_terms import (
+    ModelTerms,
+    _factor_inertia,
+    _solve_with_inertia_factor,
+)
 from soromox.systems.params import (
     validate_planar_base_pose,
     validate_quaternion_base_pose,
@@ -3146,23 +3150,89 @@ class SoftRobot(DynamicalSystem):
             Acceleration vector satisfying ``inertia @ acceleration == rhs``,
             with shape ``(self.num_velocities,)``.
         """
+        # The policy lives with ModelTerms, which keeps the factor for reuse.
+        return _solve_with_inertia_factor(_factor_inertia(inertia), rhs)
 
-        def generic(matrix: Array, vector: Array) -> Array:
-            return jnp.linalg.solve(matrix, vector)
+    def model_terms(self, t: Array, y: Array) -> ModelTerms | None:
+        """
+        Compute the model terms of the robot at one state.
 
-        def cholesky(matrix: Array, vector: Array) -> Array:
-            symmetric = 0.5 * (matrix + matrix.T)
-            factor = jnp.linalg.cholesky(symmetric)
-            return cho_solve((factor, True), vector)
+        The terms hold the quantities that the forward dynamics evaluates at
+        ``y``: the inertia matrix and its factor, the convective, gravitational
+        and elastic forces, the damping matrix, the actuation matrix and, for
+        systems whose dynamics pass provides them, the kinematics at the nodes
+        of that pass. Model-based controllers read them from
+        ``SystemState.model_terms``.
 
-        return lax.platform_dependent(
-            inertia,
-            rhs,
-            cpu=cholesky,
-            cuda=generic,
-            rocm=generic,
-            default=generic,
+        Floating-base systems return ``None``: their controllers act on a
+        fixed-base model mounted at the base pose, not on the floating dynamics.
+
+        Args:
+            t: Current time. The terms of a soft robot do not depend on it.
+            y: State ``[q, v, auxiliary]`` with shape ``(state_size,)``.
+
+        Returns:
+            The model terms at ``y``, or ``None`` for a floating base.
+        """
+        del t
+        if self.floating_base:
+            return None
+        q, qd, _ = self.split_state(y)
+        return self._model_terms(q, qd)
+
+    def _model_terms(self, q: Array, qd: Array) -> ModelTerms:
+        """
+        Compute the model terms of the fixed-base robot at ``(q, qd)``.
+
+        Controllers build the terms of their own model with this method. It
+        takes no auxiliary states, so the terms describe the configuration and
+        velocity only, as the controllers' own model evaluations do.
+
+        Args:
+            q: Generalized coordinates of shape ``(num_coordinates,)``.
+            qd: Generalized velocities of shape ``(num_velocities,)``.
+
+        Returns:
+            The model terms at ``(q, qd)``.
+        """
+        (inertia, coriolis_qd, gravity), node_jacobians, node_poses = (
+            self._dynamics_terms_and_node_kinematics(q, qd)
         )
+        # The actuation matrix gets the backend request that the forward
+        # dynamics give their actuation force (_assemble_forward_dynamics): an
+        # explicit Warp request becomes automatic selection, which chooses the
+        # executor of each operation. SoftRobot itself declares no backend.
+        actuation_backend = "auto" if getattr(self, "backend", None) == "warp" else None
+        return ModelTerms(
+            inertia_matrix=inertia,
+            coriolis_force=coriolis_qd,
+            gravitational_force=gravity,
+            elastic_force=self.elastic_force(q),
+            damping_matrix=self.damping_matrix(q),
+            actuation_matrix=self.actuation_matrix(q, backend=actuation_backend),
+            node_jacobians=node_jacobians,
+            node_poses=node_poses,
+        )
+
+    def _dynamics_terms_and_node_kinematics(
+        self, q: Array, qd: Array
+    ) -> tuple[tuple[Array, Array, Array], Array | None, Array | None]:
+        """
+        Return the dynamics terms and the kinematics at the nodes of their pass.
+
+        The default evaluates :meth:`dynamics_terms` and provides no node
+        kinematics. Systems whose dynamics pass forms body Jacobians at known
+        nodes override this hook to return them from the same pass.
+
+        Args:
+            q: Generalized coordinates of shape ``(num_coordinates,)``.
+            qd: Generalized velocities of shape ``(num_velocities,)``.
+
+        Returns:
+            Tuple ``((B, Cqd, G), node_jacobians, node_poses)``. The node
+            entries are ``None`` when the system does not provide them.
+        """
+        return self.dynamics_terms(q, qd), None, None
 
     def forward_dynamics(
         self, t: Array, y: Array, actuation_args: tuple | None = None
