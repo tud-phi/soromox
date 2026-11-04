@@ -1079,7 +1079,7 @@ def main() -> None:
     goal_xy_log = []
     reach_tolerance_log = []
 
-    for _ in range(args.num_mpc_steps):
+    for step in range(args.num_mpc_steps):
         goal_xy_log.append((float(params.push_goal_xy[0]), float(params.push_goal_xy[1])))
         reach_tolerance_log.append(reach_tolerance)
 
@@ -1126,6 +1126,7 @@ def main() -> None:
         )
         reached = dist_to_goal < reach_tolerance
         prev_object_x, prev_object_y = object_x, object_y
+        print(f"MPC step {step + 1}/{args.num_mpc_steps}", flush=True)
         if reached:
             leg_start_x, leg_start_y = float(params.push_goal_xy[0]), float(params.push_goal_xy[1])
             legs_completed += 1
