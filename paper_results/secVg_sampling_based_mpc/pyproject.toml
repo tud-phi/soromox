@@ -1,0 +1,31 @@
+# Section V-G environment: the push experiment, summary figure and both RTX renderers, on
+# newton-cosserat upstream main with a Newton 1.6 stack. Run from this folder:
+#   uv run --project . python code/run_experiment.py ...
+[project]
+name = "secvg-sampling-based-mpc"
+version = "0.0.0"
+requires-python = ">=3.11,<3.14"
+dependencies = ["soromox[cuda13]", "newton[rtx,sim,importers]", "newton-cosserat", "scipy", "matplotlib", "gitpython"]
+
+[tool.uv]
+package = false
+# ovrtx 0.5.x renders dense translucent sample clouds black; 0.4.1 and warp 1.16.0 are what
+# newton-cosserat main locks.
+constraint-dependencies = ["ovrtx==0.4.1.364340", "warp-lang==1.16.0"]
+# newton-cosserat pins soromox and newton from git; use this checkout and the newton rev below.
+override-dependencies = [
+    "soromox[cuda13] @ file:///${PROJECT_ROOT}/../..",
+    "newton[rtx,sim,importers] @ git+https://github.com/newton-physics/newton.git@7c677b955e813f31edda5ba2e00c6ae4e992c9a9",
+]
+
+[[tool.uv.index]]
+name = "nvidia"
+url = "https://pypi.nvidia.com/"
+explicit = true
+
+[tool.uv.sources]
+# 21 commits past newton-cosserat main's pin (e3c5fdf4), which lacks log_mesh opacity.
+newton = { git = "https://github.com/newton-physics/newton.git", rev = "7c677b955e813f31edda5ba2e00c6ae4e992c9a9" }
+newton-cosserat = { git = "https://github.com/tud-phi/newton-cosserat.git", branch = "main" }
+soromox = { path = "../..", editable = true }
+warp-lang = { index = "nvidia" }

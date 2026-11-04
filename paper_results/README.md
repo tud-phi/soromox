@@ -15,6 +15,10 @@ publication figures/videos under `outputs/`.
 | Vd, control-gain optimization | [`secVd_control_gain_optimization/`](secVd_control_gain_optimization/README.md) | collocated/synergistic optimization data and comparison |
 | Ve, safety-constrained control | `secVe_safety_constrained_control/` | rollout data, plots, and videos |
 | Vf, parallel reinforcement learning | [`secVf_parallel_rl/`](secVf_parallel_rl/README.md) | training, checkpoints, reward curve, rollout data, and media |
+| Vg, sampling-based MPC | [`secVg_sampling_based_mpc/`](secVg_sampling_based_mpc/README.md) | iCEM/MPPI push runs, sample-cloud renders, and summary figure |
+
+Section Vg has its own uv project with the Newton stack; its commands run from
+that directory with `uv run --project .` instead of the `paper_results` extra.
 
 `final_outputs/` contains composed figures assembled from one or more section
 outputs. Trained model checkpoints are stored with Git LFS; section data and

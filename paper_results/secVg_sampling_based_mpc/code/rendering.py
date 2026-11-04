@@ -291,29 +291,33 @@ class ExampleViewerRTX(newton.viewer.ViewerRTX):
         self._add_studio()
 
     def _render_and_display(self) -> None:
-        """Render until the path tracer converges to samples_per_pixel, then present the frame.
-
-        Only the convergence loop is overridden; the converged products are handed to Newton's own
-        `_accept_render`, which sets the state `save_screenshot()` and `get_frame()` expect.
-        """
+        """Render until the path tracer converges to samples_per_pixel; save_screenshot() reads the result."""
         if self._rtx is None or self._should_close:
             return
-        step_kwargs = {"render_products": {self._render_product_path}}
-        if self._use_ovstage:
-            step_kwargs["ordinal"] = self._ovstage_ordinal
         for attempt in range(self.samples_per_pixel + 2):
-            products = self._rtx.step(
-                **step_kwargs,
+            self._render_products = self._rtx.step(
+                render_products={self._render_product_path},
                 delta_time=1.0 / self.fps if attempt == 0 else 0.0,
             )
-            frames = [frame for product in products.values() for frame in product.frames]
+            frames = [frame for product in self._render_products.values() for frame in product.frames]
             if frames and all(frame.converged for frame in frames):
                 break
         else:
             raise RuntimeError(
                 f"RTX did not converge to the requested sample count: {[frame.progression for frame in frames]}"
             )
-        self._accept_render(products)
+
+    def _capture_screenshot_pixels(self) -> np.ndarray:
+        """Read LdrColor from the last render; ovrtx may prefix the render-var key with its path."""
+        from ovrtx import Device
+
+        for product in self._render_products.values():
+            for frame in product.frames:
+                for key, render_var in frame.render_vars.items():
+                    if key == "LdrColor" or key.endswith("/LdrColor"):
+                        with render_var.map(device=Device.CPU) as mapping:
+                            return np.array(np.from_dlpack(mapping), copy=True)
+        raise RuntimeError("save_screenshot() could not find the LdrColor render output")
 
     def _apply_ground_material(self) -> None:
         """Skip Newton's ground material; _add_studio binds the backdrop material to the ground."""
