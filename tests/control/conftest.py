@@ -31,6 +31,7 @@ class FakeDynamicsRobot(FakeRobot):
     def __init__(self, actuation_matrix):
         super().__init__(actuation_matrix)
         self.dynamics_terms_calls = 0
+        self.inertia_matrix_calls = 0
         self._M = jnp.array([[2.0, 0.5], [0.5, 3.0]])
         self._C = jnp.array([[0.0, 0.25], [-0.1, 0.0]])
         self._G = jnp.array([0.3, -0.2])
@@ -38,6 +39,7 @@ class FakeDynamicsRobot(FakeRobot):
         self._D = jnp.array([[0.2, 0.0], [0.0, 0.4]])
 
     def inertia_matrix(self, q):
+        self.inertia_matrix_calls += 1
         return self._M
 
     def coriolis_matrix(self, q, qd):
@@ -55,6 +57,9 @@ class FakeDynamicsRobot(FakeRobot):
     def dynamics_terms(self, q, qd):
         self.dynamics_terms_calls += 1
         return self._M, self._C @ qd, self._G
+
+    def _solve_inertia(self, inertia, rhs):
+        return jnp.linalg.solve(inertia, rhs)
 
 
 def make_reference(x_des, xd_des, xdd_des=None):

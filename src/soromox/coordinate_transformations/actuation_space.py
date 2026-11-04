@@ -406,6 +406,9 @@ class ActuationSpaceDynamics(eqx.Module):
             - M is the configuration space inertia matrix
             - C is the configuration space Coriolis matrix
 
+        Since M_y = J_y^{-T} @ M @ J_y^{-1}, the inertia matrix cancels, and the
+        matrix is evaluated as eta_y = J_y^{-T} @ C @ J_y^{-1}.
+
         Args:
             q: Generalized coordinates of shape (num_dofs,).
             qd: Generalized velocities of shape (num_dofs,).
@@ -413,17 +416,11 @@ class ActuationSpaceDynamics(eqx.Module):
         Returns:
             eta_y: Actuation space Coriolis matrix of shape (num_dofs, num_dofs).
         """
-        J = self.jacobian(q)
-        J_inv = jnp.linalg.inv(J)
-        M = self.fixed_base_robot.inertia_matrix(q)
-        M_inv = jnp.linalg.inv(M)
+        J_inv = self.jacobian_inverse(q)
         C = self.fixed_base_robot.coriolis_matrix(q, qd)
 
-        # Actuation space inertia
-        M_y = J_inv.T @ M @ J_inv
-
-        # Coriolis matrix: eta_y = M_y @ (J @ M^{-1} @ C) @ J^{-1}
-        eta_y = M_y @ (J @ M_inv @ C) @ J_inv
+        # eta_y = M_y @ (J @ M^{-1} @ C) @ J^{-1} = J^{-T} @ C @ J^{-1}
+        eta_y = J_inv.T @ C @ J_inv
 
         return eta_y
 

@@ -124,25 +124,21 @@ class SynergisticController(PIDController):
             control_state_dot: PIDControllerState derivative if tracking integral
                 error, otherwise None.
         """
-        y = system_state.y
-
-        osd, q, _ = self._controller_dynamics_and_state(
-            y, self.operational_space_dynamics
-        )
-        robot = osd.robot
-        J = osd.jacobian(q)
-
-        # Compute PID output
-        tau_pid, control_state_dot = self.error_based_feedback_term(system_state)
-
-        # Compute configuration-space quantities
+        # Inertia and actuation matrices of the mounted fixed-base robot, with the
+        # inertia matrix from the fused dynamics terms
+        robot, q, qd = self._controller_robot_and_state(system_state.y)
+        M, _, _ = robot.dynamics_terms(q, qd)
         A = robot.actuation_matrix(q)
-        M_inv = jnp.linalg.inv(robot.inertia_matrix(q))
 
-        # Dynamically-consisted synergistic projector
-        P_AM = jnp.linalg.inv(J @ M_inv @ A) @ J @ M_inv
+        # Compute PID output together with the task Jacobian, evaluated once
+        tau_pid, control_state_dot, J = self._feedback_and_task_jacobian(system_state)
 
-        # Total generalized torque
-        tau_control = P_AM @ J.T @ tau_pid
+        # Dynamically-consistent synergistic projection
+        # tau = (J M^-1 A)^-1 J M^-1 J^T tau_pid, with one solve of the inertia
+        # system for both M^-1 A and M^-1 J^T tau_pid instead of explicit inverses
+        X = robot._solve_inertia(
+            M, jnp.concatenate([A, (J.T @ tau_pid)[:, None]], axis=1)
+        )
+        tau_control = jnp.linalg.solve(J @ X[:, :-1], J @ X[:, -1])
 
         return tau_control, control_state_dot

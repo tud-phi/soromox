@@ -59,12 +59,45 @@ Describe the delta from the last release, not intermediate development changes.
 - Refreshed the numerical and rendering dependency lock for Python 3.15,
   including compatible Viser, `rpds-py`, Matplotlib, `msgspec`, Numba, and
   llvmlite releases.
+- Model-based controllers that use the dynamics at the current state take the
+  inertia matrix and the gravitational force from one evaluation of the fused
+  `dynamics_terms(q, qd)` and evaluate each model quantity once per call: the
+  computed-torque tracker evaluates the inertia and actuation matrices once for
+  both of its terms, the synergistic controller evaluates the task Jacobian
+  once and replaces explicit inverses by linear solves, and the impedance
+  control tracker computes the task Jacobian, its time derivative, and the
+  task-space inertia once. `ActuationSpaceDynamics.coriolis_matrix` evaluates
+  the equivalent form `J_y^{-T} C J_y^{-1}` without the inertia matrix. Results
+  change at rounding level.
+- The synergistic controller evaluates its model on the mounted fixed-base
+  robot, as the other model-based controllers do, and no longer raises for a
+  floating-base robot.
+- `SynergisticController.__call__` computes the operational-space feedback
+  together with the task Jacobian that it reuses, so an override of
+  `error_based_feedback_term` no longer changes its control input.
+  `ImpedanceControlTracker` computes the task-space inertia, the dynamically
+  consistent pseudoinverse, and the task-space Coriolis term from one task
+  Jacobian instead of calling `OperationalSpaceDynamics.inertia_matrix`,
+  `dynamically_consistent_pseudoinverse`, and `mu_x`.
 
 ### Performance
+
+- Model-based controllers that read the model at the current state evaluate
+  it once per call. FP64 measurements on an AMD Ryzen Threadripper PRO 5975WX
+  (JAX 0.10.1, two cores per process) used a spatial `PCS` with four segments
+  and Tsit5 at a 0.1 ms step. The nine such controllers ran their continuous
+  closed loops 1.18–2.08× faster, their gradients 1.36–2.09× faster, and
+  their discrete closed loops with a 0.2 ms control period 1.04–1.30× faster;
+  the other six controllers compile to the previous programs.
 
 ### Deprecated
 
 ### Breaking changes
+
+- Duck-typed robots used with the model-based controllers that read the model
+  at the current state must provide `dynamics_terms(q, qd)`, and those used
+  with the impedance control tracker or the synergistic controller also
+  `_solve_inertia(inertia, rhs)`, as `SoftRobot` does.
 
 - Replaced `Transmission.moment_matrix(...)` with `coordinate_jacobian(...)`
   and `actuation_matrix(...)`, and added `SoftRobot.actuator_coordinate_jacobian(...)`.

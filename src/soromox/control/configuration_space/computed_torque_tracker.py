@@ -173,6 +173,28 @@ class ComputedTorqueTracker(ClosedFormModelBasedController):
 
         return scenario
 
+    def __call__(self, system_state: SystemState) -> tuple[Array, Any | None]:
+        """
+        Compute the control input with one evaluation of the model.
+
+        Both terms read the inertia and actuation matrices at the current state,
+        so the feedback term reuses those of the model-based term. The
+        model-based term is stateless, so the control state derivative is the one
+        of the feedback term.
+
+        Args:
+            system_state: The current state of the system.
+
+        Returns:
+            u_control: The control input, shape (num_actuators,).
+            control_state_dot: Time derivative of the PIDControllerState, or None
+                if no control state is being tracked.
+        """
+        u_model, M, A = self._model_based_input(system_state)
+        _, q, qd = self._controller_robot_and_state(system_state.y)
+        u_feedback, control_state_dot = self._feedback_input(system_state, q, qd, M, A)
+        return u_model + u_feedback, control_state_dot
+
     def model_based_term(self, system_state: SystemState) -> tuple[Array, Any | None]:
         """
         Compute the model-based feedforward control term for computed torque control.
@@ -190,6 +212,12 @@ class ComputedTorqueTracker(ClosedFormModelBasedController):
             u_model: The model-based control input, shape (num_actuators,).
             control_state_dot: None (this term is stateless).
         """
+        return self._model_based_input(system_state)[0], None
+
+    def _model_based_input(
+        self, system_state: SystemState
+    ) -> tuple[Array, Array, Array]:
+        """Return the model-based input with the inertia and actuation matrices."""
         t = system_state.t
         y = system_state.y
 
@@ -219,7 +247,7 @@ class ComputedTorqueTracker(ClosedFormModelBasedController):
         else:
             u_model = jnp.linalg.inv(A) @ tau_model
 
-        return u_model, None
+        return u_model, M, A
 
     def error_based_feedback_term(
         self, system_state: SystemState
@@ -249,11 +277,16 @@ class ComputedTorqueTracker(ClosedFormModelBasedController):
             control_state_dot: Time derivative of the PIDControllerState, or None
                 if no control state is being tracked.
         """
-        t = system_state.t
-        y = system_state.y
+        robot, q, qd = self._controller_robot_and_state(system_state.y)
+        M = robot.inertia_matrix(q)
+        A = robot.actuation_matrix(q)
+        return self._feedback_input(system_state, q, qd, M, A)
 
-        # Split state into configuration and velocity
-        robot, q, qd = self._controller_robot_and_state(y)
+    def _feedback_input(
+        self, system_state: SystemState, q: Array, qd: Array, M: Array, A: Array
+    ) -> tuple[Array, PIDControllerState | None]:
+        """Return the feedback input from the inertia and actuation matrices."""
+        t = system_state.t
 
         # Get reference trajectory at current time
         assert self.reference_trajectory.x_des_fn is not None
@@ -275,14 +308,10 @@ class ComputedTorqueTracker(ClosedFormModelBasedController):
         # Compute PID output: this gives an acceleration correction qdd_fb
         qdd_fb, integral_error_dot = self.pid_control(e, ed, integral_error)
 
-        # Get inertia matrix at current configuration
-        M = robot.inertia_matrix(q)
-
         # Compute feedback torque: tau_fb = M(q) @ qdd_fb
         tau_fb = M @ qdd_fb
 
-        # Get the actuation matrix and compute actuator input
-        A = robot.actuation_matrix(q)
+        # Compute actuator input
         if self._actuation_scenario == ActuationScenario.OVERACTUATION:
             u_feedback = jnp.linalg.pinv(A) @ tau_fb
         else:
