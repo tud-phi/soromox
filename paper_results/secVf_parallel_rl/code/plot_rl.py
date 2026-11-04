@@ -50,6 +50,9 @@ DEFAULT_EPISODES_PER_RECORD = 8
 WANDB_SAMPLE_POINTS = 1500
 WANDB_SAMPLE_SEED = 0
 WANDB_SMOOTHING = 10.0
+# Default of --episodes-per-point; 0 selects the W&B-style plot. Also used when
+# callers pass a Namespace without this field (e.g. assemble_safety_rl_figure.py).
+DEFAULT_EPISODES_PER_POINT = 0
 
 COLORS_RL = {
     "PyElastica (CPU, 2 envs)": COLORS["pre_opt_1"],
@@ -360,10 +363,11 @@ def build_figure(
         key=lambda k: list(COLORS_RL.keys()).index(k) if k in COLORS_RL else 999,
     )
 
+    episodes_per_point = getattr(args, "episodes_per_point", DEFAULT_EPISODES_PER_POINT)
     for label in ordered_labels:
         csv_paths = groups[label]
-        if args.episodes_per_point > 0:
-            curves = [load_curve(path, args.episodes_per_point) for path in csv_paths]
+        if episodes_per_point > 0:
+            curves = [load_curve(path, episodes_per_point) for path in csv_paths]
         else:
             curves = [
                 load_wandb_style_curve(path, rng) for path in csv_paths
@@ -428,7 +432,7 @@ def build_argparser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--episodes-per-point",
         type=int,
-        default=0,
+        default=DEFAULT_EPISODES_PER_POINT,
         help=(
             "Instead of the default W&B-style plot, merge consecutive reward records "
             "so that every plotted point averages this many completed episodes, "
