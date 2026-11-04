@@ -113,6 +113,9 @@ FAMILY_STYLE = {
 LABEL_OVERRIDES = {
     ("cmp_mppi_k400.npz", "mppi"): {"offset": (8, 0), "ha": "left", "va": "center"},
     ("cmp_icem_k200_it3.npz", "icem_fixed_iters"): {"offset": (8, 7), "ha": "left", "va": "bottom"},
+    ("cmp_mppi_k1600.npz", "mppi"): {"offset": (0, 9), "ha": "center", "va": "bottom"},
+    ("cmp_icem_it3_k50.npz", "icem_fixed_iters"): {"offset": (-8, 0), "ha": "right", "va": "center"},
+    ("cmp_icem_it3_k100.npz", "icem_fixed_iters"): {"offset": (0, -9), "ha": "center", "va": "top"},
 }
 
 
