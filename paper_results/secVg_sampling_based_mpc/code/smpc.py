@@ -1,8 +1,4 @@
-"""Sampling-based MPC primitives shared by the iCEM/MPPI push planner:
-the push cost function, the CEM parameter container, and the CEM
-scaffolding (warm-starting, exploration-std init, per-iteration K
-schedule, control smoothing) that both planner modes build on.
-"""
+"""iCEM/MPPI push-planner primitives: parameters, push cost, K schedule, colored noise, smoothing."""
 
 from __future__ import annotations
 
@@ -12,67 +8,51 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from scipy.signal import savgol_filter
+
 from soromox import DynamicalSystem
 
 
 class SMPCParams(eqx.Module):
-    """Configuration shared by every CEM/MPPI replan: control distribution
-    and the push-contact geometry the cost is evaluated against.
-    """
+    """Planner configuration: robot, control sampling distribution and push-contact geometry."""
 
     robot: DynamicalSystem
     control_std: Array
     K: int | tuple[int, ...] | list[int]
+    object_footprint: float
     elite_frac: float = eqx.field(static=True, default=0.1)
     smoothing: bool = eqx.field(static=True, default=True)
     contact_segment_index: int = -1
-    face_offset: float | None = None
     contact_z: float | None = None
     table_z: float | None = None
     push_goal_xy: Array = eqx.field(default_factory=lambda: jnp.zeros(2))
+    push_goal_yaw: Array | None = None
 
 
 PUSH_W_ROBOT_OBJECT = 3000.0
-PUSH_W_OBJECT_GOAL_X = 3000.0
-PUSH_W_OBJECT_GOAL_Y = 3000.0
+PUSH_W_OBJECT_GOAL_X = 15000.0
+PUSH_W_OBJECT_GOAL_Y = 15000.0
 PUSH_W_SIDE_ALIGN = 200.0
-PUSH_R_SCALAR = 1.0
-PUSH_R_RATE = 15.0
-PUSH_R_SCALAR_BASE = 20.0
-PUSH_R_RATE_BASE = 70.0
+PUSH_R_SCALAR = 7.5
+PUSH_R_RATE = 50.0
+PUSH_R_SCALAR_BASE = 12.5
+PUSH_R_RATE_BASE = 1000.0
 PUSH_ALIGN_EPS = 1e-6
 PUSH_W_TIP_TABLE_CLEARANCE = 100000.0
 PUSH_TIP_TABLE_CLEARANCE_MARGIN = 0.02
-PUSH_CONTACT_RADIUS = 0.0057
 PUSH_CONTACT_PENETRATION_MARGIN = 0.01
-
-
-def compute_face_offset(object_footprint: float) -> float:
-    """Distance from the object's center to its push face, minus the rod-tip's contact radius.
-
-    Args:
-        object_footprint: Box side length, or cylinder diameter/height [m].
-
-    Returns:
-        SMPCParams.face_offset for an object of this size.
-    """
-    return 0.5 * object_footprint + PUSH_CONTACT_RADIUS - PUSH_CONTACT_PENETRATION_MARGIN
+PUSH_W_ORIENTATION = 500.0
 
 
 def push_cost(params: SMPCParams, X, U):
-    """Push cost toward params.push_goal_xy for the 2-DOF (x, y) object dynamics.
+    """Cost of pushing the object to push_goal_xy, and to push_goal_yaw if set.
 
     Args:
-        params: SMPC parameters, including push_goal_xy (static (2,) or per-step
-            (horizon + 1, 2)) and the contact_segment_index/face_offset/contact_z
-            push-contact geometry.
-        X: State trajectory, shape (horizon + 1, state_dim); state layout matches
-            run_experiment.py's read_bridged_state order: [q(ndof), qd(ndof),
-            body_x, body_vx, body_y, body_vy, base_pose].
-        U: Control trajectory, shape (horizon, num_controls).
+        params: SMPC parameters; contact_z must be set.
+        X: States, shape (horizon + 1, state_dim), [q, qd, body_x, body_vx, body_y, body_vy, body_yaw, base_pose].
+        U: Controls, shape (horizon, num_controls), tendon tensions then base controls.
 
     Returns:
-        Scalar total cost.
+        Scalar cost.
     """
     ndof = params.robot.num_internal_dofs
     q_t = X[:, :ndof]
@@ -99,7 +79,11 @@ def push_cost(params: SMPCParams, X, U):
     dist_object_goal = jnp.linalg.norm(o_to_g, axis=-1)
 
     push_dir_xy = o_to_g / (dist_object_goal[:, None] + PUSH_ALIGN_EPS)
-    p_face_xy = p_O_xy - push_dir_xy * params.face_offset
+    contact_radius = params.robot.radius_params[contact_segment_index, 1]
+    face_offset = (
+        0.5 * params.object_footprint + contact_radius - PUSH_CONTACT_PENETRATION_MARGIN
+    )
+    p_face_xy = p_O_xy - push_dir_xy * face_offset
     dist_robot_face_xy = jnp.linalg.norm(p_R_xy - p_face_xy, axis=-1)
 
     dz = contact_z_t - params.contact_z
@@ -136,6 +120,13 @@ def push_cost(params: SMPCParams, X, U):
     else:
         tip_table_cost = 0.0
 
+    if params.push_goal_yaw is not None:
+        yaw_err = X[:, 2 * ndof + 4] - params.push_goal_yaw
+        yaw_err_wrapped = jnp.arctan2(jnp.sin(yaw_err), jnp.cos(yaw_err))
+        orientation_cost = PUSH_W_ORIENTATION * jnp.mean(jnp.abs(yaw_err_wrapped))
+    else:
+        orientation_cost = 0.0
+
     return (
         robot_object_cost
         + object_goal_cost
@@ -143,19 +134,19 @@ def push_cost(params: SMPCParams, X, U):
         + effort_cost
         + rate_cost
         + tip_table_cost
+        + orientation_cost
     )
 
 
 def k_schedule(params: SMPCParams, it):
-    """Resolve this iteration's sample count from SMPCParams.K.
+    """Sample count for CEM iteration `it`; a K schedule shorter than the iterations repeats its last entry.
 
     Args:
-        params: CEM parameters; K is either a fixed sample count or a
-            per-iteration schedule.
+        params: SMPC parameters.
         it: Iteration index, 0-based.
 
     Returns:
-        Sample count for iteration `it`.
+        Sample count.
     """
     K = params.K
     if not isinstance(K, (tuple, list)):
@@ -163,17 +154,19 @@ def k_schedule(params: SMPCParams, it):
     return K[min(it, len(K) - 1)]
 
 
-def sample_colored_noise(key: jax.Array, beta: float, shape: tuple[int, int, int], target_std: float) -> jax.Array:
-    """Sample tendon-tension noise with a 1/f^beta power spectrum along the horizon axis (Timmer & Koenig 1995).
+def sample_colored_noise(
+    key: jax.Array, beta: float, shape: tuple[int, int, int], target_std: Array
+) -> jax.Array:
+    """Control noise with a 1/f^beta spectrum along the horizon (Timmer & Koenig 1995).
 
     Args:
         key: JAX PRNG key.
-        beta: Colored-noise exponent.
-        shape: (K, horizon, num_actuators).
-        target_std: Desired per-step standard deviation after normalization.
+        beta: Colored-noise exponent; 0 is white noise.
+        shape: (K, horizon, num_controls).
+        target_std: Per-step std, broadcastable to (horizon, num_controls).
 
     Returns:
-        Array of shape ``shape`` with per-step std equal to ``target_std``.
+        Noise of shape `shape`.
     """
     K, T, A = shape
     if beta == 0.0 or T <= 1:
@@ -200,11 +193,13 @@ def sample_colored_noise(key: jax.Array, beta: float, shape: tuple[int, int, int
 def smooth_control(U, window_length=11, polyorder=3):
     """Savitzky-Golay smoothing along the horizon axis.
 
-    Raw sampling-based MPC noise is i.i.d. per timestep, so a weighted-average
-    or elite U can come out jagged even when the underlying weighting is
-    meaningful. `window_length` must be odd and <= U.shape[0]; it's clamped
-    here so this stays a no-op-safe drop-in across horizons of different
-    lengths.
+    Args:
+        U: Control sequences, shape (horizon, ...).
+        window_length: Window in timesteps, clamped to the horizon.
+        polyorder: Polynomial order.
+
+    Returns:
+        Smoothed U, same shape.
     """
     N = U.shape[0]
     window_length = min(window_length, N if N % 2 == 1 else N - 1)
