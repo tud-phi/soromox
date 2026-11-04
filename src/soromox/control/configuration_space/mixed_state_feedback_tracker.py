@@ -95,9 +95,9 @@ class MixedStateFeedbackTracker(PIDController):
 
         Args:
             robot: The soft robot system to be controlled.
-                Must have `actuation_matrix(q)`, `inertia_matrix(q)`,
-                `coriolis_matrix(q, qd)`, `gravitational_force(q)`,
-                `elastic_force(q)`, and `damping_matrix(q)` methods.
+                Must have `actuation_matrix(q)`, `dynamics_terms(q, qd)`,
+                `coriolis_matrix(q, qd)`, `elastic_force(q)`, and
+                `damping_matrix(q)` methods.
             reference_trajectory: The desired trajectory to track.
                 Must provide x_des_fn (desired configuration), xd_des_fn
                 (desired velocity), and xdd_des_fn (desired acceleration)
@@ -170,12 +170,11 @@ class MixedStateFeedbackTracker(PIDController):
         qd_des = self.reference_trajectory.xd_des_fn(t)
         qdd_des = self.reference_trajectory.xdd_des_fn(t)
 
-        # Compute dynamics matrices at CURRENT state (q, qd)
-        B = robot.inertia_matrix(q)
+        # Inertia matrix and gravitational force at CURRENT state, from one
+        # evaluation of the fused dynamics terms
+        B, _, G = robot.dynamics_terms(q, qd)
         # Coriolis matrix at current configuration and CURRENT velocity
         C = robot.coriolis_matrix(q, qd)
-        # Gravitational force at current configuration
-        G = robot.gravitational_force(q)
         # Damping matrix at current configuration
         D = robot.damping_matrix(q)
 

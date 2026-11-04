@@ -215,10 +215,11 @@ class MixedStateFeedbackTracker(PIDController):
         yd_des = self.reference_trajectory.xd_des_fn(t)
         ydd_des = self.reference_trajectory.xdd_des_fn(t)
 
-        # Compute actuation-space dynamics matrices at CURRENT state
-        M_y = asd.inertia_matrix(q)
+        # Compute actuation-space dynamics matrices at CURRENT state, with the
+        # inertia matrix and gravitational force from one evaluation of the fused
+        # dynamics terms
+        M_y, _, G_y = asd.dynamics_terms(q, qd)
         eta_y = asd.coriolis_matrix(q, qd)  # Coriolis at current state
-        G_y = asd.gravitational_force(q)
         D_y = asd.damping_matrix(q)
 
         # Compute elastic force at DESIRED configuration in actuation space

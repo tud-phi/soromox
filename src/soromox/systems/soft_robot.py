@@ -3128,7 +3128,7 @@ class SoftRobot(DynamicalSystem):
 
     def _solve_inertia(self, inertia: Array, rhs: Array) -> Array:
         """
-        Solve an active-coordinate inertia system for an acceleration vector.
+        Solve an active-coordinate inertia system for one or more right-hand sides.
 
         Soft-robot inertia matrices are symmetric positive definite. The CPU
         path uses a Cholesky factorization for lower latency on the small dense
@@ -3140,11 +3140,12 @@ class SoftRobot(DynamicalSystem):
             inertia: Active-coordinate inertia matrix with shape
                 ``(self.num_velocities, self.num_velocities)``.
             rhs: Generalized right-hand side with shape
-                ``(self.num_velocities,)``.
+                ``(self.num_velocities,)``, or a matrix of right-hand sides
+                with shape ``(self.num_velocities, k)``.
 
         Returns:
-            Acceleration vector satisfying ``inertia @ acceleration == rhs``,
-            with shape ``(self.num_velocities,)``.
+            Solution satisfying ``inertia @ solution == rhs``, with the shape
+            of ``rhs``.
         """
 
         def generic(matrix: Array, vector: Array) -> Array:

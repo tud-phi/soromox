@@ -124,13 +124,14 @@ class PotentialCancellationRegulator(PIDController):
             control_state_dot: None (this term is stateless).
         """
         y = system_state.y
-        asd, q, _ = self._controller_dynamics_and_state(
+        asd, q, qd = self._controller_dynamics_and_state(
             y, self.actuation_space_dynamics
         )
         n_a = asd.n_actuated
 
-        # Compute gravitational force at current configuration in actuation space
-        G_y = asd.gravitational_force(q)
+        # Gravitational force at current configuration in actuation space, from
+        # the fused dynamics terms
+        _, _, G_y = asd.dynamics_terms(q, qd)
 
         # Compute elastic force at current configuration in actuation space
         tau_el_y = asd.elastic_force(q)

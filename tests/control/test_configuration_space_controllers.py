@@ -73,6 +73,26 @@ def test_computed_torque_feedback_term_maps_pid_acceleration_through_dynamics(
     assert jnp.allclose(control_state_dot.integral_error, expected_integral_dot)
 
 
+def test_computed_torque_tracker_evaluates_the_model_once_per_call(
+    fake_dynamics_robot_factory, make_reference_factory
+):
+    robot = fake_dynamics_robot_factory(jnp.array([[2.0, 0.0], [0.0, 4.0]]))
+    reference = make_reference_factory(
+        x_des=[0.5, -0.1], xd_des=[0.2, 0.3], xdd_des=[0.1, -0.2]
+    )
+    controller = ComputedTorqueTracker(robot, reference, PIDControl(2.0, 0.0, 1.0))
+    state = SystemState(t=jnp.array(0.0), y=jnp.array([0.1, -0.2, -0.3, 0.4]))
+
+    # The feedback term reuses the inertia matrix of the fused dynamics terms.
+    u, _ = controller(state)
+    assert robot.dynamics_terms_calls == 1
+    assert robot.inertia_matrix_calls == 0
+
+    u_model, _ = controller.model_based_term(state)
+    u_feedback, _ = controller.error_based_feedback_term(state)
+    assert jnp.allclose(u, u_model + u_feedback)
+
+
 def test_computed_torque_supports_overactuated_pseudoinverse_and_rejects_underactuation(
     fake_dynamics_robot_factory, make_reference_factory
 ):
@@ -259,8 +279,11 @@ def test_configuration_space_model_based_controllers_compute_expected_terms(
     u_model, control_state_dot = controller.model_based_term(state)
 
     assert jnp.allclose(u_model, expected_fn(robot, reference, state))
+    # The controllers that read the model at the current state take B and G from
+    # the fused dynamics terms; the feedforward tracker evaluates them at the
+    # desired state, and the potential compensation regulator not at all.
     expected_dynamics_terms_calls = (
-        1 if controller_cls is FeedforwardCompensationTracker else 0
+        0 if controller_cls is PotentialCompensationRegulator else 1
     )
     assert robot.dynamics_terms_calls == expected_dynamics_terms_calls
     assert control_state_dot is None

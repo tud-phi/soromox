@@ -146,7 +146,7 @@ class GravityCancellationRegulator(PIDController):
         """
         t = system_state.t
         y = system_state.y
-        asd, q, _ = self._controller_dynamics_and_state(
+        asd, q, qd = self._controller_dynamics_and_state(
             y, self.actuation_space_dynamics
         )
         n_a = asd.n_actuated
@@ -157,8 +157,9 @@ class GravityCancellationRegulator(PIDController):
         assert ref_config.x_des_fn is not None
         q_des = ref_config.x_des_fn(t)
 
-        # Compute gravitational force at CURRENT configuration in actuation space
-        G_y = asd.gravitational_force(q)
+        # Gravitational force at CURRENT configuration in actuation space, from
+        # the fused dynamics terms
+        _, _, G_y = asd.dynamics_terms(q, qd)
 
         # Compute elastic force at DESIRED configuration in actuation space
         tau_el_y = asd.elastic_force(q_des)

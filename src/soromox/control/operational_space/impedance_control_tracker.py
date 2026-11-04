@@ -280,20 +280,32 @@ class ImpedanceControlTracker(OperationalSpaceBaseController):
         xd_des = osd.B_task.T @ xd_des_full
         xdd_des = osd.B_task.T @ xdd_des_full
 
-        # Compute operational space quantities
-        J, _ = osd.jacobian_and_time_derivative(q, qd)
-        J_bar = osd.dynamically_consistent_pseudoinverse(q)
-        Lambda = osd.inertia_matrix(q)
+        # Inertia matrix and gravitational force of the configuration-space robot,
+        # from one evaluation of the fused dynamics terms
+        robot = getattr(osd, "fixed_base_robot", osd.robot)
+        M, _, G = robot.dynamics_terms(q, qd)
+
+        # Compute operational space quantities once: the Jacobian and its time
+        # derivative, the operational space inertia Lambda = (J M^-1 J^T)^-1 and
+        # the dynamically consistent pseudoinverse J_bar = M^-1 J^T Lambda, with
+        # one solve of the inertia system for both M^-1 J^T and M^-1 C
+        J, Jd = osd.jacobian_and_time_derivative(q, qd)
+        C = robot.coriolis_matrix(q, qd)
+        M_inv_J_T, M_inv_C = jnp.split(
+            robot._solve_inertia(M, jnp.concatenate([J.T, C], axis=1)),
+            [J.shape[0]],
+            axis=1,
+        )
+        Lambda = jnp.linalg.inv(J @ M_inv_J_T)
+        J_bar = M_inv_J_T @ Lambda
 
         # Current operational space FULL pose (for error computation) and task-selected velocity
         x_full = osd.operational_space_poses(q)
         xd = J @ qd  # Task-selected velocity
 
         # Configuration-space forces
-        robot = getattr(osd, "fixed_base_robot", osd.robot)
         tau_el = robot.elastic_force(q)  # Elastic force
         D_config = robot.damping_matrix(q)  # Damping matrix
-        G = robot.gravitational_force(q)  # Gravitational force
 
         # ===== Compute control torque components =====
 
@@ -310,7 +322,8 @@ class ImpedanceControlTracker(OperationalSpaceBaseController):
         # 3. Select the Coriolis/centrifugal cancellation. Partial feedback
         # linearization removes only the null-space velocity contribution,
         # whereas full feedback linearization removes the complete task force.
-        mu_x = osd.mu_x(q, qd)
+        # mu_x = Lambda @ (J @ M^-1 @ C - Jd)
+        mu_x = Lambda @ (J @ M_inv_C - Jd)
         if self.feedback_linearization == "full":
             qd_coriolis = qd
         else:

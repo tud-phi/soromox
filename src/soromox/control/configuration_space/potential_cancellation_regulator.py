@@ -94,7 +94,7 @@ class PotentialCancellationRegulator(PIDController):
 
         Args:
             robot: The soft robot system to be controlled.
-                Must have `actuation_matrix(q)`, `gravitational_force(q)`,
+                Must have `actuation_matrix(q)`, `dynamics_terms(q, qd)`,
                 and `elastic_force(q)` methods.
             reference_trajectory: The desired trajectory to track.
                 Must provide x_des_fn (desired configuration) as a function of time.
@@ -142,10 +142,11 @@ class PotentialCancellationRegulator(PIDController):
         y = system_state.y
 
         # Get current configuration
-        robot, q, _ = self._controller_robot_and_state(y)
+        robot, q, qd = self._controller_robot_and_state(y)
 
-        # Compute gravitational force at current configuration
-        tau_gravity = robot.gravitational_force(q)
+        # Gravitational force at current configuration, from the fused dynamics
+        # terms
+        _, _, tau_gravity = robot.dynamics_terms(q, qd)
 
         # Compute elastic force at current configuration
         tau_elastic = robot.elastic_force(q)
